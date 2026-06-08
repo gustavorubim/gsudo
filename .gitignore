@@ -1,0 +1,16 @@
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+
+# Local secrets. Keep real API keys out of git.
+.env
+.env.*
+!.env.example
+
+# Local semantic mirror output from manual smoke runs.
+.semantic-mirror/
+mirror/
+mirror-*/
+outputs/

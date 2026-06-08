@@ -1,0 +1,30 @@
+[project]
+name = "semantic-mirror"
+version = "0.1.0"
+description = "Generate path-preserving semantic IR mirrors for source repositories."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter>=0.25.2",
+    "tree-sitter-python>=0.25.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+semantic-mirror = "semantic_mirror.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "ruff>=0.13.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
