@@ -19,6 +19,7 @@ from semantic_mirror.evaluation import (
 from semantic_mirror.rewards import score_mirror
 from semantic_mirror.review import (
     conduct_human_usefulness_study,
+    create_human_study_collection_plan,
     create_human_usefulness_study,
     create_review_pack,
     evaluate_human_usefulness_study,
@@ -202,6 +203,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(_eval_summary(report), indent=2, sort_keys=True))
         return 0 if report["passed"] else 1
+    elif args.command == "review" and args.review_command == "study-collection-plan":
+        manifest = create_human_study_collection_plan(
+            _parse_labeled_paths(args.study),
+            answers_dir=Path(args.answers_dir),
+            reviewer=args.reviewer,
+            batch_size=args.batch_size,
+            out_path=Path(args.out) if args.out is not None else None,
+        )
+        print(json.dumps(manifest, indent=2, sort_keys=True))
+        return 0
     elif args.command == "train" and args.train_command == "prepare":
         manifest = prepare_training_data(
             Path(args.dataset),
@@ -648,6 +659,33 @@ def _parser() -> argparse.ArgumentParser:
     review_status.add_argument("study", help="Human usefulness study directory.")
     review_status.add_argument("--answers", help="Completed answers JSONL path.")
     review_status.add_argument("--out", help="Optional JSON coverage report path.")
+    review_collection_plan = review_subparsers.add_parser(
+        "study-collection-plan",
+        help="Write a Phase 6 real-answer collection command plan for one or more studies.",
+    )
+    review_collection_plan.add_argument(
+        "--study",
+        action="append",
+        required=True,
+        help="Labeled study path as label=path, for example whole_repo=path. May be repeated.",
+    )
+    review_collection_plan.add_argument(
+        "--answers-dir",
+        required=True,
+        help="Directory for real answer, coverage, eval, and suite files.",
+    )
+    review_collection_plan.add_argument(
+        "--reviewer",
+        required=True,
+        help="Reviewer name or stable handle to embed in conduct-study commands.",
+    )
+    review_collection_plan.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Suggested --max-tasks value for resumable conduct-study sessions.",
+    )
+    review_collection_plan.add_argument("--out", help="Optional JSON plan output path.")
 
     train = subparsers.add_parser("train", help="Prepare SFT and RL training artifacts.")
     train_subparsers = train.add_subparsers(dest="train_command", required=True)
@@ -1190,6 +1228,21 @@ def _load_json_arg(value: str | None) -> dict[str, object] | None:
     if not isinstance(parsed, dict):
         raise ValueError("--generation-config-json must be a JSON object")
     return parsed
+
+
+def _parse_labeled_paths(values: list[str]) -> dict[str, Path]:
+    labeled: dict[str, Path] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--study values must use label=path")
+        label, path = value.split("=", 1)
+        label = label.strip()
+        if not label:
+            raise ValueError("--study label must not be empty")
+        if label in labeled:
+            raise ValueError(f"duplicate --study label: {label}")
+        labeled[label] = Path(path)
+    return labeled
 
 
 if __name__ == "__main__":

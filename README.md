@@ -172,6 +172,7 @@ Create reviewer-facing questions from a mirror:
 ```powershell
 uv run semantic-mirror review pack <mirror_repo> --out <review_pack_dir>
 uv run semantic-mirror review study <review_pack_dir> --out <human_study_dir>
+uv run semantic-mirror review study-collection-plan --study whole_repo=<human_study_dir> --study diff_mode=<diff_human_study_dir> --answers-dir <phase6_dir> --reviewer <name> --out <phase6_plan.json>
 uv run semantic-mirror review conduct-study <human_study_dir> --out <answers.jsonl> --reviewer <name>
 uv run semantic-mirror review study-status <human_study_dir> --answers <answers.jsonl> --out <coverage.json>
 uv run semantic-mirror eval human-study <human_study_dir> --answers <answers.jsonl> --out <report.json>
@@ -212,17 +213,21 @@ uv run semantic-mirror eval review-pack <review_pack_dir> --mirror <mirror_repo>
 ```powershell
 uv run semantic-mirror review pack <mirror_repo> --out <review_pack_dir>
 uv run semantic-mirror review study <review_pack_dir> --out <human_study_dir>
+uv run semantic-mirror review study-collection-plan --study whole_repo=<human_study_dir> --study diff_mode=<diff_human_study_dir> --answers-dir <phase6_dir> --reviewer <name> --out <phase6_plan.json>
 uv run semantic-mirror review conduct-study <human_study_dir> --out <answers.jsonl> --reviewer <name>
 uv run semantic-mirror review study-status <human_study_dir> --answers <answers.jsonl> --out <coverage.json>
 uv run semantic-mirror eval human-study <human_study_dir> --answers <answers.jsonl> --out <report.json>
 uv run semantic-mirror eval human-study-suite --report <whole_repo_report.json> --report <diff_mode_report.json> --out <phase6_summary.json>
 ```
 
-`review study-status` checks Phase 6 answer collection before scoring human
-usefulness. It reports pending task ids, unknown or duplicate answer ids,
-paired source/mirror coverage, real timed answer records, reviewer identity,
-source/mirror answer text, and visibility acknowledgements. It exits nonzero
-until the answer log is complete enough to evaluate.
+`review study-collection-plan` writes a reproducible Phase 6 command plan for
+one or more labeled study directories, including resumable `conduct-study`,
+coverage, per-study eval, and suite commands. `review study-status` checks
+Phase 6 answer collection before scoring human usefulness. It reports pending
+task ids, unknown or duplicate answer ids, paired source/mirror coverage, real
+timed answer records, reviewer identity, source/mirror answer text, and
+visibility acknowledgements. It exits nonzero until the answer log is complete
+enough to evaluate.
 
 `eval human-study` prints and writes `phase6_gate_summary`, including real
 timed reviewer-log provenance, reviewer identity, source/mirror answer text,

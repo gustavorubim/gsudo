@@ -564,6 +564,89 @@ def summarize_human_study_answer_coverage(
     return report
 
 
+def create_human_study_collection_plan(
+    studies: dict[str, Path | str],
+    *,
+    answers_dir: Path | str,
+    reviewer: str,
+    batch_size: int = 20,
+    out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Create a reproducible command plan for collecting Phase 6 human answers."""
+
+    answers_root = Path(answers_dir).resolve()
+    study_entries: dict[str, Any] = {}
+    total_answer_records = 0
+    for label, study_path in sorted(studies.items()):
+        study = Path(study_path).resolve()
+        manifest = _read_json(study / "manifest.json")
+        mirror_tasks = _read_jsonl(study / manifest["files"]["mirror_tasks"])
+        source_tasks = _read_jsonl(study / manifest["files"]["source_tasks"])
+        visibility_tasks = _read_jsonl(study / manifest["files"]["visibility_tasks"])
+        answer_records = len(mirror_tasks) + len(source_tasks) + len(visibility_tasks)
+        total_answer_records += answer_records
+        answer_path = answers_root / f"{label}_real_answers.jsonl"
+        coverage_path = answers_root / f"{label}_real_coverage.json"
+        eval_path = answers_root / f"{label}_real_eval.json"
+        study_str = str(study)
+        answer_str = str(answer_path)
+        coverage_str = str(coverage_path)
+        eval_str = str(eval_path)
+        study_entries[label] = {
+            "study_dir": study_str,
+            "answer_target": answer_str,
+            "coverage_report": coverage_str,
+            "eval_report": eval_str,
+            "source_mirror_mode": manifest.get("source_mirror_mode"),
+            "paired_task_groups": len(
+                {task["task_group_id"] for task in [*mirror_tasks, *source_tasks]}
+            ),
+            "mirror_tasks": len(mirror_tasks),
+            "source_tasks": len(source_tasks),
+            "visibility_tasks": len(visibility_tasks),
+            "answer_template_records": answer_records,
+            "change_task_groups": int(manifest.get("counts", {}).get("change_task_groups", 0)),
+            "conduct_command": (
+                f"uv run semantic-mirror review conduct-study {study_str} "
+                f"--out {answer_str} --reviewer {reviewer} --task-set all "
+                f"--append --max-tasks {batch_size}"
+            ),
+            "coverage_command": (
+                f"uv run semantic-mirror review study-status {study_str} "
+                f"--answers {answer_str} --out {coverage_str}"
+            ),
+            "eval_command": (
+                f"uv run semantic-mirror eval human-study {study_str} "
+                f"--answers {answer_str} --out {eval_str}"
+            ),
+        }
+
+    suite_path = answers_root / "phase6_real_suite_summary.json"
+    suite_command = "uv run semantic-mirror eval human-study-suite " + " ".join(
+        f"--report {entry['eval_report']}" for entry in study_entries.values()
+    ) + f" --out {suite_path}"
+    plan = {
+        "mode": "phase6_real_human_study_collection_plan",
+        "generated_at": _now(),
+        "reviewer": reviewer,
+        "batch_size": batch_size,
+        "answers_dir": str(answers_root),
+        "required_total_answer_records": total_answer_records,
+        "notes": [
+            "Template answers are not pass evidence.",
+            "Use --append for continuation sessions so existing task ids are skipped.",
+            "Run coverage commands before eval commands.",
+        ],
+        "studies": study_entries,
+        "suite_command": suite_command,
+    }
+    if out_path is not None:
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return plan
+
+
 def summarize_human_usefulness_studies(
     report_paths: Iterable[Path | str],
     *,

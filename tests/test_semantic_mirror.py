@@ -20,6 +20,7 @@ from semantic_mirror.evaluation import (
 from semantic_mirror.rewards import score_document, score_mirror
 from semantic_mirror.review import (
     conduct_human_usefulness_study,
+    create_human_study_collection_plan,
     create_human_usefulness_study,
     create_review_pack,
     evaluate_human_usefulness_study,
@@ -417,6 +418,61 @@ def test_human_study_answer_coverage_reports_pending_and_ready_state(tmp_path: P
     assert json.loads(cli_report.read_text(encoding="utf-8"))["counts"][
         "pending_task_records"
     ] == 0
+
+
+def test_human_study_collection_plan_generates_reproducible_commands(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    mirror = tmp_path / "mirror"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "train.py").write_text(SAMPLE_TRAIN, encoding="utf-8")
+    build_repository(repo, mirror, profile="data_ml", zoom="L4")
+    create_review_pack(mirror, tmp_path / "review_pack", max_questions=2)
+    create_human_usefulness_study(tmp_path / "review_pack", tmp_path / "study")
+
+    plan_path = tmp_path / "phase6_plan.json"
+    plan = create_human_study_collection_plan(
+        {"whole_repo": tmp_path / "study"},
+        answers_dir=tmp_path / "phase6",
+        reviewer="reviewer-a",
+        batch_size=7,
+        out_path=plan_path,
+    )
+    assert plan["mode"] == "phase6_real_human_study_collection_plan"
+    assert plan["required_total_answer_records"] == plan["studies"]["whole_repo"][
+        "answer_template_records"
+    ]
+    assert "--max-tasks 7" in plan["studies"]["whole_repo"]["conduct_command"]
+    assert "reviewer-a" in plan["studies"]["whole_repo"]["conduct_command"]
+    assert "review study-status" in plan["studies"]["whole_repo"]["coverage_command"]
+    assert "eval human-study-suite" in plan["suite_command"]
+    assert json.loads(plan_path.read_text(encoding="utf-8"))["reviewer"] == "reviewer-a"
+
+    cli_plan = tmp_path / "phase6_cli_plan.json"
+    cli_status = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "review",
+            "study-collection-plan",
+            "--study",
+            f"whole_repo={tmp_path / 'study'}",
+            "--answers-dir",
+            str(tmp_path / "phase6"),
+            "--reviewer",
+            "reviewer-a",
+            "--batch-size",
+            "7",
+            "--out",
+            str(cli_plan),
+        ],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    cli_summary = json.loads(cli_status.stdout)
+    assert cli_summary["mode"] == "phase6_real_human_study_collection_plan"
+    assert json.loads(cli_plan.read_text(encoding="utf-8"))["batch_size"] == 7
 
 
 def test_semantic_zoom_levels_control_detail_budget(tmp_path: Path) -> None:
