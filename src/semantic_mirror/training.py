@@ -1254,6 +1254,32 @@ def summarize_full_eval_contract_status(
         windows_audit_path=windows_audit_path,
         wsl_smoke_manifest_path=wsl_smoke_manifest_path,
     )
+    if windows_readiness_status.get("checked"):
+        gates.append(
+            _contract_gate(
+                "windows_unsloth_readiness_passed",
+                windows_readiness_status.get("passed") is True,
+                actual={
+                    "native_passed": windows_readiness_status.get("native_passed"),
+                    "native_blocked": windows_readiness_status.get("native_blocked"),
+                    "wsl_smoke_complete": windows_readiness_status.get(
+                        "wsl_smoke_complete"
+                    ),
+                    "wsl_failed_checks": windows_readiness_status.get(
+                        "wsl_failed_checks"
+                    ),
+                    "wsl_smoke_manifest_mode": windows_readiness_status.get(
+                        "wsl_smoke_manifest_mode"
+                    ),
+                },
+                expected={
+                    "native_passed": True,
+                    "or_native_blocked_and_wsl_smoke_complete": True,
+                },
+                evidence=windows_readiness_status.get("wsl_smoke_manifest_path")
+                or windows_readiness_status.get("windows_audit_path"),
+            )
+        )
     package_source_status = _package_source_freshness_contract_status(
         package_source_freshness_path,
         repo_hygiene_status=repo_hygiene_status,
@@ -7529,6 +7555,8 @@ def _remaining_area_for_gate(gate: str) -> str:
         return "rl"
     if gate.startswith("diagnostic_"):
         return "diagnostics"
+    if gate.startswith("windows_"):
+        return "windows_readiness"
     if gate.startswith("package_"):
         return "package"
     if gate.startswith("training_eval_summary") or gate == "all_final_eval_gates_passed":
@@ -7595,6 +7623,9 @@ def _remaining_gate_recovery_item(
         requires_training = bool(blocked_by)
     elif area == "package":
         required_action = _package_recovery_action(gate)
+    elif area == "windows_readiness":
+        required_action = "run_wsl_smoke_chain"
+        requires_training = True
     return {
         "gate": gate,
         "area": area,

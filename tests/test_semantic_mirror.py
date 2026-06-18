@@ -1133,6 +1133,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
+    assert wrong_wsl_status["remaining_by_area"]["windows_readiness"] == [
+        "windows_unsloth_readiness_passed"
+    ]
+    wrong_wsl_recovery = {
+        item["gate"]: item for item in wrong_wsl_status["remaining_recovery_plan"]
+    }
+    assert wrong_wsl_recovery["windows_unsloth_readiness_passed"][
+        "required_action"
+    ] == "run_wsl_smoke_chain"
+    assert wrong_wsl_recovery["windows_unsloth_readiness_passed"]["requires_training"]
     wsl_smoke_action = next(
         action
         for action in wrong_wsl_status["next_actions"]
