@@ -420,7 +420,18 @@ every real-timed reviewer, accuracy, speed, changed-behavior, visibility, and
 task-set gate must pass before those points are earned. It treats DPO/RL evals,
 samples, and diagnostics as stale unless the corresponding stage manifest
 matches the requested target cap; diagnostics must also cite source files from
-the current `outputs` directory. Use
+the current `outputs` directory.
+
+The command's stdout is a compact automation surface, not just a pass/fail
+boolean. It includes `contract_scorecard_summary`, `repo_hygiene_summary`,
+`windows_readiness_summary`, `package_source_summary`,
+`package_command_manifest_summary`, `human_usefulness_summary`,
+`stage_recovery_summary`, `remaining_by_area`, `remaining_recovery_plan`, and
+compact `next_actions`. Those stdout rows include current-versus-expected
+evidence for failed gates, DPO/RL resume decisions, Phase 6 failed gates, real
+timed-answer counts, package source freshness, and command-manifest safety
+checks so automation can decide whether the next step is inspection, human
+study collection, status refresh, or a training launch. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired
