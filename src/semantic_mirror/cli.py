@@ -1443,6 +1443,7 @@ def _windows_readiness_summary(status: object) -> dict[str, object]:
         "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_failed_checks": status.get("wsl_failed_checks", []),
+        "wsl_blocker_summary": status.get("wsl_blocker_summary", []),
         "wsl_missing_stage_manifest_count": len(
             status.get("wsl_missing_stage_manifests", []) or []
         ),

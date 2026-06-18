@@ -3507,9 +3507,9 @@ and `remaining_recovery_plan`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
-per-action `blocked_by_stages` and `stage_actions`, Phase 6 failed gates, real
-timed-answer counts, package source freshness, command-manifest safety checks,
-and package Python metadata.
+per-action `blocked_by_stages` and `stage_actions`, native and WSL readiness
+blocker summaries, Phase 6 failed gates, real timed-answer counts, package
+source freshness, command-manifest safety checks, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -6632,6 +6632,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- WSL smoke manifest mode: `{windows_readiness.get('wsl_smoke_manifest_mode')}`",
             f"- WSL smoke complete: `{windows_readiness.get('wsl_smoke_complete')}`",
             f"- WSL failed checks: `{', '.join(windows_readiness.get('wsl_failed_checks') or []) or 'None'}`",
+            f"- WSL blocker summary: `{'; '.join(windows_readiness.get('wsl_blocker_summary') or []) or 'None'}`",
             f"- WSL missing stage manifests: `{', '.join(windows_readiness.get('wsl_missing_stage_manifests') or []) or 'None'}`",
             f"- WSL missing sample manifests: `{', '.join(windows_readiness.get('wsl_missing_sample_manifests') or []) or 'None'}`",
             f"- WSL diagnostics exists: `{windows_readiness.get('wsl_diagnostics_exists')}`",
@@ -7680,6 +7681,7 @@ def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any
         "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_failed_checks": status.get("wsl_failed_checks", []),
+        "wsl_blocker_summary": status.get("wsl_blocker_summary", []),
         "wsl_missing_stage_manifest_count": len(
             status.get("wsl_missing_stage_manifests", []) or []
         ),
@@ -8073,6 +8075,15 @@ def _windows_readiness_contract_status(
         wsl_failed_checks.append("sample_manifests")
     if wsl_checked and not bool(smoke.get("diagnostics_exists")):
         wsl_failed_checks.append("diagnostics")
+    wsl_blocker_summary = _wsl_smoke_blocker_summary(
+        checked=wsl_checked,
+        manifest_mode=smoke.get("mode") if isinstance(smoke, dict) else None,
+        missing_stage_manifests=missing_stage_manifests,
+        missing_sample_manifests=missing_sample_manifests,
+        diagnostics_exists=bool(smoke.get("diagnostics_exists"))
+        if isinstance(smoke, dict)
+        else False,
+    )
     passed = native_passed or (native_blocked and wsl_complete)
     if native_passed:
         summary = "Windows-native audit passed and is ready to launch."
@@ -8136,6 +8147,7 @@ def _windows_readiness_contract_status(
         "wsl_smoke_manifest_mode": smoke.get("mode") if isinstance(smoke, dict) else None,
         "wsl_smoke_complete": wsl_complete,
         "wsl_failed_checks": wsl_failed_checks,
+        "wsl_blocker_summary": wsl_blocker_summary,
         "wsl_stage_manifests": wsl_stage_manifests,
         "wsl_missing_stage_manifests": missing_stage_manifests,
         "wsl_sample_manifests": wsl_sample_manifests,
@@ -8145,6 +8157,38 @@ def _windows_readiness_contract_status(
         else False,
         "wsl_smoke_out": smoke.get("smoke_out") if isinstance(smoke, dict) else None,
     }
+
+
+def _wsl_smoke_blocker_summary(
+    *,
+    checked: bool,
+    manifest_mode: object,
+    missing_stage_manifests: list[str],
+    missing_sample_manifests: list[str],
+    diagnostics_exists: bool,
+) -> list[str]:
+    if not checked:
+        return []
+    summary: list[str] = []
+    if manifest_mode != "smoke_chain":
+        summary.append(
+            f"Expected WSL smoke manifest mode `smoke_chain`, got `{manifest_mode}`."
+        )
+    if missing_stage_manifests:
+        summary.append(
+            "Missing WSL smoke stage manifests for: "
+            + ", ".join(missing_stage_manifests)
+            + "."
+        )
+    if missing_sample_manifests:
+        summary.append(
+            "Missing WSL smoke sample manifests for: "
+            + ", ".join(missing_sample_manifests)
+            + "."
+        )
+    if not diagnostics_exists:
+        summary.append("WSL smoke diagnostics directory was not reported.")
+    return summary
 
 
 def _package_source_freshness_contract_status(

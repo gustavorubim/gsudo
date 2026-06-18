@@ -1184,6 +1184,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "sample_manifests",
         "diagnostics",
     ]
+    assert wrong_wsl_readiness["wsl_blocker_summary"] == [
+        "Expected WSL smoke manifest mode `smoke_chain`, got `training_validate`.",
+        "Missing WSL smoke stage manifests for: sft, dpo, rl.",
+        "Missing WSL smoke sample manifests for: sft, dpo, rl.",
+        "WSL smoke diagnostics directory was not reported.",
+    ]
     assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_status["remaining_by_area"]["windows_unsloth_readiness"] == [
@@ -1204,6 +1210,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert wsl_smoke_action["category"] == "training"
     assert wsl_smoke_action["launches_training"] is True
     assert "smoke_chain_manifest_mode" in wsl_smoke_action["reason"]
+    assert "diagnostics" in wsl_smoke_action["reason"]
     assert "run_wsl_smoke_chain.ps1" in wsl_smoke_action["command"]
     assert "Set-Location $package" in wsl_smoke_action["windows_powershell_command"]
     assert "-HeldOutDataset <windows_dataset_dir>" in wsl_smoke_action[
@@ -1540,6 +1547,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
     assert cli_stdout["windows_readiness_summary"]["wsl_failed_checks"] == []
+    assert cli_stdout["windows_readiness_summary"]["wsl_blocker_summary"] == []
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
@@ -1709,6 +1717,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_status_json["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
+    assert cli_status_json["windows_readiness_summary"]["wsl_blocker_summary"] == []
     assert cli_status_json["windows_readiness_status"]["native_python_version"] == "3.14.0"
     assert cli_status_json["windows_readiness_status"]["native_blocker_summary"] == [
         "PyTorch CUDA is not available for the audited runtime.",
@@ -1784,6 +1793,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Native blocker summary: `PyTorch CUDA is not available" in contract_status_md
     assert "WSL smoke manifest mode: `smoke_chain`" in contract_status_md
     assert "WSL failed checks: `None`" in contract_status_md
+    assert "WSL blocker summary: `None`" in contract_status_md
     assert "WSL missing stage manifests: `None`" in contract_status_md
     assert "WSL missing sample manifests: `None`" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
@@ -3278,6 +3288,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
     assert "per-action `blocked_by_stages` and `stage_actions`" in package_readme
+    assert "native and WSL readiness" in package_readme
+    assert "blocker summaries" in package_readme
     assert "real" in package_readme
     assert "timed-answer counts" in package_readme
     assert "remaining_recovery_plan" in package_readme
@@ -3299,6 +3311,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "automation can decide" in root_readme
     assert "Next-action rows also expose" in root_readme
     assert "`blocked_by_stages` and `stage_actions`" in root_readme
+    assert "native and WSL readiness blocker summaries" in root_readme
     assert "generate_eval_report_after_stage" in root_readme
     assert "generate_sample_inspection_after_stage" in root_readme
     assert (
