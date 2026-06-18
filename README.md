@@ -301,7 +301,8 @@ stages, and target artifacts. Stale stage-derived eval rows use
 `generate_sample_inspection_after_stage`, and
 `blocked_by_stages` names the stage that must finish before those artifacts are
 current. `recovery_plan_summary` rolls the same rows up by action category,
-training requirement, blocking stage, and command-link validity. Contract-status JSON and stdout also include package source,
+training dependency, command launch behavior, blocking stage, and command-link
+validity. Contract-status JSON and stdout also include package source,
 command-manifest, and Python metadata summaries so automation can distinguish
 package evidence repairs from training work. Next-action rows also expose
 `blocked_by_stages` and `stage_actions`, so callers can route WSL smoke, DPO
@@ -440,7 +441,7 @@ stdout is the compact pass/fail summary for callers. Both include
 `package_command_manifest_summary`, `package_metadata_summary`,
 `human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`, and
 `remaining_recovery_plan`, plus `recovery_plan_summary` for category, blocker,
-and command-link counts.
+command-link, and command-launch counts.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `blocked_by_stages` and

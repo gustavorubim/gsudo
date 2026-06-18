@@ -862,6 +862,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "command_link_invalid_count": 0,
         "command_link_unchecked_count": 12,
         "command_link_valid_count": 0,
+        "command_launches_training_count": 8,
+        "command_non_training_count": 4,
         "missing_command_names": [],
         "non_training_action_counts": {},
         "non_training_count": 0,
@@ -1074,6 +1076,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "- Total items: `12`" in status_markdown
     assert "- Requires training: `12`" in status_markdown
     assert "- Command links unchecked: `12`" in status_markdown
+    assert "- Commands launching training: `8`" in status_markdown
+    assert "- Commands not launching training: `4`" in status_markdown
     assert "- Missing command names: `[]`" in status_markdown
     assert (
         '- Action category counts: `{"diagnostics": 1, "evaluation": 6, "status": 3, "training": 2}`'

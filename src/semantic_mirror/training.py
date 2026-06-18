@@ -3508,7 +3508,7 @@ stage-derived eval and sample artifacts from missing reports: eval rows use
 `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
 `recovery_plan_summary` rolls the same rows up by action category, training
-requirement, blocking stage, and command-link validity.
+dependency, command launch behavior, blocking stage, and command-link validity.
 `outputs/contract_status.json` and `train contract-status` stdout are automation
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
@@ -6858,6 +6858,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Command links valid: `{recovery_summary.get('command_link_valid_count', 0)}`",
                     f"- Command links invalid: `{recovery_summary.get('command_link_invalid_count', 0)}`",
                     f"- Command links unchecked: `{recovery_summary.get('command_link_unchecked_count', 0)}`",
+                    f"- Commands launching training: `{recovery_summary.get('command_launches_training_count', 0)}`",
+                    f"- Commands not launching training: `{recovery_summary.get('command_non_training_count', 0)}`",
                     f"- Missing command names: `{json.dumps(recovery_summary.get('missing_command_names', []), sort_keys=True)}`",
                     f"- Action category counts: `{json.dumps(recovery_summary.get('action_category_counts', {}), sort_keys=True)}`",
                     f"- Blocked stage counts: `{json.dumps(recovery_summary.get('blocked_stage_counts', {}), sort_keys=True)}`",
@@ -7724,6 +7726,8 @@ def _recovery_plan_contract_summary(
     command_link_valid_count = 0
     command_link_invalid_count = 0
     command_link_unchecked_count = 0
+    command_launches_training_count = 0
+    command_non_training_count = 0
     missing_command_names: set[str] = set()
     for item in recovery_plan:
         category = str(item.get("action_category") or "inspection")
@@ -7738,6 +7742,10 @@ def _recovery_plan_contract_summary(
             blocked_item_count += 1
         for stage in blocked_by:
             blocked_stage_counts[stage] = blocked_stage_counts.get(stage, 0) + 1
+        if item.get("next_action_launches_training"):
+            command_launches_training_count += 1
+        else:
+            command_non_training_count += 1
         command_link_valid = item.get("next_action_command_link_valid")
         if command_link_valid is True:
             command_link_valid_count += 1
@@ -7757,6 +7765,8 @@ def _recovery_plan_contract_summary(
         "command_link_valid_count": command_link_valid_count,
         "command_link_invalid_count": command_link_invalid_count,
         "command_link_unchecked_count": command_link_unchecked_count,
+        "command_launches_training_count": command_launches_training_count,
+        "command_non_training_count": command_non_training_count,
         "missing_command_names": sorted(missing_command_names),
         "action_category_counts": {
             key: action_category_counts[key] for key in sorted(action_category_counts)

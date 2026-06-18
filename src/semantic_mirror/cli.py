@@ -1617,6 +1617,8 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
     command_link_valid_count = 0
     command_link_invalid_count = 0
     command_link_unchecked_count = 0
+    command_launches_training_count = 0
+    command_non_training_count = 0
     missing_command_names: set[str] = set()
     for item in plan:
         if not isinstance(item, dict):
@@ -1640,6 +1642,10 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
             blocked_stage_counts[stage_name] = (
                 blocked_stage_counts.get(stage_name, 0) + 1
             )
+        if item.get("next_action_launches_training"):
+            command_launches_training_count += 1
+        else:
+            command_non_training_count += 1
         command_link_valid = item.get("next_action_command_link_valid")
         if command_link_valid is True:
             command_link_valid_count += 1
@@ -1660,6 +1666,8 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         "command_link_valid_count": command_link_valid_count,
         "command_link_invalid_count": command_link_invalid_count,
         "command_link_unchecked_count": command_link_unchecked_count,
+        "command_launches_training_count": command_launches_training_count,
+        "command_non_training_count": command_non_training_count,
         "missing_command_names": sorted(missing_command_names),
         "action_category_counts": {
             key: action_category_counts[key] for key in sorted(action_category_counts)
