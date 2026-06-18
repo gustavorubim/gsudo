@@ -1362,6 +1362,8 @@ def _package_command_manifest_summary(status: object) -> dict[str, object]:
         "command_count": status.get("command_count"),
         "training_command_count": status.get("training_command_count"),
         "non_training_command_count": status.get("non_training_command_count"),
+        "command_category_counts": status.get("command_category_counts", {}),
+        "commands_by_category": status.get("commands_by_category", {}),
         "failed_checks": status.get("failed_checks", []),
     }
 

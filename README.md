@@ -442,9 +442,9 @@ presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
 `stage_actions`, native and WSL readiness blocker summaries, Phase 6 failed
 gates, real timed-answer counts, package source freshness, command-manifest
-safety checks, and package Python metadata so automation can decide whether the
-next step is inspection, human study collection, status refresh, or a training
-launch. Use
+safety checks, command category rollups, and package Python metadata so
+automation can decide whether the next step is inspection, human study
+collection, status refresh, or a training launch. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired

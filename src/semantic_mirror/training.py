@@ -3509,7 +3509,8 @@ presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
 per-action `blocked_by_stages` and `stage_actions`, native and WSL readiness
 blocker summaries, Phase 6 failed gates, real timed-answer counts, package
-source freshness, command-manifest safety checks, and package Python metadata.
+source freshness, command-manifest safety checks, command category rollups, and
+package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -6673,8 +6674,16 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Command count: `{command_manifest.get('command_count')}`",
             f"- Training command count: `{command_manifest.get('training_command_count')}`",
             f"- Non-training command count: `{command_manifest.get('non_training_command_count')}`",
+            f"- Command category counts: `{json.dumps(command_manifest.get('command_category_counts') or {}, sort_keys=True)}`",
         ]
     )
+    if command_manifest.get("commands_by_category"):
+        lines.extend(["", "Commands by category:"])
+        for category, names in command_manifest["commands_by_category"].items():
+            lines.append(
+                f"- `{category}`: "
+                + ", ".join(f"`{name}`" for name in names)
+            )
     if command_manifest.get("training_commands"):
         lines.append(
             "- Training commands: "
@@ -7719,6 +7728,8 @@ def _package_command_manifest_contract_summary(
         "command_count": status.get("command_count"),
         "training_command_count": status.get("training_command_count"),
         "non_training_command_count": status.get("non_training_command_count"),
+        "command_category_counts": status.get("command_category_counts", {}),
+        "commands_by_category": status.get("commands_by_category", {}),
         "failed_checks": status.get("failed_checks", []),
     }
 
@@ -8405,6 +8416,14 @@ def _package_command_manifest_contract_status(
         for name, command in commands.items()
         if isinstance(command, dict) and not isinstance(command.get("category"), str)
     )
+    commands_by_category: dict[str, list[str]] = {}
+    for name, command in commands.items():
+        if not isinstance(command, dict) or not isinstance(command.get("category"), str):
+            continue
+        commands_by_category.setdefault(str(command["category"]), []).append(name)
+    commands_by_category = {
+        category: sorted(names) for category, names in sorted(commands_by_category.items())
+    }
     failed_checks = []
     if report.get("schema_version") != 1:
         failed_checks.append("schema_version")
@@ -8436,6 +8455,10 @@ def _package_command_manifest_contract_status(
         "non_training_command_count": len(non_training_commands),
         "training_commands": sorted(training_commands),
         "non_training_commands": sorted(non_training_commands),
+        "command_category_counts": {
+            category: len(names) for category, names in commands_by_category.items()
+        },
+        "commands_by_category": commands_by_category,
         "missing_training_commands": missing_training,
         "unexpected_training_commands": unexpected_training,
         "missing_non_training_commands": missing_non_training,

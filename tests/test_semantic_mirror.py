@@ -1558,6 +1558,22 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["package_source_summary"]["missing_package_specific_doc_count"] == 0
     assert cli_stdout["package_command_manifest_summary"]["passed"] is True
     assert cli_stdout["package_command_manifest_summary"]["training_command_count"] == 6
+    assert cli_stdout["package_command_manifest_summary"]["command_category_counts"] == {
+        "diagnostics": 1,
+        "evaluation": 8,
+        "generation": 1,
+        "inspection": 3,
+        "setup": 3,
+        "status": 2,
+        "training": 6,
+        "validation": 2,
+    }
+    assert cli_stdout["package_command_manifest_summary"]["commands_by_category"][
+        "status"
+    ] == ["contract_status", "source_freshness"]
+    assert cli_stdout["package_command_manifest_summary"]["commands_by_category"][
+        "training"
+    ] == ["dpo", "full_training_eval", "rl", "sft", "smoke_chain", "wsl_smoke_chain"]
     assert cli_stdout["package_metadata_summary"]["passed"] is True
     assert cli_stdout["package_metadata_summary"]["requires_python"] == ">=3.11,<3.14"
     assert cli_stdout["package_metadata_summary"]["excludes_python_3_14"] is True
@@ -1729,6 +1745,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == 0
     assert cli_status_json["package_command_manifest_status"]["passed"]
     assert cli_status_json["package_command_manifest_summary"]["training_command_count"] == 6
+    assert cli_status_json["package_command_manifest_summary"]["command_category_counts"][
+        "evaluation"
+    ] == 8
+    assert cli_status_json["package_command_manifest_summary"]["commands_by_category"][
+        "diagnostics"
+    ] == ["report"]
     assert cli_status_json["package_command_manifest_status"]["training_commands"] == [
         "dpo",
         "full_training_eval",
@@ -1804,6 +1826,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "## Package Command Manifest" in contract_status_md
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
+    assert "Command category counts:" in contract_status_md
+    assert "`status`: `contract_status`, `source_freshness`" in contract_status_md
     assert "## Package Python Metadata" in contract_status_md
     assert "Requires Python: `>=3.11,<3.14`" in contract_status_md
     assert "Run real Phase 6 collection and eval sequence" in contract_status_md
@@ -3290,6 +3314,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "per-action `blocked_by_stages` and `stage_actions`" in package_readme
     assert "native and WSL readiness" in package_readme
     assert "blocker summaries" in package_readme
+    assert "command category rollups" in package_readme
     assert "real" in package_readme
     assert "timed-answer counts" in package_readme
     assert "remaining_recovery_plan" in package_readme
@@ -3312,6 +3337,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "Next-action rows also expose" in root_readme
     assert "`blocked_by_stages` and `stage_actions`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
+    assert "command category rollups" in root_readme
     assert "generate_eval_report_after_stage" in root_readme
     assert "generate_sample_inspection_after_stage" in root_readme
     assert (
