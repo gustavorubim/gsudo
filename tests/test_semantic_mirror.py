@@ -1269,10 +1269,34 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             "inspect_full_training_eval_resume": 1,
             "report": 1,
         },
+        "command_inputs": {
+            "contract_status": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
+            "full_training_eval": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
+            "inspect_full_training_eval_resume": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
+            "report": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
+        },
         "launches_training_count": 1,
         "missing_command_metadata_count": 0,
         "non_training_count": 3,
+        "optional_input_counts": {},
         "optional_input_action_count": 0,
+        "required_input_counts": {},
         "required_input_action_count": 0,
         "total_items": 4,
     }
@@ -2565,10 +2589,68 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             "phase6_collection_sequence": 1,
             "report": 1,
         },
+        "command_inputs": {
+            "contract_status": {
+                "gate_count": 1,
+                "optional_inputs": [
+                    "human_study_coverage",
+                    "human_study_suite",
+                    "package_source_freshness",
+                    "repo_root",
+                    "windows_audit",
+                    "wsl_smoke_manifest",
+                ],
+                "required_inputs": ["outputs_dir"],
+            },
+            "full_training_eval": {
+                "gate_count": 1,
+                "optional_inputs": [
+                    "package_source_freshness",
+                    "source_freshness_repo_root",
+                    "windows_audit",
+                    "wsl_smoke_manifest",
+                ],
+                "required_inputs": ["baseline_candidates", "held_out_dataset"],
+            },
+            "inspect_full_training_eval_resume": {
+                "gate_count": 1,
+                "optional_inputs": [
+                    "dpo_resume_from_checkpoint",
+                    "sft_resume_from_checkpoint",
+                ],
+                "required_inputs": ["outputs_dir"],
+            },
+            "phase6_collection_sequence": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
+            "report": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": ["outputs_dir"],
+            },
+        },
         "launches_training_count": 1,
         "missing_command_metadata_count": 0,
         "non_training_count": 4,
+        "optional_input_counts": {
+            "dpo_resume_from_checkpoint": 1,
+            "human_study_coverage": 1,
+            "human_study_suite": 1,
+            "package_source_freshness": 2,
+            "repo_root": 1,
+            "sft_resume_from_checkpoint": 1,
+            "source_freshness_repo_root": 1,
+            "windows_audit": 2,
+            "wsl_smoke_manifest": 2,
+        },
         "optional_input_action_count": 3,
+        "required_input_counts": {
+            "baseline_candidates": 1,
+            "held_out_dataset": 1,
+            "outputs_dir": 3,
+        },
         "required_input_action_count": 4,
         "total_items": 5,
     }
@@ -2724,6 +2806,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "`status`: `contract_status`, `source_freshness`" in contract_status_md
     assert "Actions with required inputs: `4`" in contract_status_md
     assert "Actions with optional inputs: `3`" in contract_status_md
+    assert "Required input counts:" in contract_status_md
+    assert "Optional input counts:" in contract_status_md
+    assert "Command inputs:" in contract_status_md
     assert "Required inputs: `held_out_dataset, baseline_candidates`" in contract_status_md
     assert "Optional inputs: `source_freshness_repo_root, windows_audit, wsl_smoke_manifest, package_source_freshness`" in contract_status_md
     assert "Gates with required command inputs: `12`" in contract_status_md
@@ -4320,7 +4405,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "per-command dependency input maps" in package_readme
     assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
-    assert "current next-action set" in package_readme
+    assert "current next-action" in package_readme
+    assert "set. `stage_recovery_summary`" in package_readme
+    assert "input rollups" in package_readme
+    assert "per-command input maps" in package_readme
     assert "required-input and optional-input action" in package_readme
     assert "readiness next-command routing fields" in package_readme
     assert "package_metadata_summary" in package_readme
@@ -4368,6 +4456,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "next_action_summary" in root_readme
     assert "current next-action set" in root_readme
     assert "actions with declared required and optional inputs" in root_readme
+    assert "input counts and per-command input maps" in root_readme
     assert "next readiness command name" in root_readme
     assert "recovery_plan_summary" in root_readme
     assert "training_dependency_summary" in root_readme

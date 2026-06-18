@@ -3610,7 +3610,8 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. `next_action_summary` also includes
 a blocked-stage command matrix plus required-input and optional-input action
-counts for the current next-action set. `stage_recovery_summary`
+counts, input rollups, and per-command input maps for the current next-action
+set. `stage_recovery_summary`
 includes per-stage next command names, categories, launch flags, and blocked
 stages so reuse decisions can be separated from training launches. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
@@ -7169,6 +7170,9 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- Actions with required inputs: `{next_action_summary.get('required_input_action_count', 0)}`",
                 f"- Actions with optional inputs: `{next_action_summary.get('optional_input_action_count', 0)}`",
                 f"- Command counts: `{json.dumps(next_action_summary.get('command_counts', {}), sort_keys=True)}`",
+                f"- Required input counts: `{json.dumps(next_action_summary.get('required_input_counts', {}), sort_keys=True)}`",
+                f"- Optional input counts: `{json.dumps(next_action_summary.get('optional_input_counts', {}), sort_keys=True)}`",
+                f"- Command inputs: `{json.dumps(next_action_summary.get('command_inputs', {}), sort_keys=True)}`",
                 f"- Command category counts: `{json.dumps(next_action_summary.get('command_category_counts', {}), sort_keys=True)}`",
                 f"- Blocked stage command matrix: `{json.dumps(next_action_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
                 "",
@@ -8416,6 +8420,9 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
     command_counts: dict[str, int] = {}
     command_category_counts: dict[str, int] = {}
     blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
+    required_input_counts: dict[str, int] = {}
+    optional_input_counts: dict[str, int] = {}
+    command_inputs: dict[str, dict[str, Any]] = {}
     launches_training_count = 0
     non_training_count = 0
     missing_command_metadata_count = 0
@@ -8437,6 +8444,16 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
             optional_input_action_count += 1
         command_key = str(command_name or "unknown")
         command_counts[command_key] = command_counts.get(command_key, 0) + 1
+        required_inputs = action.get("required_inputs") or []
+        optional_inputs = action.get("optional_inputs") or []
+        _increment_input_counts(required_input_counts, required_inputs)
+        _increment_input_counts(optional_input_counts, optional_inputs)
+        _merge_command_input_summary(
+            command_inputs,
+            command_key,
+            required_inputs,
+            optional_inputs,
+        )
         category_key = str(command_category or action.get("category") or "unspecified")
         command_category_counts[category_key] = (
             command_category_counts.get(category_key, 0) + 1
@@ -8467,6 +8484,13 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
         "command_counts": {
             key: command_counts[key] for key in sorted(command_counts)
         },
+        "required_input_counts": {
+            key: required_input_counts[key] for key in sorted(required_input_counts)
+        },
+        "optional_input_counts": {
+            key: optional_input_counts[key] for key in sorted(optional_input_counts)
+        },
+        "command_inputs": _finalize_command_input_summary(command_inputs),
         "command_category_counts": {
             key: command_category_counts[key]
             for key in sorted(command_category_counts)

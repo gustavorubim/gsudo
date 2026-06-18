@@ -2060,6 +2060,9 @@ def _next_action_summary(actions: object) -> dict[str, object]:
     command_counts: dict[str, int] = {}
     command_category_counts: dict[str, int] = {}
     blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
+    required_input_counts: dict[str, int] = {}
+    optional_input_counts: dict[str, int] = {}
+    command_inputs: dict[str, dict[str, object]] = {}
     launches_training_count = 0
     non_training_count = 0
     missing_command_metadata_count = 0
@@ -2085,6 +2088,16 @@ def _next_action_summary(actions: object) -> dict[str, object]:
             optional_input_action_count += 1
         command_key = str(command_name or "unknown")
         command_counts[command_key] = command_counts.get(command_key, 0) + 1
+        required_inputs = action.get("required_inputs")
+        optional_inputs = action.get("optional_inputs")
+        _increment_input_counts(required_input_counts, required_inputs)
+        _increment_input_counts(optional_input_counts, optional_inputs)
+        _merge_command_input_summary(
+            command_inputs,
+            command_key,
+            required_inputs,
+            optional_inputs,
+        )
         category_key = str(command_category or action.get("category") or "unspecified")
         command_category_counts[category_key] = (
             command_category_counts.get(category_key, 0) + 1
@@ -2118,6 +2131,13 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         "command_counts": {
             key: command_counts[key] for key in sorted(command_counts)
         },
+        "required_input_counts": {
+            key: required_input_counts[key] for key in sorted(required_input_counts)
+        },
+        "optional_input_counts": {
+            key: optional_input_counts[key] for key in sorted(optional_input_counts)
+        },
+        "command_inputs": _finalize_command_input_summary(command_inputs),
         "command_category_counts": {
             key: command_category_counts[key]
             for key in sorted(command_category_counts)

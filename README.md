@@ -453,7 +453,7 @@ plus `recovery_plan_summary` for category, blocker,
 blocked-stage command matrix, command-link, command-launch, and next-command counts.
 `next_action_summary` also includes a blocked-stage command matrix plus counts
 of actions with declared required and optional inputs for the currently
-recommended next actions.
+recommended next actions, including input counts and per-command input maps.
 `windows_readiness_summary` includes the next readiness command name, category,
 training-launch flag, blocked stages, and failed checks so automation can route
 native-audit refreshes separately from WSL smoke-chain launches.
