@@ -1476,6 +1476,14 @@ def _windows_readiness_summary(status: object) -> dict[str, object]:
         "native_python_version": status.get("native_python_version"),
         "native_platform": status.get("native_platform"),
         "native_audit_command": status.get("native_audit_command"),
+        "next_action_command_name": status.get("next_action_command_name"),
+        "next_action_command_category": status.get("next_action_command_category"),
+        "next_action_launches_training": status.get("next_action_launches_training"),
+        "next_action_blocked_by_stages": status.get(
+            "next_action_blocked_by_stages", []
+        ),
+        "next_action_failed_checks": status.get("next_action_failed_checks", []),
+        "next_action_reason": status.get("next_action_reason"),
         "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_failed_checks": status.get("wsl_failed_checks", []),

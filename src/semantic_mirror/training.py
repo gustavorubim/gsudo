@@ -3525,7 +3525,7 @@ per-action `command_name`, `command_category`, `blocked_by_stages`, and
 `stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
 `next_action_command_name`, `next_action_launches_training`,
 `next_action_command_exists`, and `next_action_command_link_valid`, native and WSL
-readiness blocker summaries, Phase 6 failed gates, real timed-answer counts,
+readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, command category
 rollups, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
@@ -6646,6 +6646,12 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Native passed: `{windows_readiness.get('native_passed')}`",
             f"- Native blocked: `{windows_readiness.get('native_blocked')}`",
             f"- Native blocker summary: `{'; '.join(windows_readiness.get('native_blocker_summary') or []) or 'None'}`",
+            f"- Next action command: `{windows_readiness.get('next_action_command_name') or 'None'}`",
+            f"- Next action category: `{windows_readiness.get('next_action_command_category') or 'None'}`",
+            f"- Next action launches training: `{windows_readiness.get('next_action_launches_training', False)}`",
+            f"- Next action blocked stages: `{', '.join(windows_readiness.get('next_action_blocked_by_stages') or []) or 'None'}`",
+            f"- Next action failed checks: `{', '.join(windows_readiness.get('next_action_failed_checks') or []) or 'None'}`",
+            f"- Next action reason: {windows_readiness.get('next_action_reason') or 'None'}",
             f"- WSL smoke manifest path: `{windows_readiness.get('wsl_smoke_manifest_path')}`",
             f"- WSL smoke manifest mode: `{windows_readiness.get('wsl_smoke_manifest_mode')}`",
             f"- WSL smoke complete: `{windows_readiness.get('wsl_smoke_complete')}`",
@@ -7934,6 +7940,14 @@ def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any
         "native_python_version": status.get("native_python_version"),
         "native_platform": status.get("native_platform"),
         "native_audit_command": status.get("native_audit_command"),
+        "next_action_command_name": status.get("next_action_command_name"),
+        "next_action_command_category": status.get("next_action_command_category"),
+        "next_action_launches_training": status.get("next_action_launches_training"),
+        "next_action_blocked_by_stages": status.get(
+            "next_action_blocked_by_stages", []
+        ),
+        "next_action_failed_checks": status.get("next_action_failed_checks", []),
+        "next_action_reason": status.get("next_action_reason"),
         "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_failed_checks": status.get("wsl_failed_checks", []),
@@ -8494,10 +8508,23 @@ def _windows_readiness_contract_status(
         )
     else:
         summary = "Windows readiness evidence is incomplete or failing."
+    next_action = _windows_readiness_next_action(
+        passed=passed,
+        native_checked=native_checked,
+        native_blocked=native_blocked,
+        wsl_complete=wsl_complete,
+        wsl_failed_checks=wsl_failed_checks,
+    )
     return {
         "checked": native_checked or wsl_checked,
         "passed": passed if native_checked or wsl_checked else None,
         "summary": summary,
+        "next_action_command_name": next_action["command_name"],
+        "next_action_command_category": next_action["command_category"],
+        "next_action_launches_training": next_action["launches_training"],
+        "next_action_blocked_by_stages": next_action["blocked_by_stages"],
+        "next_action_failed_checks": next_action["failed_checks"],
+        "next_action_reason": next_action["reason"],
         "windows_audit_path": str(audit_path) if audit_path is not None else None,
         "wsl_smoke_manifest_path": str(smoke_path) if smoke_path is not None else None,
         "native_checked": native_checked,
@@ -8551,6 +8578,55 @@ def _windows_readiness_contract_status(
         if isinstance(smoke, dict)
         else False,
         "wsl_smoke_out": smoke.get("smoke_out") if isinstance(smoke, dict) else None,
+    }
+
+
+def _windows_readiness_next_action(
+    *,
+    passed: bool,
+    native_checked: bool,
+    native_blocked: bool,
+    wsl_complete: bool,
+    wsl_failed_checks: list[str],
+) -> dict[str, Any]:
+    if passed:
+        return {
+            "command_name": None,
+            "command_category": None,
+            "launches_training": False,
+            "blocked_by_stages": [],
+            "failed_checks": [],
+            "reason": None,
+        }
+    if native_blocked and not wsl_complete:
+        return {
+            "command_name": "wsl_smoke_chain",
+            "command_category": "training",
+            "launches_training": True,
+            "blocked_by_stages": ["sft", "dpo", "rl"],
+            "failed_checks": wsl_failed_checks,
+            "reason": (
+                "Windows-native readiness is blocked; run the Windows-hosted WSL "
+                "smoke-chain command to produce required stage, sample, and "
+                "diagnostic evidence."
+            ),
+        }
+    if not native_checked:
+        return {
+            "command_name": "audit",
+            "command_category": "validation",
+            "launches_training": False,
+            "blocked_by_stages": [],
+            "failed_checks": [],
+            "reason": "Run the Windows-native training audit before selecting a fallback.",
+        }
+    return {
+        "command_name": "audit",
+        "command_category": "validation",
+        "launches_training": False,
+        "blocked_by_stages": [],
+        "failed_checks": [],
+        "reason": "Refresh the Windows-native training audit with exact blocker evidence.",
     }
 
 

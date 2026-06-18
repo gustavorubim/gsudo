@@ -448,6 +448,9 @@ stdout is the compact pass/fail summary for callers. Both include
 blocked-stage command matrix, command-link, command-launch, and next-command counts.
 `next_action_summary` also includes a blocked-stage command matrix for the
 currently recommended next actions.
+`windows_readiness_summary` includes the next readiness command name, category,
+training-launch flag, blocked stages, and failed checks so automation can route
+native-audit refreshes separately from WSL smoke-chain launches.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,

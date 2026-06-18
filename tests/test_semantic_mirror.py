@@ -1353,6 +1353,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert readiness_status["windows_readiness_status"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
+    assert readiness_status["windows_readiness_status"]["next_action_command_name"] is None
+    assert (
+        readiness_status["windows_readiness_status"]["next_action_launches_training"]
+        is False
+    )
+    assert readiness_status["windows_readiness_status"]["next_action_failed_checks"] == []
     readiness_scorecard = {
         row["area"]: row for row in readiness_status["contract_scorecard"]
     }
@@ -1394,6 +1400,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
+    assert wrong_wsl_readiness["next_action_command_name"] == "wsl_smoke_chain"
+    assert wrong_wsl_readiness["next_action_command_category"] == "training"
+    assert wrong_wsl_readiness["next_action_launches_training"] is True
+    assert wrong_wsl_readiness["next_action_blocked_by_stages"] == ["sft", "dpo", "rl"]
+    assert wrong_wsl_readiness["next_action_failed_checks"] == [
+        "smoke_chain_manifest_mode",
+        "stage_manifests",
+        "sample_manifests",
+        "diagnostics",
+    ]
+    assert "Windows-native readiness is blocked" in wrong_wsl_readiness[
+        "next_action_reason"
+    ]
     assert wrong_wsl_status["remaining_by_area"]["windows_unsloth_readiness"] == [
         "windows_unsloth_readiness_passed"
     ]
@@ -1759,6 +1778,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
+    assert cli_stdout["windows_readiness_summary"]["next_action_command_name"] is None
+    assert (
+        cli_stdout["windows_readiness_summary"]["next_action_launches_training"]
+        is False
+    )
+    assert cli_stdout["windows_readiness_summary"]["next_action_failed_checks"] == []
     assert cli_stdout["package_source_summary"]["passed"] is True
     assert cli_stdout["package_source_summary"]["git_commit_matches_repo"] is True
     assert cli_stdout["package_source_summary"]["compared_file_count"] == 2
@@ -3645,6 +3670,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "stage_recovery_summary" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
+    assert "readiness next-command routing fields" in package_readme
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
@@ -3679,6 +3705,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package_metadata_summary" in root_readme
     assert "next_action_summary" in root_readme
     assert "current next-action set" in root_readme
+    assert "next readiness command name" in root_readme
     assert "recovery_plan_summary" in root_readme
     assert "blocked-stage command" in root_readme
     assert "matrix" in root_readme
