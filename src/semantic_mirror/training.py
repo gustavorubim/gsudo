@@ -3492,11 +3492,13 @@ SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
 `outputs/diagnostics/`, `outputs/training_eval_summary.json`,
 `outputs/contract_status.json`, and `outputs/contract_status.md`. The contract
 status JSON includes `remaining_recovery_plan`, and the Markdown includes a
-`Recovery Plan` table mapping each failed gate to the required action, whether
-training is required, blocking stages, and target artifacts. The
-recovery plan distinguishes stale stage-derived eval and sample artifacts from
-missing reports: eval rows use `generate_eval_report_after_stage`, sample rows
-use `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
+`Recovery Plan` table mapping each failed gate to the required action, action
+category, whether training is required, blocking stages, and target artifacts.
+Each row also includes an `action_category` for routing failed gates without
+parsing action names. The recovery plan distinguishes stale stage-derived eval
+and sample artifacts from missing reports: eval rows use
+`generate_eval_report_after_stage`, sample rows use
+`generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
 `outputs/contract_status.json` and `train contract-status` stdout are automation
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
@@ -3507,10 +3509,10 @@ and `remaining_recovery_plan`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
-per-action `blocked_by_stages` and `stage_actions`, native and WSL readiness
-blocker summaries, Phase 6 failed gates, real timed-answer counts, package
-source freshness, command-manifest safety checks, command category rollups, and
-package Python metadata.
+per-action `blocked_by_stages` and `stage_actions`, recovery-plan
+`action_category`, native and WSL readiness blocker summaries, Phase 6 failed
+gates, real timed-answer counts, package source freshness, command-manifest
+safety checks, command category rollups, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -6836,8 +6838,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     "",
                     "### Recovery Plan",
                     "",
-                    "| Gate | Action | Requires Training | Blocked By | Artifacts |",
-                    "| --- | --- | --- | --- | --- |",
+                    "| Gate | Action | Category | Requires Training | Blocked By | Artifacts |",
+                    "| --- | --- | --- | --- | --- | --- |",
                 ]
             )
             for plan_item in recovery_plan:
@@ -6845,6 +6847,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 artifacts = plan_item.get("artifacts") or []
                 lines.append(
                     f"| `{plan_item['gate']}` | `{plan_item['required_action']}` | "
+                    f"`{plan_item.get('action_category', 'inspection')}` | "
                     f"`{plan_item['requires_training']}` | "
                     f"{', '.join(f'`{stage}`' for stage in blocked_by) or '`None`'} | "
                     f"{', '.join(f'`{artifact}`' for artifact in artifacts)} |"
@@ -7920,17 +7923,36 @@ def _remaining_gate_recovery_item(
     elif area == "windows_unsloth_readiness":
         required_action = "run_wsl_smoke_chain"
         requires_training = True
+    action_category = _remaining_recovery_action_category(required_action)
     return {
         "gate": gate,
         "area": area,
         "stage": stage,
         "required_action": required_action,
+        "action_category": action_category,
         "requires_training": requires_training,
         "blocked_by_stages": blocked_by,
         "artifacts": artifacts,
         "current_evidence": item.get("actual"),
         "expected_evidence": item.get("expected"),
     }
+
+
+def _remaining_recovery_action_category(required_action: str) -> str:
+    if required_action in {"resume", "run", "rerun", "run_wsl_smoke_chain"}:
+        return "training"
+    if required_action == "regenerate_diagnostics":
+        return "diagnostics"
+    if required_action == "rerun_full_eval_summary":
+        return "status"
+    if required_action in {
+        "generate_eval_report_after_stage",
+        "generate_sample_inspection_after_stage",
+    }:
+        return "evaluation"
+    if required_action.startswith(("regenerate_package_", "fix_package_")):
+        return "package"
+    return "inspection"
 
 
 def _package_recovery_action(gate: str) -> str:
