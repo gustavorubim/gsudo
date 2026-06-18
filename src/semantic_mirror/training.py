@@ -1958,13 +1958,18 @@ def _write_project_metadata(out: Path) -> None:
     project_root = Path(__file__).resolve().parents[2]
     pyproject = project_root / "pyproject.toml"
     if pyproject.exists():
-        shutil.copy2(pyproject, out / "pyproject.toml")
+        pyproject_text = pyproject.read_text(encoding="utf-8")
+        pyproject_text = pyproject_text.replace(
+            'requires-python = ">=3.11"',
+            f'requires-python = "{UNSLOTH_PYTHON_RANGE}"',
+        )
+        (out / "pyproject.toml").write_text(pyproject_text, encoding="utf-8")
         return
     (out / "pyproject.toml").write_text(
         """[project]
 name = "semantic-mirror-runtime"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "tree-sitter>=0.25.2",
   "tree-sitter-python>=0.25.0",

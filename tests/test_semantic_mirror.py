@@ -2585,6 +2585,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "llm-blender" in requirements
     assert "peft" in requirements
     assert "weave" in requirements
+    package_pyproject = (bundle_out / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.11,<3.14"' in package_pyproject
     commands = json.loads((bundle_out / "launch" / "commands.json").read_text(encoding="utf-8"))
     command_manifest = json.loads(
         (bundle_out / "launch" / "commands_manifest.json").read_text(encoding="utf-8")
