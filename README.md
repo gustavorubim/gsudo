@@ -307,7 +307,9 @@ command-manifest, and Python metadata summaries so automation can distinguish
 package evidence repairs from training work. Next-action rows also expose
 `command_name`, `command_category`, `blocked_by_stages`, and `stage_actions`, so
 callers can route WSL smoke, DPO resume, RL launch, diagnostics, and
-status-refresh work without parsing prose.
+status-refresh work without parsing prose. The status JSON and stdout also
+include `next_action_summary` counts by command, command category, and launch
+behavior.
 Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
@@ -440,7 +442,7 @@ stdout is the compact pass/fail summary for callers. Both include
 `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
-`human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`, and
+`human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`, and
 `remaining_recovery_plan`, plus `recovery_plan_summary` for category, blocker,
 command-link, command-launch, and next-command counts.
 The JSON keeps full `next_actions` commands, while stdout reports compact

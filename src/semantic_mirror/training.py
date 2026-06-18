@@ -1423,6 +1423,7 @@ def summarize_full_eval_contract_status(
             human_usefulness_status
         ),
         "next_actions": next_actions,
+        "next_action_summary": _next_actions_contract_summary(next_actions),
         "remaining_items": remaining_items,
         "remaining_by_area": _remaining_by_area(remaining_items),
         "remaining_recovery_plan": remaining_recovery_plan,
@@ -3514,7 +3515,7 @@ next packaged command.
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
-`human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`,
+`human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`,
 `remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
@@ -6922,6 +6923,18 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             )
     if report.get("next_actions"):
         lines.extend(["", "## Next Actions", ""])
+        next_action_summary = report.get("next_action_summary") or {}
+        lines.extend(
+            [
+                f"- Total items: `{next_action_summary.get('total_items', len(report['next_actions']))}`",
+                f"- Launches training: `{next_action_summary.get('launches_training_count', 0)}`",
+                f"- Non-training items: `{next_action_summary.get('non_training_count', 0)}`",
+                f"- Missing command metadata: `{next_action_summary.get('missing_command_metadata_count', 0)}`",
+                f"- Command counts: `{json.dumps(next_action_summary.get('command_counts', {}), sort_keys=True)}`",
+                f"- Command category counts: `{json.dumps(next_action_summary.get('command_category_counts', {}), sort_keys=True)}`",
+                "",
+            ]
+        )
         for action in report["next_actions"]:
             lines.extend(
                 [
@@ -7816,6 +7829,42 @@ def _recovery_plan_contract_summary(
         "non_training_action_counts": {
             key: non_training_action_counts[key]
             for key in sorted(non_training_action_counts)
+        },
+    }
+
+
+def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    command_counts: dict[str, int] = {}
+    command_category_counts: dict[str, int] = {}
+    launches_training_count = 0
+    non_training_count = 0
+    missing_command_metadata_count = 0
+    for action in actions:
+        if action.get("launches_training"):
+            launches_training_count += 1
+        else:
+            non_training_count += 1
+        command_name = action.get("command_name")
+        command_category = action.get("command_category")
+        if not command_name or not command_category:
+            missing_command_metadata_count += 1
+        command_key = str(command_name or "unknown")
+        command_counts[command_key] = command_counts.get(command_key, 0) + 1
+        category_key = str(command_category or action.get("category") or "unspecified")
+        command_category_counts[category_key] = (
+            command_category_counts.get(category_key, 0) + 1
+        )
+    return {
+        "total_items": len(actions),
+        "launches_training_count": launches_training_count,
+        "non_training_count": non_training_count,
+        "missing_command_metadata_count": missing_command_metadata_count,
+        "command_counts": {
+            key: command_counts[key] for key in sorted(command_counts)
+        },
+        "command_category_counts": {
+            key: command_category_counts[key]
+            for key in sorted(command_category_counts)
         },
     }
 

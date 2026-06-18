@@ -1273,6 +1273,11 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 "human_usefulness_summary",
                 _human_usefulness_summary(manifest.get("human_usefulness_status")),
             ),
+            "next_action_summary": _summary_value(
+                manifest,
+                "next_action_summary",
+                _next_action_summary(manifest.get("next_actions")),
+            ),
             "stage_recovery_summary": _summary_value(
                 manifest,
                 "stage_recovery_summary",
@@ -1698,6 +1703,48 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         "non_training_action_counts": {
             key: non_training_action_counts[key]
             for key in sorted(non_training_action_counts)
+        },
+    }
+
+
+def _next_action_summary(actions: object) -> dict[str, object]:
+    if not isinstance(actions, list):
+        actions = []
+    command_counts: dict[str, int] = {}
+    command_category_counts: dict[str, int] = {}
+    launches_training_count = 0
+    non_training_count = 0
+    missing_command_metadata_count = 0
+    total_items = 0
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        total_items += 1
+        if action.get("launches_training"):
+            launches_training_count += 1
+        else:
+            non_training_count += 1
+        command_name = action.get("command_name")
+        command_category = action.get("command_category")
+        if not command_name or not command_category:
+            missing_command_metadata_count += 1
+        command_key = str(command_name or "unknown")
+        command_counts[command_key] = command_counts.get(command_key, 0) + 1
+        category_key = str(command_category or action.get("category") or "unspecified")
+        command_category_counts[category_key] = (
+            command_category_counts.get(category_key, 0) + 1
+        )
+    return {
+        "total_items": total_items,
+        "launches_training_count": launches_training_count,
+        "non_training_count": non_training_count,
+        "missing_command_metadata_count": missing_command_metadata_count,
+        "command_counts": {
+            key: command_counts[key] for key in sorted(command_counts)
+        },
+        "command_category_counts": {
+            key: command_category_counts[key]
+            for key in sorted(command_category_counts)
         },
     }
 

@@ -1010,6 +1010,24 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["launches_training"] is True
         for action in status["next_actions"]
     )
+    assert status["next_action_summary"] == {
+        "command_category_counts": {
+            "diagnostics": 1,
+            "inspection": 1,
+            "status": 1,
+            "training": 1,
+        },
+        "command_counts": {
+            "contract_status": 1,
+            "full_training_eval": 1,
+            "inspect_full_training_eval_resume": 1,
+            "report": 1,
+        },
+        "launches_training_count": 1,
+        "missing_command_metadata_count": 0,
+        "non_training_count": 3,
+        "total_items": 4,
+    }
     inspect_action = next(
         action for action in status["next_actions"] if action["title"] == "Inspect resume plan"
     )
@@ -1890,6 +1908,26 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["stage_actions"]["rl"] == "run"
         for action in cli_stdout["next_actions"]
     )
+    assert cli_stdout["next_action_summary"] == {
+        "command_category_counts": {
+            "diagnostics": 1,
+            "human_study": 1,
+            "inspection": 1,
+            "status": 1,
+            "training": 1,
+        },
+        "command_counts": {
+            "contract_status": 1,
+            "full_training_eval": 1,
+            "inspect_full_training_eval_resume": 1,
+            "phase6_collection_sequence": 1,
+            "report": 1,
+        },
+        "launches_training_count": 1,
+        "missing_command_metadata_count": 0,
+        "non_training_count": 4,
+        "total_items": 5,
+    }
     cli_status_json = json.loads(
         (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
     )
@@ -1901,6 +1939,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "package_command_manifest_summary",
         "package_metadata_summary",
         "human_usefulness_summary",
+        "next_action_summary",
         "stage_recovery_summary",
     ]:
         assert cli_stdout[summary_key] == cli_status_json[summary_key]
@@ -3496,6 +3535,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "full_training_eval_resume_inspection.md" in package_readme
     assert "contract_scorecard_summary" in package_readme
     assert "stage_recovery_summary" in package_readme
+    assert "next_action_summary" in package_readme
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
@@ -3526,6 +3566,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     )
     assert "The JSON keeps full `next_actions` commands" in root_readme
     assert "package_metadata_summary" in root_readme
+    assert "next_action_summary" in root_readme
     assert "recovery_plan_summary" in root_readme
     assert "next_action_title" in root_readme
     assert "next_action_category" in root_readme
