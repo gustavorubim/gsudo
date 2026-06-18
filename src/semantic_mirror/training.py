@@ -1379,6 +1379,7 @@ def summarize_full_eval_contract_status(
         diagnostics_status=diagnostics_status,
         package_command_manifest_status=package_command_manifest_status,
     )
+    remaining_by_area = _remaining_by_area(remaining_items)
     report = {
         "mode": "full_eval_contract_status",
         "training_version": TRAINING_VERSION,
@@ -1425,7 +1426,10 @@ def summarize_full_eval_contract_status(
         "next_actions": next_actions,
         "next_action_summary": _next_actions_contract_summary(next_actions),
         "remaining_items": remaining_items,
-        "remaining_by_area": _remaining_by_area(remaining_items),
+        "remaining_by_area": remaining_by_area,
+        "remaining_area_summary": _remaining_area_summary(
+            remaining_by_area, remaining_recovery_plan
+        ),
         "remaining_recovery_plan": remaining_recovery_plan,
         "recovery_plan_summary": _recovery_plan_contract_summary(
             remaining_recovery_plan
@@ -3516,7 +3520,7 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
 `human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`,
-`remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
+`remaining_area_summary`, `remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. `next_action_summary` also includes
 a blocked-stage command matrix for the current next-action set. `stage_recovery_summary`
@@ -3528,8 +3532,8 @@ per-action `command_name`, `command_category`, `blocked_by_stages`, and
 `next_action_command_name`, `next_action_launches_training`,
 `next_action_command_exists`, and `next_action_command_link_valid`, native and WSL
 readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
-package source freshness, command-manifest safety checks, command category
-rollups, and package Python metadata.
+package source freshness, command-manifest safety checks, remaining-area command
+rollups, command category rollups, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -6835,13 +6839,17 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             [
                 "### By Area",
                 "",
-                "| Area | Count | Gates |",
-                "| --- | ---: | --- |",
+                "| Area | Count | Commands | Launches Training | Gates |",
+                "| --- | ---: | --- | ---: | --- |",
             ]
         )
+        area_summary = report.get("remaining_area_summary") or {}
         for area, gates in report["remaining_by_area"].items():
+            summary = area_summary.get(area, {}) if isinstance(area_summary, dict) else {}
             lines.append(
                 f"| `{area}` | {len(gates)} | "
+                f"`{json.dumps(summary.get('command_counts', {}), sort_keys=True)}` | "
+                f"`{summary.get('launches_training_count', 0)}` | "
                 f"{', '.join(f'`{gate}`' for gate in gates)} |"
             )
         lines.extend(["", "### Gate Details", ""])
@@ -8135,6 +8143,47 @@ def _remaining_by_area(remaining_items: list[dict[str, Any]]) -> dict[str, list[
         area = _remaining_area_for_gate(gate)
         grouped.setdefault(area, []).append(gate)
     return dict(sorted(grouped.items()))
+
+
+def _remaining_area_summary(
+    remaining_by_area: dict[str, list[str]],
+    recovery_plan: list[dict[str, Any]],
+) -> dict[str, Any]:
+    plan_by_area: dict[str, list[dict[str, Any]]] = {}
+    for item in recovery_plan:
+        area = str(item.get("area") or "other")
+        plan_by_area.setdefault(area, []).append(item)
+    summary: dict[str, Any] = {}
+    for area in sorted(remaining_by_area):
+        command_counts: dict[str, int] = {}
+        command_category_counts: dict[str, int] = {}
+        launches_training_count = 0
+        non_training_count = 0
+        for item in plan_by_area.get(area, []):
+            command_name = str(item.get("next_action_command_name") or "unknown")
+            command_counts[command_name] = command_counts.get(command_name, 0) + 1
+            command_category = str(item.get("next_action_category") or "inspection")
+            command_category_counts[command_category] = (
+                command_category_counts.get(command_category, 0) + 1
+            )
+            if item.get("next_action_launches_training"):
+                launches_training_count += 1
+            else:
+                non_training_count += 1
+        summary[area] = {
+            "gate_count": len(remaining_by_area[area]),
+            "gates": remaining_by_area[area],
+            "command_counts": {
+                key: command_counts[key] for key in sorted(command_counts)
+            },
+            "command_category_counts": {
+                key: command_category_counts[key]
+                for key in sorted(command_category_counts)
+            },
+            "launches_training_count": launches_training_count,
+            "non_training_count": non_training_count,
+        }
+    return summary
 
 
 def _remaining_area_for_gate(gate: str) -> str:

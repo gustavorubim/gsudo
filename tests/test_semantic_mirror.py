@@ -866,6 +866,27 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "dpo_stage_manifest_matches_requested_steps" in status["remaining_by_area"]["dpo"]
     assert "rl_eval_exists_and_passed" in status["remaining_by_area"]["rl"]
     assert "diagnostic_plots_exist" in status["remaining_by_area"]["diagnostics"]
+    assert status["remaining_area_summary"]["dpo"] == {
+        "command_category_counts": {"training": 4},
+        "command_counts": {"full_training_eval": 4},
+        "gate_count": 4,
+        "gates": [
+            "dpo_stage_manifest_matches_requested_steps",
+            "dpo_eval_exists_and_passed",
+            "dpo_vs_sft_exists_and_passed",
+            "dpo_sample_inspection_complete",
+        ],
+        "launches_training_count": 4,
+        "non_training_count": 0,
+    }
+    assert status["remaining_area_summary"]["diagnostics"] == {
+        "command_category_counts": {"diagnostics": 1},
+        "command_counts": {"report": 1},
+        "gate_count": 1,
+        "gates": ["diagnostic_plots_exist"],
+        "launches_training_count": 0,
+        "non_training_count": 1,
+    }
     recovery_plan = {
         item["gate"]: item for item in status["remaining_recovery_plan"]
     }
@@ -1185,6 +1206,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "`semantic-mirror-dpo/checkpoint-10` |"
     ) in status_markdown
     assert "| `rl` | `run` | `full_training_eval` | `True` | `None` |" in status_markdown
+    assert "| `dpo` | 4 | `{\"full_training_eval\": 4}` | `4` |" in status_markdown
+    assert "| `diagnostics` | 1 | `{\"report\": 1}` | `0` |" in status_markdown
     assert "## Contract Scorecard" in status_markdown
     assert "## Repo Hygiene" in status_markdown
     assert "Repo hygiene not checked" in status_markdown
@@ -2121,6 +2144,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "human_usefulness_summary",
         "next_action_summary",
         "stage_recovery_summary",
+        "remaining_area_summary",
     ]:
         assert cli_stdout[summary_key] == cli_status_json[summary_key]
     saved_scorecard = {
@@ -3715,6 +3739,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "full_training_eval_resume_inspection.md" in package_readme
     assert "contract_scorecard_summary" in package_readme
     assert "stage_recovery_summary" in package_readme
+    assert "remaining_area_summary" in package_readme
     assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
@@ -3727,6 +3752,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "`stage_actions`" in package_readme
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
+    assert "remaining-area command\nrollups" in package_readme
     assert "`action_category`" in package_readme
     assert "real" in package_readme
     assert "timed-answer counts" in package_readme

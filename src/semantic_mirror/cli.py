@@ -1289,6 +1289,14 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 _recovery_plan_summary(manifest.get("remaining_recovery_plan")),
             ),
             "remaining_by_area": manifest["remaining_by_area"],
+            "remaining_area_summary": _summary_value(
+                manifest,
+                "remaining_area_summary",
+                _remaining_area_summary(
+                    manifest.get("remaining_by_area"),
+                    manifest.get("remaining_recovery_plan"),
+                ),
+            ),
             "remaining_recovery_plan": [
                 {
                     "gate": item["gate"],
@@ -1624,6 +1632,55 @@ def _stage_recovery_summary(status: object) -> dict[str, dict[str, object]]:
             "missing_current_artifact_count": len(
                 recovery.get("missing_current_artifacts", []) or []
             ),
+        }
+    return summary
+
+
+def _remaining_area_summary(
+    remaining_by_area: object,
+    recovery_plan: object,
+) -> dict[str, object]:
+    if not isinstance(remaining_by_area, dict):
+        remaining_by_area = {}
+    if not isinstance(recovery_plan, list):
+        recovery_plan = []
+    plan_by_area: dict[str, list[dict[str, object]]] = {}
+    for item in recovery_plan:
+        if not isinstance(item, dict):
+            continue
+        area = str(item.get("area") or "other")
+        plan_by_area.setdefault(area, []).append(item)
+    summary: dict[str, object] = {}
+    for area in sorted(str(key) for key in remaining_by_area):
+        raw_gates = remaining_by_area.get(area, [])
+        gates = [str(gate) for gate in raw_gates] if isinstance(raw_gates, list) else []
+        command_counts: dict[str, int] = {}
+        command_category_counts: dict[str, int] = {}
+        launches_training_count = 0
+        non_training_count = 0
+        for item in plan_by_area.get(area, []):
+            command_name = str(item.get("next_action_command_name") or "unknown")
+            command_counts[command_name] = command_counts.get(command_name, 0) + 1
+            command_category = str(item.get("next_action_category") or "inspection")
+            command_category_counts[command_category] = (
+                command_category_counts.get(command_category, 0) + 1
+            )
+            if item.get("next_action_launches_training"):
+                launches_training_count += 1
+            else:
+                non_training_count += 1
+        summary[area] = {
+            "gate_count": len(gates),
+            "gates": gates,
+            "command_counts": {
+                key: command_counts[key] for key in sorted(command_counts)
+            },
+            "command_category_counts": {
+                key: command_category_counts[key]
+                for key in sorted(command_category_counts)
+            },
+            "launches_training_count": launches_training_count,
+            "non_training_count": non_training_count,
         }
     return summary
 

@@ -446,8 +446,9 @@ stdout is the compact pass/fail summary for callers. Both include
 `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
-`human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`, and
-`remaining_recovery_plan`, plus `recovery_plan_summary` for category, blocker,
+`human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`,
+`remaining_by_area`, `remaining_area_summary`, and `remaining_recovery_plan`,
+plus `recovery_plan_summary` for category, blocker,
 blocked-stage command matrix, command-link, command-launch, and next-command counts.
 `next_action_summary` also includes a blocked-stage command matrix for the
 currently recommended next actions.
@@ -456,6 +457,8 @@ training-launch flag, blocked stages, and failed checks so automation can route
 native-audit refreshes separately from WSL smoke-chain launches.
 `stage_recovery_summary` includes the same command-routing fields for each
 SFT/DPO/RL stage.
+`remaining_area_summary` groups every remaining area by gate count, command
+counts, command categories, and training-launch counts.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,
