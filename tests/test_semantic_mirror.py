@@ -2861,6 +2861,13 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     ]
     assert "train contract-status outputs" in commands["contract_status"]
     assert "--sft-steps $SFT_MAX_STEPS" in commands["contract_status"]
+    assert "--windows-audit ${WINDOWS_AUDIT:-audit/current_environment.json}" in commands[
+        "contract_status"
+    ]
+    assert (
+        "--wsl-smoke-manifest ${WSL_SMOKE_MANIFEST:-outputs/smoke-chain-wsl/smoke_chain_manifest.json}"
+        in commands["contract_status"]
+    )
     assert "--package-source-freshness source_freshness.json" in commands["contract_status"]
     assert "--markdown-out outputs/contract_status.md" in commands["contract_status"]
     assert "run_unsloth_sft.py" in commands["sft"]
@@ -3089,6 +3096,13 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "SOURCE_FRESHNESS_REPO_ROOT" in full_eval_script
     assert "train source-freshness ." in full_eval_script
     assert "--package-source-freshness \"$PACKAGE_SOURCE_FRESHNESS\"" in full_eval_script
+    assert 'WINDOWS_AUDIT="${WINDOWS_AUDIT:-audit/current_environment.json}"' in full_eval_script
+    assert (
+        'WSL_SMOKE_MANIFEST="${WSL_SMOKE_MANIFEST:-outputs/smoke-chain-wsl/smoke_chain_manifest.json}"'
+        in full_eval_script
+    )
+    assert "--windows-audit \"$WINDOWS_AUDIT\"" in full_eval_script
+    assert "--wsl-smoke-manifest \"$WSL_SMOKE_MANIFEST\"" in full_eval_script
     assert "--out outputs/contract_status.json" in full_eval_script
     assert "--markdown-out outputs/contract_status.md" in full_eval_script
     assert "source_freshness.json" in package_readme
@@ -3097,6 +3111,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "launches_training" in package_readme
     assert "contract_status.json" in package_readme
     assert "contract_status.md" in package_readme
+    assert "--windows-audit audit/current_environment.json" in package_readme
+    assert "--wsl-smoke-manifest outputs/smoke-chain-wsl/smoke_chain_manifest.json" in package_readme
     assert "train inspect-resume outputs" in package_readme
     assert "full_training_eval_resume_inspection.md" in package_readme
     assert "contract_scorecard_summary" in package_readme

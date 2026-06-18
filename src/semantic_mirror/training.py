@@ -2189,6 +2189,8 @@ def _package_launch_commands() -> dict[str, str]:
         "contract_status": (
             "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs "
             "--sft-steps $SFT_MAX_STEPS --dpo-steps $DPO_MAX_STEPS --rl-steps $RL_MAX_STEPS "
+            "--windows-audit ${WINDOWS_AUDIT:-audit/current_environment.json} "
+            "--wsl-smoke-manifest ${WSL_SMOKE_MANIFEST:-outputs/smoke-chain-wsl/smoke_chain_manifest.json} "
             "--package-source-freshness source_freshness.json "
             "--out outputs/contract_status.json --markdown-out outputs/contract_status.md"
         ),
@@ -2642,6 +2644,8 @@ REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"
 SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"
 DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"
 PACKAGE_SOURCE_FRESHNESS="${PACKAGE_SOURCE_FRESHNESS:-source_freshness.json}"
+WINDOWS_AUDIT="${WINDOWS_AUDIT:-audit/current_environment.json}"
+WSL_SMOKE_MANIFEST="${WSL_SMOKE_MANIFEST:-outputs/smoke-chain-wsl/smoke_chain_manifest.json}"
 
 if [[ -n "${SOURCE_FRESHNESS_REPO_ROOT:-}" ]]; then
   PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . \
@@ -3159,6 +3163,12 @@ contract_status_args=(
 if [[ -f "$PACKAGE_SOURCE_FRESHNESS" ]]; then
   contract_status_args+=(--package-source-freshness "$PACKAGE_SOURCE_FRESHNESS")
 fi
+if [[ -f "$WINDOWS_AUDIT" ]]; then
+  contract_status_args+=(--windows-audit "$WINDOWS_AUDIT")
+fi
+if [[ -f "$WSL_SMOKE_MANIFEST" ]]; then
+  contract_status_args+=(--wsl-smoke-manifest "$WSL_SMOKE_MANIFEST")
+fi
 PYTHONPATH=src python -m semantic_mirror.cli "${contract_status_args[@]}"
 """,
         "inspect_full_training_eval_resume.sh": """#!/usr/bin/env bash
@@ -3401,6 +3411,22 @@ PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . \
   --repo-root /path/to/repo \
   --out source_freshness.json \
   --markdown-out source_freshness.md
+```
+
+When regenerating contract status outside `run_full_training_eval.sh`, include
+the package source freshness report, native audit report, and WSL smoke-chain
+manifest so Windows readiness evidence is not dropped:
+
+```bash
+PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs \
+  --sft-steps "$SFT_MAX_STEPS" \
+  --dpo-steps "$DPO_MAX_STEPS" \
+  --rl-steps "$RL_MAX_STEPS" \
+  --windows-audit audit/current_environment.json \
+  --wsl-smoke-manifest outputs/smoke-chain-wsl/smoke_chain_manifest.json \
+  --package-source-freshness source_freshness.json \
+  --out outputs/contract_status.json \
+  --markdown-out outputs/contract_status.md
 ```
 
 This writes `outputs/baseline_eval.json`, raw and repaired eval reports for
