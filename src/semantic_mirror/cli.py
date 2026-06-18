@@ -1332,6 +1332,9 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "next_action_command_link_errors": item.get(
                         "next_action_command_link_errors", []
                     ),
+                    "next_action_command_required_inputs": item.get(
+                        "next_action_command_required_inputs", []
+                    ),
                     "requires_training": item["requires_training"],
                     "blocked_by_stages": item["blocked_by_stages"],
                     "current_evidence": item.get("current_evidence"),
@@ -1349,6 +1352,7 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "launches_training": action.get("launches_training", False),
                     "reason": action.get("reason"),
                     "blocked_by_stages": action.get("blocked_by_stages", []),
+                    "required_inputs": action.get("required_inputs", []),
                     "stage_actions": action.get("stage_actions", {}),
                     "has_command": bool(action.get("command")),
                     "has_windows_powershell_command": bool(

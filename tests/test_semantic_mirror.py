@@ -1020,6 +1020,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "next_action_command_link_errors"
     ] == ["command_manifest_not_checked"]
     assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_required_inputs"
+    ] == []
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "requires_training"
     ]
     assert recovery_plan["rl_stage_manifest_matches_requested_steps"][
@@ -1177,6 +1180,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "launches_training_count": 1,
         "missing_command_metadata_count": 0,
         "non_training_count": 3,
+        "required_input_action_count": 0,
         "total_items": 4,
     }
     inspect_action = next(
@@ -1200,6 +1204,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert resume_action["blocked_by_stages"] == ["dpo", "rl"]
     assert resume_action["command_name"] == "full_training_eval"
     assert resume_action["command_category"] == "training"
+    assert "required_inputs" not in resume_action
     assert resume_action["stage_actions"]["dpo"] == "resume"
     assert resume_action["stage_actions"]["rl"] == "run"
     assert any(
@@ -2136,6 +2141,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "next_action_command_link_errors"
     ] == []
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_required_inputs"
+    ] == ["held_out_dataset", "baseline_candidates"]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "area"
     ] == "dpo"
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
@@ -2231,6 +2239,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["blocked_by_stages"] == ["dpo", "rl"]
         and action["stage_actions"]["dpo"] == "resume"
         and action["stage_actions"]["rl"] == "run"
+        and action["required_inputs"] == ["held_out_dataset", "baseline_candidates"]
         for action in cli_stdout["next_actions"]
     )
     assert cli_stdout["next_action_summary"] == {
@@ -2287,6 +2296,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "launches_training_count": 1,
         "missing_command_metadata_count": 0,
         "non_training_count": 4,
+        "required_input_action_count": 4,
         "total_items": 5,
     }
     cli_status_json = json.loads(
@@ -2434,6 +2444,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Training command count: `6`" in contract_status_md
     assert "Command category counts:" in contract_status_md
     assert "`status`: `contract_status`, `source_freshness`" in contract_status_md
+    assert "Actions with required inputs: `4`" in contract_status_md
+    assert "Required inputs: `held_out_dataset, baseline_candidates`" in contract_status_md
     assert "## Package Python Metadata" in contract_status_md
     assert "Requires Python: `>=3.11,<3.14`" in contract_status_md
     assert "Run real Phase 6 collection and eval sequence" in contract_status_md

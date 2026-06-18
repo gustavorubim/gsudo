@@ -1380,6 +1380,7 @@ def summarize_full_eval_contract_status(
         repo_hygiene_status,
         windows_readiness_status,
         package_source_status,
+        package_command_manifest_status,
         human_usefulness_status,
     )
     remaining_items = [
@@ -7074,6 +7075,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- Launches training: `{next_action_summary.get('launches_training_count', 0)}`",
                 f"- Non-training items: `{next_action_summary.get('non_training_count', 0)}`",
                 f"- Missing command metadata: `{next_action_summary.get('missing_command_metadata_count', 0)}`",
+                f"- Actions with required inputs: `{next_action_summary.get('required_input_action_count', 0)}`",
                 f"- Command counts: `{json.dumps(next_action_summary.get('command_counts', {}), sort_keys=True)}`",
                 f"- Command category counts: `{json.dumps(next_action_summary.get('command_category_counts', {}), sort_keys=True)}`",
                 f"- Blocked stage command matrix: `{json.dumps(next_action_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
@@ -7089,6 +7091,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Command name: `{action.get('command_name') or 'unknown'}`",
                     f"- Command category: `{action.get('command_category') or action.get('category', 'unspecified')}`",
                     f"- Launches training: `{action.get('launches_training', False)}`",
+                    f"- Required inputs: `{', '.join(action.get('required_inputs') or []) or 'None'}`",
                     f"- Blocked by stages: `{', '.join(action.get('blocked_by_stages') or []) or 'None'}`",
                     f"- Stage actions: `{json.dumps(action.get('stage_actions') or {}, sort_keys=True)}`",
                     "",
@@ -7134,6 +7137,7 @@ def _full_eval_next_actions(
     repo_hygiene_status: dict[str, Any],
     windows_readiness_status: dict[str, Any],
     package_source_status: dict[str, Any],
+    package_command_manifest_status: dict[str, Any],
     human_usefulness_status: dict[str, Any],
 ) -> list[dict[str, Any]]:
     package_root = run.parent if run.name == "outputs" else run
@@ -7339,7 +7343,33 @@ def _full_eval_next_actions(
             "windows_powershell_command": _windows_wsl_command(package_root, status_command),
         }
     )
-    return actions
+    return _annotate_next_actions_with_command_inputs(
+        actions, package_command_manifest_status
+    )
+
+
+def _annotate_next_actions_with_command_inputs(
+    actions: list[dict[str, Any]],
+    package_command_manifest_status: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not package_command_manifest_status.get("checked"):
+        return actions
+    commands = package_command_manifest_status.get("command_lookup")
+    if not isinstance(commands, dict):
+        return actions
+    annotated: list[dict[str, Any]] = []
+    for action in actions:
+        command = commands.get(action.get("command_name"))
+        if not isinstance(command, dict):
+            annotated.append(action)
+            continue
+        annotated.append(
+            {
+                **action,
+                "required_inputs": command.get("required_inputs", []),
+            }
+        )
+    return annotated
 
 
 def _next_action_stage_actions(
@@ -8089,6 +8119,7 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
     launches_training_count = 0
     non_training_count = 0
     missing_command_metadata_count = 0
+    required_input_action_count = 0
     for action in actions:
         launches_training = bool(action.get("launches_training"))
         if launches_training:
@@ -8099,6 +8130,8 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
         command_category = action.get("command_category")
         if not command_name or not command_category:
             missing_command_metadata_count += 1
+        if action.get("required_inputs"):
+            required_input_action_count += 1
         command_key = str(command_name or "unknown")
         command_counts[command_key] = command_counts.get(command_key, 0) + 1
         category_key = str(command_category or action.get("category") or "unspecified")
@@ -8126,6 +8159,7 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
         "launches_training_count": launches_training_count,
         "non_training_count": non_training_count,
         "missing_command_metadata_count": missing_command_metadata_count,
+        "required_input_action_count": required_input_action_count,
         "command_counts": {
             key: command_counts[key] for key in sorted(command_counts)
         },
@@ -8493,6 +8527,7 @@ def _remaining_recovery_command_link(
             "next_action_command_exists": None,
             "next_action_command_category": None,
             "next_action_command_launches_training": None,
+            "next_action_command_required_inputs": [],
             "next_action_command_link_valid": None,
             "next_action_command_link_errors": ["command_manifest_not_checked"],
         }
@@ -8503,6 +8538,7 @@ def _remaining_recovery_command_link(
             "next_action_command_exists": False,
             "next_action_command_category": None,
             "next_action_command_launches_training": None,
+            "next_action_command_required_inputs": [],
             "next_action_command_link_valid": False,
             "next_action_command_link_errors": ["missing_command"],
         }
@@ -8517,6 +8553,7 @@ def _remaining_recovery_command_link(
         "next_action_command_exists": True,
         "next_action_command_category": command_category,
         "next_action_command_launches_training": command_launches_training,
+        "next_action_command_required_inputs": command.get("required_inputs", []),
         "next_action_command_link_valid": not errors,
         "next_action_command_link_errors": errors,
     }
