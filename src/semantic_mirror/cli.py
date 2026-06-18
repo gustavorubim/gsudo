@@ -1277,6 +1277,11 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "title": action["title"],
                     "category": action.get("category", "unspecified"),
                     "launches_training": action.get("launches_training", False),
+                    "reason": action.get("reason"),
+                    "has_command": bool(action.get("command")),
+                    "has_windows_powershell_command": bool(
+                        action.get("windows_powershell_command")
+                    ),
                 }
                 for action in manifest["next_actions"]
             ],

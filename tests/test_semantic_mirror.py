@@ -1446,6 +1446,22 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert any(
         action["title"] == "Inspect resume plan"
         and action["launches_training"] is False
+        and action["has_command"] is True
+        and action["has_windows_powershell_command"] is True
+        and "Preview stage reuse" in action["reason"]
+        for action in cli_stdout["next_actions"]
+    )
+    assert any(
+        action["title"] == "Run real Phase 6 collection and eval sequence"
+        and action["launches_training"] is False
+        and action["has_command"] is True
+        and "real timed reviewer logs" in action["reason"]
+        for action in cli_stdout["next_actions"]
+    )
+    assert any(
+        action["title"] == "Resume full eval through DPO and RL"
+        and action["launches_training"] is True
+        and action["has_windows_powershell_command"] is True
         for action in cli_stdout["next_actions"]
     )
     cli_status_json = json.loads(
