@@ -1726,6 +1726,10 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
     command_link_unchecked_count = 0
     command_launches_training_count = 0
     command_non_training_count = 0
+    required_input_gate_count = 0
+    optional_input_gate_count = 0
+    required_input_counts: dict[str, int] = {}
+    optional_input_counts: dict[str, int] = {}
     missing_command_names: set[str] = set()
     for item in plan:
         if not isinstance(item, dict):
@@ -1786,6 +1790,22 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
                     missing_command_names.add(str(command_name))
         else:
             command_link_unchecked_count += 1
+        required_inputs = item.get("next_action_command_required_inputs")
+        if not isinstance(required_inputs, list):
+            required_inputs = []
+        if required_inputs:
+            required_input_gate_count += 1
+        for input_name in required_inputs:
+            input_key = str(input_name)
+            required_input_counts[input_key] = required_input_counts.get(input_key, 0) + 1
+        optional_inputs = item.get("next_action_command_optional_inputs")
+        if not isinstance(optional_inputs, list):
+            optional_inputs = []
+        if optional_inputs:
+            optional_input_gate_count += 1
+        for input_name in optional_inputs:
+            input_key = str(input_name)
+            optional_input_counts[input_key] = optional_input_counts.get(input_key, 0) + 1
     total_items = sum(action_category_counts.values())
     return {
         "total_items": total_items,
@@ -1797,6 +1817,14 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         "command_link_unchecked_count": command_link_unchecked_count,
         "command_launches_training_count": command_launches_training_count,
         "command_non_training_count": command_non_training_count,
+        "required_input_gate_count": required_input_gate_count,
+        "optional_input_gate_count": optional_input_gate_count,
+        "required_input_counts": {
+            key: required_input_counts[key] for key in sorted(required_input_counts)
+        },
+        "optional_input_counts": {
+            key: optional_input_counts[key] for key in sorted(optional_input_counts)
+        },
         "missing_command_names": sorted(missing_command_names),
         "next_action_command_counts": {
             key: next_action_command_counts[key]

@@ -3615,8 +3615,9 @@ per-action `command_name`, `command_category`, `blocked_by_stages`,
 `next_action_command_exists`, `next_action_command_required_inputs`, and
 `next_action_command_optional_inputs`, and `next_action_command_link_valid`, native and WSL
 readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
-package source freshness, command-manifest safety checks, remaining-area command
-rollups, training-dependency rollups, command category rollups, and package Python metadata.
+package source freshness, command-manifest safety checks, recovery-plan required
+and optional input rollups, remaining-area command rollups, training-dependency
+rollups, command category rollups, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -7043,6 +7044,10 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Command links unchecked: `{recovery_summary.get('command_link_unchecked_count', 0)}`",
                     f"- Commands launching training: `{recovery_summary.get('command_launches_training_count', 0)}`",
                     f"- Commands not launching training: `{recovery_summary.get('command_non_training_count', 0)}`",
+                    f"- Gates with required command inputs: `{recovery_summary.get('required_input_gate_count', 0)}`",
+                    f"- Gates with optional command inputs: `{recovery_summary.get('optional_input_gate_count', 0)}`",
+                    f"- Required command input counts: `{json.dumps(recovery_summary.get('required_input_counts', {}), sort_keys=True)}`",
+                    f"- Optional command input counts: `{json.dumps(recovery_summary.get('optional_input_counts', {}), sort_keys=True)}`",
                     f"- Training launch gates: `{training_dependency_summary.get('training_launch_count', 0)}`",
                     f"- Non-training commands waiting on training: `{training_dependency_summary.get('waiting_non_training_count', 0)}`",
                     f"- Ready non-training gates: `{training_dependency_summary.get('ready_non_training_count', 0)}`",
@@ -7057,13 +7062,21 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Blocked stage command matrix: `{json.dumps(recovery_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
                     f"- Non-training action counts: `{json.dumps(recovery_summary.get('non_training_action_counts', {}), sort_keys=True)}`",
                     "",
-                    "| Gate | Action | Category | Next Action | Command | Command Link | Requires Training | Blocked By | Artifacts |",
-                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                    "| Gate | Action | Category | Next Action | Command | Inputs | Command Link | Requires Training | Blocked By | Artifacts |",
+                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
                 ]
             )
             for plan_item in recovery_plan:
                 blocked_by = plan_item.get("blocked_by_stages") or []
                 artifacts = plan_item.get("artifacts") or []
+                required_inputs = plan_item.get("next_action_command_required_inputs") or []
+                optional_inputs = plan_item.get("next_action_command_optional_inputs") or []
+                input_text = (
+                    "required: "
+                    + (", ".join(f"`{item}`" for item in required_inputs) or "`None`")
+                    + "<br>optional: "
+                    + (", ".join(f"`{item}`" for item in optional_inputs) or "`None`")
+                )
                 command_link_valid = plan_item.get("next_action_command_link_valid")
                 if command_link_valid is True:
                     command_link = "valid"
@@ -7079,6 +7092,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"(`{plan_item.get('next_action_category') or 'inspection'}`) | "
                     f"`{plan_item.get('next_action_command_name') or 'inspect_full_training_eval_resume'}` "
                     f"(training: `{plan_item.get('next_action_launches_training', False)}`) | "
+                    f"{input_text} | "
                     f"`{command_link}` | "
                     f"`{plan_item['requires_training']}` | "
                     f"{', '.join(f'`{stage}`' for stage in blocked_by) or '`None`'} | "
@@ -8023,6 +8037,10 @@ def _recovery_plan_contract_summary(
     command_link_unchecked_count = 0
     command_launches_training_count = 0
     command_non_training_count = 0
+    required_input_gate_count = 0
+    optional_input_gate_count = 0
+    required_input_counts: dict[str, int] = {}
+    optional_input_counts: dict[str, int] = {}
     missing_command_names: set[str] = set()
     for item in recovery_plan:
         category = str(item.get("action_category") or "inspection")
@@ -8074,6 +8092,22 @@ def _recovery_plan_contract_summary(
                     missing_command_names.add(str(command_name))
         else:
             command_link_unchecked_count += 1
+        required_inputs = item.get("next_action_command_required_inputs")
+        if not isinstance(required_inputs, list):
+            required_inputs = []
+        if required_inputs:
+            required_input_gate_count += 1
+        for input_name in required_inputs:
+            input_key = str(input_name)
+            required_input_counts[input_key] = required_input_counts.get(input_key, 0) + 1
+        optional_inputs = item.get("next_action_command_optional_inputs")
+        if not isinstance(optional_inputs, list):
+            optional_inputs = []
+        if optional_inputs:
+            optional_input_gate_count += 1
+        for input_name in optional_inputs:
+            input_key = str(input_name)
+            optional_input_counts[input_key] = optional_input_counts.get(input_key, 0) + 1
     return {
         "total_items": len(recovery_plan),
         "requires_training_count": requires_training_count,
@@ -8084,6 +8118,14 @@ def _recovery_plan_contract_summary(
         "command_link_unchecked_count": command_link_unchecked_count,
         "command_launches_training_count": command_launches_training_count,
         "command_non_training_count": command_non_training_count,
+        "required_input_gate_count": required_input_gate_count,
+        "optional_input_gate_count": optional_input_gate_count,
+        "required_input_counts": {
+            key: required_input_counts[key] for key in sorted(required_input_counts)
+        },
+        "optional_input_counts": {
+            key: optional_input_counts[key] for key in sorted(optional_input_counts)
+        },
         "missing_command_names": sorted(missing_command_names),
         "next_action_command_counts": {
             key: next_action_command_counts[key]

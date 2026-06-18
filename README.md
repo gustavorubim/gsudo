@@ -469,7 +469,7 @@ gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,
 `blocked_by_stages`, `required_inputs`, `optional_inputs`, and `stage_actions`, recovery-plan
 `action_category`, native and WSL readiness blocker summaries, Phase 6 failed gates, real
 timed-answer counts, package source freshness, command-manifest safety checks,
-command category rollups, recovery-plan `next_action_title` and
+recovery-plan required and optional input rollups, command category rollups, recovery-plan `next_action_title` and
 `next_action_category`, `next_action_command_name`,
 `next_action_launches_training`, `next_action_command_exists`,
 `next_action_command_required_inputs`, `next_action_command_optional_inputs`,

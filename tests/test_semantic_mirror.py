@@ -1005,6 +1005,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "command_launches_training_count": 8,
         "command_non_training_count": 4,
         "missing_command_names": [],
+        "optional_input_counts": {},
+        "optional_input_gate_count": 0,
         "next_action_command_category_counts": {
             "diagnostics": 1,
             "status": 3,
@@ -1017,6 +1019,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         },
         "non_training_action_counts": {},
         "non_training_count": 0,
+        "required_input_counts": {},
+        "required_input_gate_count": 0,
         "requires_training_count": 12,
         "total_items": 12,
     }
@@ -1363,20 +1367,24 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert '- Blocked stage counts: `{"dpo": 7, "rl": 7}`' in status_markdown
     assert (
-        "| Gate | Action | Category | Next Action | Command | Command Link | Requires Training | Blocked By | Artifacts |"
+        "| Gate | Action | Category | Next Action | Command | Inputs | Command Link | Requires Training | Blocked By | Artifacts |"
         in status_markdown
     )
     assert "`unchecked`" in status_markdown
     assert (
         "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `unchecked` | `True` |"
+        not in status_markdown
+    )
+    assert (
+        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | required: `None`<br>optional: `None` | `unchecked` | `True` |"
         in status_markdown
     )
     assert (
-        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `unchecked` | `True` | `dpo` |"
+        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | required: `None`<br>optional: `None` | `unchecked` | `True` | `dpo` |"
         in status_markdown
     )
     assert (
-        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | `unchecked` | `True` | `dpo`, `rl` |"
+        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | required: `None`<br>optional: `None` | `unchecked` | `True` | `dpo`, `rl` |"
         in status_markdown
     )
     assert "## Resume Inspection" in status_markdown
@@ -2189,6 +2197,22 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         **status["recovery_plan_summary"],
         "command_link_unchecked_count": 0,
         "command_link_valid_count": 12,
+        "optional_input_counts": {
+            "human_study_coverage": 3,
+            "human_study_suite": 3,
+            "package_source_freshness": 11,
+            "repo_root": 3,
+            "source_freshness_repo_root": 8,
+            "windows_audit": 11,
+            "wsl_smoke_manifest": 11,
+        },
+        "optional_input_gate_count": 11,
+        "required_input_counts": {
+            "baseline_candidates": 8,
+            "held_out_dataset": 8,
+            "outputs_dir": 4,
+        },
+        "required_input_gate_count": 12,
     }
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
@@ -2545,6 +2569,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Actions with optional inputs: `3`" in contract_status_md
     assert "Required inputs: `held_out_dataset, baseline_candidates`" in contract_status_md
     assert "Optional inputs: `source_freshness_repo_root, windows_audit, wsl_smoke_manifest, package_source_freshness`" in contract_status_md
+    assert "Gates with required command inputs: `12`" in contract_status_md
+    assert "Gates with optional command inputs: `11`" in contract_status_md
+    assert "Required command input counts:" in contract_status_md
+    assert "Optional command input counts:" in contract_status_md
+    assert "| Gate | Action | Category | Next Action | Command | Inputs |" in contract_status_md
+    assert "required: `held_out_dataset`, `baseline_candidates`<br>optional: `source_freshness_repo_root`, `windows_audit`, `wsl_smoke_manifest`, `package_source_freshness`" in contract_status_md
     assert "## Package Python Metadata" in contract_status_md
     assert "Requires Python: `>=3.11,<3.14`" in contract_status_md
     assert "Run real Phase 6 collection and eval sequence" in contract_status_md
@@ -4144,8 +4174,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "`stage_actions`" in package_readme
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
-    assert "remaining-area command\nrollups" in package_readme
-    assert "training-dependency rollups" in package_readme
+    assert "recovery-plan required\nand optional input rollups" in package_readme
+    assert "remaining-area command rollups" in package_readme
+    assert "training-dependency\nrollups" in package_readme
     assert "`action_category`" in package_readme
     assert "real" in package_readme
     assert "timed-answer counts" in package_readme
@@ -4194,6 +4225,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "`required_inputs`" in root_readme
     assert "`optional_inputs`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
+    assert "recovery-plan required and optional input rollups" in root_readme
     assert "command category rollups" in root_readme
     assert "non-training command is still waiting on training evidence" in root_readme
     assert "`action_category`" in root_readme
