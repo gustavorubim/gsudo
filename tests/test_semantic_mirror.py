@@ -1358,6 +1358,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_stdout = json.loads(cli_status.stdout)
     assert cli_stdout["passed"] is False
     assert cli_stdout["contract_reward_summary"]["completion_eligible"] is False
+    assert cli_stdout["repo_hygiene_summary"]["passed"] is False
+    assert cli_stdout["repo_hygiene_summary"]["tracked_change_count"] == 1
+    assert cli_stdout["repo_hygiene_summary"]["untracked_count"] == 2
+    assert cli_stdout["repo_hygiene_summary"]["unexpected_ignored_count"] == 1
+    assert cli_stdout["windows_readiness_summary"]["passed"] is True
+    assert cli_stdout["windows_readiness_summary"]["native_blocked"] is True
+    assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
+    assert cli_stdout["package_source_summary"]["passed"] is True
+    assert cli_stdout["package_source_summary"]["git_commit_matches_repo"] is True
+    assert cli_stdout["package_source_summary"]["compared_file_count"] == 2
     assert cli_stdout["package_command_manifest_summary"]["passed"] is True
     assert cli_stdout["package_command_manifest_summary"]["training_command_count"] == 6
     assert cli_stdout["human_usefulness_summary"]["passed"] is True

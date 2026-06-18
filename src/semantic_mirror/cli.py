@@ -1236,6 +1236,15 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "passed": manifest["passed"],
             "requested_max_steps": manifest["requested_max_steps"],
             "contract_reward_summary": manifest["contract_reward_summary"],
+            "repo_hygiene_summary": _repo_hygiene_summary(
+                manifest.get("repo_hygiene_status")
+            ),
+            "windows_readiness_summary": _windows_readiness_summary(
+                manifest.get("windows_readiness_status")
+            ),
+            "package_source_summary": _package_source_summary(
+                manifest.get("package_source_status")
+            ),
             "package_command_manifest_summary": _package_command_manifest_summary(
                 manifest.get("package_command_manifest_status")
             ),
@@ -1316,6 +1325,46 @@ def _package_command_manifest_summary(status: object) -> dict[str, object]:
         "training_command_count": status.get("training_command_count"),
         "non_training_command_count": status.get("non_training_command_count"),
         "failed_checks": status.get("failed_checks", []),
+    }
+
+
+def _repo_hygiene_summary(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        return {"checked": False, "passed": None}
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "summary": status.get("summary"),
+        "tracked_change_count": len(status.get("tracked_changes", []) or []),
+        "untracked_count": len(status.get("untracked", []) or []),
+        "unexpected_ignored_count": len(status.get("ignored_unexpected", []) or []),
+    }
+
+
+def _windows_readiness_summary(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        return {"checked": False, "passed": None}
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "native_passed": status.get("native_passed"),
+        "native_blocked": status.get("native_blocked"),
+        "wsl_smoke_complete": status.get("wsl_smoke_complete"),
+        "wsl_diagnostics_exists": status.get("wsl_diagnostics_exists"),
+        "summary": status.get("summary"),
+    }
+
+
+def _package_source_summary(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        return {"checked": False, "passed": None}
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "git_commit_matches_repo": status.get("git_commit_matches_repo"),
+        "compared_file_count": status.get("compared_file_count"),
+        "mismatched_file_count": len(status.get("mismatched_files", []) or []),
+        "summary": status.get("summary"),
     }
 
 
