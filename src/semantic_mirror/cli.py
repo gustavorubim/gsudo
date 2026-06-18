@@ -1236,29 +1236,47 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "passed": manifest["passed"],
             "requested_max_steps": manifest["requested_max_steps"],
             "contract_reward_summary": manifest["contract_reward_summary"],
-            "contract_scorecard_summary": _contract_scorecard_summary(
-                manifest.get("contract_scorecard")
+            "contract_scorecard_summary": _summary_value(
+                manifest,
+                "contract_scorecard_summary",
+                _contract_scorecard_summary(manifest.get("contract_scorecard")),
             ),
-            "repo_hygiene_summary": _repo_hygiene_summary(
-                manifest.get("repo_hygiene_status")
+            "repo_hygiene_summary": _summary_value(
+                manifest,
+                "repo_hygiene_summary",
+                _repo_hygiene_summary(manifest.get("repo_hygiene_status")),
             ),
-            "windows_readiness_summary": _windows_readiness_summary(
-                manifest.get("windows_readiness_status")
+            "windows_readiness_summary": _summary_value(
+                manifest,
+                "windows_readiness_summary",
+                _windows_readiness_summary(manifest.get("windows_readiness_status")),
             ),
-            "package_source_summary": _package_source_summary(
-                manifest.get("package_source_status")
+            "package_source_summary": _summary_value(
+                manifest,
+                "package_source_summary",
+                _package_source_summary(manifest.get("package_source_status")),
             ),
-            "package_command_manifest_summary": _package_command_manifest_summary(
-                manifest.get("package_command_manifest_status")
+            "package_command_manifest_summary": _summary_value(
+                manifest,
+                "package_command_manifest_summary",
+                _package_command_manifest_summary(
+                    manifest.get("package_command_manifest_status")
+                ),
             ),
-            "package_metadata_summary": _package_metadata_summary(
-                manifest.get("package_metadata_status")
+            "package_metadata_summary": _summary_value(
+                manifest,
+                "package_metadata_summary",
+                _package_metadata_summary(manifest.get("package_metadata_status")),
             ),
-            "human_usefulness_summary": _human_usefulness_summary(
-                manifest.get("human_usefulness_status")
+            "human_usefulness_summary": _summary_value(
+                manifest,
+                "human_usefulness_summary",
+                _human_usefulness_summary(manifest.get("human_usefulness_status")),
             ),
-            "stage_recovery_summary": _stage_recovery_summary(
-                manifest.get("stage_recovery_status")
+            "stage_recovery_summary": _summary_value(
+                manifest,
+                "stage_recovery_summary",
+                _stage_recovery_summary(manifest.get("stage_recovery_status")),
             ),
             "remaining_by_area": manifest["remaining_by_area"],
             "remaining_recovery_plan": [
@@ -1357,6 +1375,17 @@ def _package_metadata_summary(status: object) -> dict[str, object]:
         "excludes_python_3_14": status.get("excludes_python_3_14"),
         "summary": status.get("summary"),
     }
+
+
+def _summary_value(
+    manifest: dict[str, object],
+    key: str,
+    fallback: dict[str, object] | list[dict[str, object]],
+) -> dict[str, object] | list[dict[str, object]]:
+    value = manifest.get(key)
+    if isinstance(value, dict) or isinstance(value, list):
+        return value
+    return fallback
 
 
 def _contract_scorecard_summary(scorecard: object) -> list[dict[str, object]]:

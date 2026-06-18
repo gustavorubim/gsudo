@@ -1611,6 +1611,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_status_json = json.loads(
         (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
     )
+    for summary_key in [
+        "contract_scorecard_summary",
+        "repo_hygiene_summary",
+        "windows_readiness_summary",
+        "package_source_summary",
+        "package_command_manifest_summary",
+        "package_metadata_summary",
+        "human_usefulness_summary",
+        "stage_recovery_summary",
+    ]:
+        assert cli_stdout[summary_key] == cli_status_json[summary_key]
     saved_scorecard = {
         row["area"]: row for row in cli_status_json["contract_scorecard_summary"]
     }
