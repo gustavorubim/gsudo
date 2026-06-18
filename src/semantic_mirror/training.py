@@ -1247,20 +1247,56 @@ def summarize_full_eval_contract_status(
         package_source_status
     )
     package_metadata_status = _package_metadata_contract_status(package_source_status)
-    gates.append(
-        _contract_gate(
-            "package_python_metadata_valid_when_checked",
-            package_metadata_status.get("passed") is not False,
-            actual={
-                "checked": package_metadata_status.get("checked"),
-                "requires_python": package_metadata_status.get("requires_python"),
-            },
-            expected={
-                "requires_python": UNSLOTH_PYTHON_RANGE,
-                "checked_failures_block_completion": True,
-            },
-            evidence=package_metadata_status.get("path"),
-        )
+    gates.extend(
+        [
+            _contract_gate(
+                "package_source_freshness_valid_when_checked",
+                package_source_status.get("passed") is not False,
+                actual={
+                    "checked": package_source_status.get("checked"),
+                    "git_commit_matches_repo": package_source_status.get(
+                        "git_commit_matches_repo"
+                    ),
+                    "all_compared_files_match": package_source_status.get(
+                        "all_compared_files_match"
+                    ),
+                    "compared_file_count": package_source_status.get("compared_file_count"),
+                },
+                expected={
+                    "git_commit_matches_repo": True,
+                    "all_compared_files_match": True,
+                    "compared_file_count": ">0",
+                    "checked_failures_block_completion": True,
+                },
+                evidence=package_source_status.get("path"),
+            ),
+            _contract_gate(
+                "package_command_manifest_valid_when_checked",
+                package_command_manifest_status.get("passed") is not False,
+                actual={
+                    "checked": package_command_manifest_status.get("checked"),
+                    "failed_checks": package_command_manifest_status.get("failed_checks"),
+                },
+                expected={
+                    "failed_checks": [],
+                    "checked_failures_block_completion": True,
+                },
+                evidence=package_command_manifest_status.get("path"),
+            ),
+            _contract_gate(
+                "package_python_metadata_valid_when_checked",
+                package_metadata_status.get("passed") is not False,
+                actual={
+                    "checked": package_metadata_status.get("checked"),
+                    "requires_python": package_metadata_status.get("requires_python"),
+                },
+                expected={
+                    "requires_python": UNSLOTH_PYTHON_RANGE,
+                    "checked_failures_block_completion": True,
+                },
+                evidence=package_metadata_status.get("path"),
+            ),
+        ]
     )
     missing_or_failed = [gate for gate in gates if not gate["passed"]]
     human_usefulness_status = _human_usefulness_contract_status(

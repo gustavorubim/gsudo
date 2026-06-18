@@ -1625,6 +1625,51 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         encoding="utf-8",
     )
     assert summarize_full_eval_contract_status(run)["passed"]
+    good_source_freshness = json.loads(source_freshness.read_text(encoding="utf-8-sig"))
+    stale_source_freshness = {**good_source_freshness, "all_compared_files_match": False}
+    source_freshness.write_text(
+        json.dumps(stale_source_freshness, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    stale_source_status = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )
+    stale_source_gates = {gate["name"]: gate for gate in stale_source_status["gates"]}
+    assert not stale_source_status["passed"]
+    assert not stale_source_gates["package_source_freshness_valid_when_checked"]["passed"]
+    assert stale_source_status["remaining_by_area"]["other"] == [
+        "package_source_freshness_valid_when_checked"
+    ]
+    source_freshness.write_text(
+        json.dumps(good_source_freshness, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    command_manifest_path = launch_dir / "commands_manifest.json"
+    good_command_manifest = json.loads(command_manifest_path.read_text(encoding="utf-8"))
+    command_manifest_path.write_text(
+        json.dumps({**good_command_manifest, "schema_version": 2}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    bad_command_status = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )
+    bad_command_gates = {gate["name"]: gate for gate in bad_command_status["gates"]}
+    assert not bad_command_status["passed"]
+    assert not bad_command_gates["package_command_manifest_valid_when_checked"]["passed"]
+    assert bad_command_status["package_command_manifest_status"]["failed_checks"] == [
+        "schema_version"
+    ]
+    assert bad_command_status["remaining_by_area"]["other"] == [
+        "package_command_manifest_valid_when_checked"
+    ]
+    command_manifest_path.write_text(
+        json.dumps(good_command_manifest, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     (package_root / "pyproject.toml").write_text(
         '[project]\nname = "semantic-mirror-runtime"\nrequires-python = ">=3.11"\n',
         encoding="utf-8",
