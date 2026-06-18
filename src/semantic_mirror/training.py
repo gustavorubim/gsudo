@@ -801,6 +801,7 @@ def package_training_bundle(
         encoding="utf-8",
     )
     command_manifest = _package_launch_command_manifest(commands)
+    command_input_reference = _command_input_reference(command_manifest)
     (launch_target / "commands_manifest.json").write_text(
         json.dumps(command_manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -808,7 +809,7 @@ def package_training_bundle(
     _write_launch_scripts(launch_target)
     _write_bootstrap_scripts(setup_target)
     (out / "README.md").write_text(
-        _training_package_readme(audit),
+        _training_package_readme(audit, command_input_reference),
         encoding="utf-8",
     )
     source_freshness = generate_training_package_source_freshness(
@@ -867,6 +868,7 @@ def package_training_bundle(
         "files": files,
         "launch_commands": commands,
         "launch_command_manifest": command_manifest,
+        "command_input_reference": command_input_reference,
     }
     _write_package_manifest(out, manifest)
     return manifest
@@ -1464,6 +1466,10 @@ def summarize_full_eval_contract_status(
             remaining_recovery_plan
         ),
     }
+    report["command_input_reference"] = _command_input_reference(
+        package_command_manifest_status,
+        input_names=_referenced_contract_input_names(report),
+    )
     report["contract_scorecard"] = _contract_scorecard(report)
     report["contract_scorecard_summary"] = _contract_scorecard_contract_summary(
         report["contract_scorecard"]
@@ -2419,6 +2425,178 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
             for name, command in commands.items()
         },
     }
+
+
+_COMMAND_INPUT_REFERENCE: dict[str, dict[str, str]] = {
+    "baseline_candidates": {
+        "purpose": "JSONL candidates for the baseline model over the held-out units.",
+        "example": "outputs/baseline_candidates_eval.jsonl",
+    },
+    "candidates_jsonl": {
+        "purpose": "JSONL candidate file to score or compare.",
+        "example": "outputs/sft_candidates.jsonl",
+    },
+    "dpo_candidates": {
+        "purpose": "Repaired DPO candidate JSONL produced after DPO generation.",
+        "example": "outputs/dpo_candidates.jsonl",
+    },
+    "dpo_or_sft_model_or_adapter": {
+        "purpose": "DPO adapter path, or SFT adapter path when RL starts from SFT.",
+        "example": "outputs/semantic-mirror-dpo",
+    },
+    "dpo_raw_candidates": {
+        "purpose": "Raw DPO candidate JSONL before deterministic repair.",
+        "example": "outputs/dpo_raw_candidates.jsonl",
+    },
+    "dpo_resume_from_checkpoint": {
+        "purpose": "Optional DPO trainer checkpoint used to resume an interrupted run.",
+        "example": "outputs/semantic-mirror-dpo/checkpoint-10",
+    },
+    "held_out_dataset": {
+        "purpose": "Held-out Semantic Mirror dataset directory used for smoke or full eval.",
+        "example": "outputs/heldout_eval_dataset",
+    },
+    "human_study_coverage": {
+        "purpose": "Optional Phase 6 answer coverage report for human usefulness gates.",
+        "example": "outputs/phase6/coverage.json",
+    },
+    "human_study_suite": {
+        "purpose": "Optional Phase 6 collection suite report for reviewer-answer gates.",
+        "example": "outputs/phase6/suite_manifest.json",
+    },
+    "model_or_adapter": {
+        "purpose": "Model or LoRA adapter path used for candidate generation or eval.",
+        "example": "outputs/semantic-mirror-sft",
+    },
+    "output_dir": {
+        "purpose": "Stage output directory for an SFT, DPO, or RL training command.",
+        "example": "outputs/semantic-mirror-sft",
+    },
+    "outputs_dir": {
+        "purpose": "Full-eval output directory containing manifests, reports, samples, and diagnostics.",
+        "example": "outputs",
+    },
+    "package_root": {
+        "purpose": "Root of the generated training bundle.",
+        "example": ".",
+    },
+    "package_source_freshness": {
+        "purpose": "Package source-freshness JSON proving bundled code matches the repo.",
+        "example": "source_freshness.json",
+    },
+    "prompt_file": {
+        "purpose": "Prompt JSONL used to generate candidates.",
+        "example": "outputs/heldout_eval_training/rl_prompts.jsonl",
+    },
+    "repo_root": {
+        "purpose": "Source checkout used for repo hygiene or source freshness checks.",
+        "example": "/path/to/gsudo",
+    },
+    "rl_candidates": {
+        "purpose": "Repaired RL candidate JSONL produced after RL generation.",
+        "example": "outputs/rl_candidates.jsonl",
+    },
+    "rl_raw_candidates": {
+        "purpose": "Raw RL candidate JSONL before deterministic repair.",
+        "example": "outputs/rl_raw_candidates.jsonl",
+    },
+    "samples_dir": {
+        "purpose": "Sample-inspection directory for one model stage.",
+        "example": "outputs/samples/sft",
+    },
+    "sft_candidates": {
+        "purpose": "Repaired SFT candidate JSONL produced after SFT generation.",
+        "example": "outputs/sft_candidates.jsonl",
+    },
+    "sft_model_or_adapter": {
+        "purpose": "SFT adapter path used as the DPO starting point.",
+        "example": "outputs/semantic-mirror-sft",
+    },
+    "sft_raw_candidates": {
+        "purpose": "Raw SFT candidate JSONL before deterministic repair.",
+        "example": "outputs/sft_raw_candidates.jsonl",
+    },
+    "sft_resume_from_checkpoint": {
+        "purpose": "Optional SFT trainer checkpoint used to resume an interrupted run.",
+        "example": "outputs/semantic-mirror-sft/checkpoint-10",
+    },
+    "source_freshness_repo_root": {
+        "purpose": "Repo root used by the full-eval launcher when refreshing package freshness.",
+        "example": "/path/to/gsudo",
+    },
+    "training_dir": {
+        "purpose": "Packaged training-data directory containing SFT, DPO, and RL JSONL files.",
+        "example": "training",
+    },
+    "windows_audit": {
+        "purpose": "Native Windows readiness audit JSON used as contract-status evidence.",
+        "example": "audit/current_environment.json",
+    },
+    "wsl_smoke_manifest": {
+        "purpose": "WSL smoke-chain manifest proving bounded WSL CUDA execution.",
+        "example": "outputs/smoke-chain-wsl/smoke_chain_manifest.json",
+    },
+}
+
+
+def _command_input_reference(
+    command_manifest: dict[str, Any] | None = None,
+    *,
+    input_names: Iterable[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    required_by: dict[str, set[str]] = {}
+    optional_by: dict[str, set[str]] = {}
+    commands = (command_manifest or {}).get("commands")
+    if not isinstance(commands, dict):
+        commands = (command_manifest or {}).get("command_lookup")
+    if isinstance(commands, dict):
+        for command_name, command in commands.items():
+            if not isinstance(command_name, str) or not isinstance(command, dict):
+                continue
+            for input_name in command.get("required_inputs") or []:
+                if isinstance(input_name, str) and input_name:
+                    required_by.setdefault(input_name, set()).add(command_name)
+            for input_name in command.get("optional_inputs") or []:
+                if isinstance(input_name, str) and input_name:
+                    optional_by.setdefault(input_name, set()).add(command_name)
+    referenced_inputs = set(input_names or [])
+    referenced_inputs.update(required_by)
+    referenced_inputs.update(optional_by)
+    if not referenced_inputs:
+        referenced_inputs = set(_COMMAND_INPUT_REFERENCE)
+    return {
+        name: {
+            "purpose": _COMMAND_INPUT_REFERENCE.get(name, {}).get(
+                "purpose", "Command input declared by the package command manifest."
+            ),
+            "example": _COMMAND_INPUT_REFERENCE.get(name, {}).get(
+                "example", f"<{name}>"
+            ),
+            "required_by": sorted(required_by.get(name, set())),
+            "optional_by": sorted(optional_by.get(name, set())),
+        }
+        for name in sorted(referenced_inputs)
+    }
+
+
+def _command_input_reference_markdown(
+    reference: dict[str, dict[str, Any]],
+) -> list[str]:
+    if not reference:
+        return []
+    lines = [
+        "| Input | Purpose | Example | Required By | Optional By |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for name, item in reference.items():
+        required_by = item.get("required_by") or []
+        optional_by = item.get("optional_by") or []
+        lines.append(
+            f"| `{name}` | {item.get('purpose', '')} | `{item.get('example', '')}` | "
+            f"{', '.join(f'`{command}`' for command in required_by) or '`None`'} | "
+            f"{', '.join(f'`{command}`' for command in optional_by) or '`None`'} |"
+        )
+    return lines
 
 
 def _write_launch_scripts(launch_target: Path) -> None:
@@ -3444,8 +3622,14 @@ wsl.exe -d $Distro -- bash -lc "cd '$wslPath' && PYTHON_BIN=$Python bash setup/b
             path.chmod(0o755)
 
 
-def _training_package_readme(audit: dict[str, Any]) -> str:
+def _training_package_readme(
+    audit: dict[str, Any],
+    command_input_reference: dict[str, dict[str, Any]] | None = None,
+) -> str:
     ready = "yes" if audit["ready_to_launch"] else "no"
+    input_reference_markdown = "\n".join(
+        _command_input_reference_markdown(command_input_reference or {})
+    )
     return f"""# Semantic Mirror Training Bundle
 
 This directory is generated by `semantic-mirror train package`. It contains a
@@ -3552,6 +3736,14 @@ training run. Each command row separates `required_inputs` from
 manifests, and package source freshness can be supplied to strengthen status
 without making a non-training refresh invalid when they are absent. The older
 `launch/commands.json` remains a flat command lookup for backward compatibility.
+
+## Command Input Reference
+
+Use this table to replace command placeholders with concrete paths from this
+bundle or from the target machine. `Required By` and `Optional By` come from
+`launch/commands_manifest.json`.
+
+{input_reference_markdown}
 
 After packaging or refreshing bundled source, generate source freshness evidence
 from the package root:
@@ -6688,6 +6880,46 @@ def _markdown_table_code_value(value: Any, *, max_chars: int = 160) -> str:
     return "`" + text.replace("|", "\\|") + "`"
 
 
+def _referenced_contract_input_names(report: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+
+    def collect(value: object) -> None:
+        if isinstance(value, str) and value:
+            names.add(value)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if key in {
+                    "required_inputs",
+                    "optional_inputs",
+                    "next_action_command_required_inputs",
+                    "next_action_command_optional_inputs",
+                }:
+                    collect(item)
+                elif key.endswith("_input_counts") and isinstance(item, dict):
+                    for input_name in item:
+                        collect(input_name)
+                elif key.endswith("_command_inputs") or key == "command_inputs":
+                    collect(item)
+                elif key == "command_lookup":
+                    collect(item)
+                elif isinstance(item, dict):
+                    collect(item)
+
+    for key in (
+        "next_actions",
+        "next_action_summary",
+        "remaining_recovery_plan",
+        "recovery_plan_summary",
+        "training_dependency_summary",
+        "package_command_manifest_status",
+    ):
+        collect(report.get(key))
+    return names
+
+
 def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Semantic Mirror Full-Eval Contract Status",
@@ -6899,6 +7131,18 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
     if command_manifest.get("failed_checks"):
         lines.extend(["", "Failed command-manifest checks:"])
         lines.extend(f"- `{check}`" for check in command_manifest["failed_checks"])
+    command_input_reference = report.get("command_input_reference") or {}
+    if command_input_reference:
+        lines.extend(
+            [
+                "",
+                "## Command Input Reference",
+                "",
+                "Inputs currently requested by packaged commands, next actions, or recovery-plan rows:",
+                "",
+            ]
+        )
+        lines.extend(_command_input_reference_markdown(command_input_reference))
     package_metadata = report.get("package_metadata_status") or {}
     lines.extend(
         [

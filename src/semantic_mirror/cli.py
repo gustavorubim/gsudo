@@ -1295,6 +1295,7 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     manifest.get("remaining_recovery_plan")
                 ),
             ),
+            "command_input_reference": manifest.get("command_input_reference", {}),
             "remaining_by_area": manifest["remaining_by_area"],
             "remaining_area_summary": _summary_value(
                 manifest,

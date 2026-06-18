@@ -2395,6 +2395,22 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["training_dependency_summary"][
         "ready_non_training_optional_input_counts"
     ] == {}
+    assert cli_stdout["command_input_reference"]["held_out_dataset"] == {
+        "purpose": "Held-out Semantic Mirror dataset directory used for smoke or full eval.",
+        "example": "outputs/heldout_eval_dataset",
+        "required_by": ["eval_candidates", "full_training_eval", "smoke_chain", "wsl_smoke_chain"],
+        "optional_by": [],
+    }
+    assert cli_stdout["command_input_reference"]["baseline_candidates"] == {
+        "purpose": "JSONL candidates for the baseline model over the held-out units.",
+        "example": "outputs/baseline_candidates_eval.jsonl",
+        "required_by": ["compare_sft", "compare_sft_raw", "full_training_eval"],
+        "optional_by": [],
+    }
+    assert cli_stdout["command_input_reference"]["outputs_dir"]["example"] == "outputs"
+    assert cli_stdout["command_input_reference"]["windows_audit"][
+        "optional_by"
+    ] == ["contract_status", "full_training_eval"]
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -2669,6 +2685,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "stage_recovery_summary",
         "remaining_area_summary",
         "training_dependency_summary",
+        "command_input_reference",
     ]:
         assert cli_stdout[summary_key] == cli_status_json[summary_key]
     saved_scorecard = {
@@ -4143,6 +4160,18 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         "sft_resume_from_checkpoint",
         "dpo_resume_from_checkpoint",
     ]
+    assert package_manifest["command_input_reference"]["held_out_dataset"] == {
+        "purpose": "Held-out Semantic Mirror dataset directory used for smoke or full eval.",
+        "example": "outputs/heldout_eval_dataset",
+        "required_by": ["eval_candidates", "full_training_eval", "smoke_chain", "wsl_smoke_chain"],
+        "optional_by": [],
+    }
+    assert package_manifest["command_input_reference"]["windows_audit"] == {
+        "purpose": "Native Windows readiness audit JSON used as contract-status evidence.",
+        "example": "audit/current_environment.json",
+        "required_by": [],
+        "optional_by": ["contract_status", "full_training_eval"],
+    }
     assert "--schema-prefix-mode schema-scaffold" in commands["rl"]
     assert "--schema-prefix-mode schema-scaffold" in commands["generate_candidates"]
     assert "outputs/dpo_eval.json" in commands["compare_dpo"]
@@ -4386,6 +4415,14 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "train source-freshness" in package_readme
     assert "commands_manifest.json" in package_readme
     assert "launches_training" in package_readme
+    assert "## Command Input Reference" in package_readme
+    assert "| `held_out_dataset` | Held-out Semantic Mirror dataset directory" in package_readme
+    assert "`outputs/heldout_eval_dataset`" in package_readme
+    assert "`eval_candidates`, `full_training_eval`, `smoke_chain`, `wsl_smoke_chain`" in package_readme
+    assert "| `baseline_candidates` | JSONL candidates for the baseline model" in package_readme
+    assert "| `outputs_dir` | Full-eval output directory" in package_readme
+    assert "| `windows_audit` | Native Windows readiness audit JSON" in package_readme
+    assert "| `wsl_smoke_manifest` | WSL smoke-chain manifest" in package_readme
     assert "contract_status.json" in package_readme
     assert "contract_status.md" in package_readme
     assert "`outputs/contract_status.json` and `train contract-status` stdout" in (
