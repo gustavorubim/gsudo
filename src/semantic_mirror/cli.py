@@ -326,6 +326,9 @@ def main(argv: list[str] | None = None) -> int:
             human_study_suite_path=Path(args.human_study_suite)
             if args.human_study_suite is not None
             else None,
+            human_study_coverage_paths=[
+                Path(path) for path in (args.human_study_coverage or [])
+            ],
             out_path=Path(args.out) if args.out is not None else None,
             markdown_out_path=Path(args.markdown_out) if args.markdown_out is not None else None,
         )
@@ -766,6 +769,11 @@ def _parser() -> argparse.ArgumentParser:
     contract_status.add_argument(
         "--human-study-suite",
         help="Optional Phase 6 human-study-suite JSON summary for usefulness evidence.",
+    )
+    contract_status.add_argument(
+        "--human-study-coverage",
+        action="append",
+        help="Optional review study-status JSON coverage report. May be repeated.",
     )
     contract_status.add_argument("--out", help="Optional JSON status report output path.")
     contract_status.add_argument("--markdown-out", help="Optional Markdown status report output path.")

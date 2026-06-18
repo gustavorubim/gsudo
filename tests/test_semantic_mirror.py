@@ -250,6 +250,9 @@ def test_build_generates_path_preserving_ir_with_data_ml_details(tmp_path: Path)
     assert study_eval["phase6_gate_summary"]["answer_text_present"]
     assert study_eval["phase6_gate_summary"]["mirror_accuracy_not_lower_than_source"]
     assert study_eval["phase6_gate_summary"]["mirror_median_faster_than_source"]
+    assert study_eval["metrics"]["source_mirror_answer_records"] == (
+        study_manifest["counts"]["mirror_tasks"] + study_manifest["counts"]["source_tasks"]
+    )
     cli_report = tmp_path / "review_study_eval.json"
     cli_eval = subprocess.run(
         [
@@ -386,6 +389,9 @@ def test_human_study_answer_coverage_reports_pending_and_ready_state(tmp_path: P
     )
     assert ready["passed"]
     assert ready["counts"]["pending_task_records"] == 0
+    assert ready["counts"]["source_mirror_answer_records"] == (
+        ready["counts"]["mirror_tasks"] + ready["counts"]["source_tasks"]
+    )
     assert json.loads(report_path.read_text(encoding="utf-8"))["passed"]
 
     cli_report = tmp_path / "cli_coverage.json"
@@ -956,6 +962,42 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     }
     assert usefulness_scorecard["human_usefulness"]["passed"] is True
     assert usefulness_scorecard["human_usefulness"]["earned_reward"] == 70
+    coverage_report = tmp_path / "whole_repo_coverage.json"
+    coverage_report.write_text(
+        json.dumps(
+            {
+                "mode": "human_usefulness_study_answer_coverage",
+                "passed": False,
+                "study": str(tmp_path / "study"),
+                "answers": str(tmp_path / "answers.jsonl"),
+                "counts": {
+                    "task_records": 108,
+                    "pending_task_records": 108,
+                    "real_timed_answer_records": 0,
+                },
+                "gates": [
+                    {"name": "answer_task_id_coverage", "passed": False},
+                    {"name": "real_timed_reviewer_logs", "passed": False},
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    coverage_status = summarize_full_eval_contract_status(
+        run,
+        human_study_suite_path=human_suite,
+        human_study_coverage_paths=[coverage_report],
+    )
+    coverage_reports = coverage_status["human_usefulness_status"]["coverage_reports"]
+    assert coverage_reports[0]["passed"] is False
+    assert coverage_reports[0]["pending_task_count"] == 108
+    assert coverage_reports[0]["real_timed_answer_records"] == 0
+    assert coverage_reports[0]["failed_gates"] == [
+        "answer_task_id_coverage",
+        "real_timed_reviewer_logs",
+    ]
 
     cli_status = subprocess.run(
         [
@@ -979,6 +1021,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             str(wsl_smoke),
             "--human-study-suite",
             str(human_suite),
+            "--human-study-coverage",
+            str(coverage_report),
             "--out",
             str(tmp_path / "contract_status_cli.json"),
             "--markdown-out",
@@ -1002,9 +1046,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "--windows-audit 'windows_audit.json'" in refresh_action["command"]
     assert "--wsl-smoke-manifest 'smoke_chain_manifest.json'" in refresh_action["command"]
     assert "--human-study-suite 'phase6_summary.json'" in refresh_action["command"]
-    assert "training_eval_summary_matches_requested_steps" in (
-        tmp_path / "contract_status_cli.md"
-    ).read_text(encoding="utf-8")
+    assert "--human-study-coverage 'whole_repo_coverage.json'" in refresh_action["command"]
+    contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
+    assert "training_eval_summary_matches_requested_steps" in contract_status_md
+    assert "whole_repo_coverage.json" in contract_status_md
+    assert "real_timed_reviewer_logs" in contract_status_md
 
     (run / "training_eval_summary.json").write_text(
         json.dumps(

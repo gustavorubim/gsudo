@@ -15,7 +15,7 @@ import sys
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from semantic_mirror.schema import (
     DATA_ML_DETAIL_CATEGORIES,
@@ -875,6 +875,7 @@ def summarize_full_eval_contract_status(
     windows_audit_path: Path | str | None = None,
     wsl_smoke_manifest_path: Path | str | None = None,
     human_study_suite_path: Path | str | None = None,
+    human_study_coverage_paths: Iterable[Path | str] | None = None,
     out_path: Path | str | None = None,
     markdown_out_path: Path | str | None = None,
 ) -> dict[str, Any]:
@@ -1062,7 +1063,8 @@ def summarize_full_eval_contract_status(
         wsl_smoke_manifest_path=wsl_smoke_manifest_path,
     )
     human_usefulness_status = _human_usefulness_contract_status(
-        human_study_suite_path
+        human_study_suite_path,
+        coverage_paths=human_study_coverage_paths,
     )
     next_actions = _full_eval_next_actions(
         run,
@@ -6221,6 +6223,25 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Suite report path: `{human_usefulness.get('path')}`",
         ]
     )
+    coverage_reports = human_usefulness.get("coverage_reports") or []
+    if coverage_reports:
+        lines.extend(
+            [
+                "",
+                "### Answer Coverage",
+                "",
+                "| Coverage Report | Passed | Pending | Real Timed Answers | Failed Gates |",
+                "| --- | --- | ---: | ---: | --- |",
+            ]
+        )
+        for coverage in coverage_reports:
+            failed = coverage.get("failed_gates") or []
+            lines.append(
+                f"| `{coverage.get('path')}` | `{coverage.get('passed')}` | "
+                f"{coverage.get('pending_task_count')} | "
+                f"{coverage.get('real_timed_answer_records')} | "
+                f"{', '.join(f'`{gate}`' for gate in failed)} |"
+            )
     lines.extend(
         [
             "",
@@ -6523,6 +6544,16 @@ def _contract_status_evidence_flags(
                 ),
             ]
         )
+    for coverage in human_usefulness_status.get("coverage_reports") or []:
+        if coverage.get("path"):
+            flags.extend(
+                [
+                    "--human-study-coverage",
+                    _shell_single_quoted(
+                        _posix_relpath(Path(coverage["path"]), package_root)
+                    ),
+                ]
+            )
     return " ".join(flags) + (" " if flags else "")
 
 
@@ -6939,11 +6970,15 @@ def _windows_readiness_contract_status(
 
 def _human_usefulness_contract_status(
     suite_path: Path | str | None,
+    *,
+    coverage_paths: Iterable[Path | str] | None = None,
 ) -> dict[str, Any]:
+    coverage_reports = _human_study_coverage_contract_status(coverage_paths)
     if suite_path is None:
         return {
-            "checked": False,
+            "checked": bool(coverage_reports),
             "passed": None,
+            "coverage_reports": coverage_reports,
             "summary": "Human usefulness not checked; pass --human-study-suite with an eval human-study-suite report.",
         }
     path = Path(suite_path).resolve()
@@ -6953,6 +6988,7 @@ def _human_usefulness_contract_status(
             "checked": True,
             "passed": False,
             "path": str(path),
+            "coverage_reports": coverage_reports,
             "summary": "Human-study suite report is missing or not a JSON object.",
         }
     phase6 = report.get("phase6_gate_summary", {})
@@ -6990,7 +7026,58 @@ def _human_usefulness_contract_status(
         "report_passed": bool(report.get("passed")),
         "required_phase6_gates": gate_status,
         "metrics": report.get("metrics", {}),
+        "coverage_reports": coverage_reports,
     }
+
+
+def _human_study_coverage_contract_status(
+    coverage_paths: Iterable[Path | str] | None,
+) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for coverage_path in coverage_paths or []:
+        path = Path(coverage_path).resolve()
+        report = _read_json_file(path)
+        if not isinstance(report, dict):
+            reports.append(
+                {
+                    "path": str(path),
+                    "checked": True,
+                    "passed": False,
+                    "summary": "Coverage report is missing or not a JSON object.",
+                }
+            )
+            continue
+        counts = report.get("counts", {})
+        gates = report.get("gates", [])
+        failed_gates = [
+            gate.get("name")
+            for gate in gates
+            if isinstance(gate, dict) and not gate.get("passed")
+        ]
+        reports.append(
+            {
+                "path": str(path),
+                "checked": True,
+                "passed": (
+                    report.get("mode") == "human_usefulness_study_answer_coverage"
+                    and bool(report.get("passed"))
+                ),
+                "mode": report.get("mode"),
+                "study": report.get("study"),
+                "answers": report.get("answers"),
+                "counts": counts if isinstance(counts, dict) else {},
+                "failed_gates": failed_gates,
+                "pending_task_count": (
+                    counts.get("pending_task_records") if isinstance(counts, dict) else None
+                ),
+                "real_timed_answer_records": (
+                    counts.get("real_timed_answer_records")
+                    if isinstance(counts, dict)
+                    else None
+                ),
+            }
+        )
+    return reports
 
 
 def _contract_scorecard(report: dict[str, Any]) -> list[dict[str, Any]]:

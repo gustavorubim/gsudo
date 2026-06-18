@@ -335,7 +335,10 @@ def evaluate_human_usefulness_study(
     real_timed_answers = [answer for answer in valid_answers if _has_real_timed_log(answer)]
     reviewer_answers = [answer for answer in valid_answers if _has_reviewer_identity(answer)]
     source_mirror_answers = [
-        answer for answer in valid_answers if answer.get("condition") in {"mirror", "source"}
+        answer
+        for answer in valid_answers
+        if answer.get("condition") in {"mirror", "source"}
+        and answer.get("task_type") != "visibility_marker"
     ]
     text_answers = [
         answer for answer in source_mirror_answers if _has_answer_text(answer)
@@ -465,7 +468,10 @@ def summarize_human_study_answer_coverage(
     )
     pending_tasks = [task for task in tasks if task["study_task_id"] not in known_answer_ids]
     source_mirror_answers = [
-        answer for answer in known_answers if answer.get("condition") in {"mirror", "source"}
+        answer
+        for answer in known_answers
+        if answer.get("condition") in {"mirror", "source"}
+        and answer.get("task_type") != "visibility_marker"
     ]
     visibility_answers = [
         answer for answer in known_answers if answer.get("task_type") == "visibility_marker"
