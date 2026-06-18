@@ -1164,6 +1164,9 @@ def summarize_full_eval_contract_status(
         package_source_freshness_path,
         repo_hygiene_status=repo_hygiene_status,
     )
+    package_command_manifest_status = _package_command_manifest_contract_status(
+        package_source_status
+    )
     human_usefulness_status = _human_usefulness_contract_status(
         human_study_suite_path,
         coverage_paths=human_study_coverage_paths,
@@ -1208,6 +1211,7 @@ def summarize_full_eval_contract_status(
         "repo_hygiene_status": repo_hygiene_status,
         "windows_readiness_status": windows_readiness_status,
         "package_source_status": package_source_status,
+        "package_command_manifest_status": package_command_manifest_status,
         "human_usefulness_status": human_usefulness_status,
         "next_actions": next_actions,
         "remaining_items": remaining_items,
@@ -6420,6 +6424,31 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
     if mismatched_files:
         lines.extend(["", "Mismatched files:"])
         lines.extend(f"- `{path}`" for path in mismatched_files)
+    command_manifest = report.get("package_command_manifest_status") or {}
+    lines.extend(
+        [
+            "",
+            "## Package Command Manifest",
+            "",
+            f"- Checked: `{command_manifest.get('checked', False)}`",
+            f"- Passed: `{command_manifest.get('passed')}`",
+            f"- Summary: {command_manifest.get('summary')}",
+            f"- Evidence path: `{command_manifest.get('path')}`",
+            f"- Command count: `{command_manifest.get('command_count')}`",
+            f"- Training command count: `{command_manifest.get('training_command_count')}`",
+            f"- Non-training command count: `{command_manifest.get('non_training_command_count')}`",
+        ]
+    )
+    if command_manifest.get("training_commands"):
+        lines.append(
+            "- Training commands: "
+            + ", ".join(
+                f"`{command}`" for command in command_manifest["training_commands"]
+            )
+        )
+    if command_manifest.get("failed_checks"):
+        lines.extend(["", "Failed command-manifest checks:"])
+        lines.extend(f"- `{check}`" for check in command_manifest["failed_checks"])
     human_usefulness = report.get("human_usefulness_status") or {}
     lines.extend(
         [
@@ -7266,6 +7295,135 @@ def _package_source_freshness_contract_status(
             if isinstance(row, dict) and not row.get("match")
         ],
         "package_specific_docs": report.get("package_specific_docs", []),
+    }
+
+
+def _package_command_manifest_contract_status(
+    package_source_status: dict[str, Any],
+) -> dict[str, Any]:
+    package_root = package_source_status.get("package_root")
+    if not package_root:
+        return {
+            "checked": False,
+            "passed": None,
+            "summary": (
+                "Package command manifest not checked; package source freshness "
+                "evidence did not include a package_root."
+            ),
+        }
+    path = Path(str(package_root)) / "launch" / "commands_manifest.json"
+    report = _read_json_file(path)
+    if not isinstance(report, dict):
+        return {
+            "checked": True,
+            "passed": False,
+            "path": str(path),
+            "summary": "Package command manifest is missing or not a JSON object.",
+        }
+    commands = report.get("commands")
+    if not isinstance(commands, dict):
+        return {
+            "checked": True,
+            "passed": False,
+            "path": str(path),
+            "summary": "Package command manifest does not contain a commands object.",
+            "schema_version": report.get("schema_version"),
+            "command_count": 0,
+            "failed_checks": ["commands_object"],
+        }
+    expected_training = {
+        "wsl_smoke_chain",
+        "sft",
+        "dpo",
+        "rl",
+        "full_training_eval",
+        "smoke_chain",
+    }
+    expected_non_training = {
+        "inspect_full_training_eval_resume",
+        "contract_status",
+        "source_freshness",
+        "report",
+        "validate",
+        "audit",
+        "install",
+        "bootstrap_linux_cuda",
+        "bootstrap_wsl_ubuntu",
+        "generate_candidates",
+        "score_candidates",
+        "eval_candidates",
+        "inspect_samples",
+        "compare_sft",
+        "compare_sft_raw",
+        "compare_dpo",
+        "compare_dpo_raw",
+        "compare_rl",
+        "compare_rl_raw",
+    }
+    training_commands = {
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict) and command.get("launches_training") is True
+    }
+    non_training_commands = {
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict) and command.get("launches_training") is False
+    }
+    missing_training = sorted(expected_training - training_commands)
+    unexpected_training = sorted(training_commands - expected_training)
+    missing_non_training = sorted(expected_non_training - non_training_commands)
+    malformed = sorted(
+        name for name, command in commands.items() if not isinstance(command, dict)
+    )
+    missing_command_text = sorted(
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict) and not isinstance(command.get("command"), str)
+    )
+    missing_category = sorted(
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict) and not isinstance(command.get("category"), str)
+    )
+    failed_checks = []
+    if report.get("schema_version") != 1:
+        failed_checks.append("schema_version")
+    if missing_training:
+        failed_checks.append("missing_training_launch_flags")
+    if unexpected_training:
+        failed_checks.append("unexpected_training_launch_flags")
+    if missing_non_training:
+        failed_checks.append("missing_non_training_launch_flags")
+    if malformed:
+        failed_checks.append("malformed_command_entries")
+    if missing_command_text:
+        failed_checks.append("missing_command_text")
+    if missing_category:
+        failed_checks.append("missing_category")
+    passed = not failed_checks
+    return {
+        "checked": True,
+        "passed": passed,
+        "path": str(path),
+        "summary": (
+            "Package command manifest classifies training and non-training commands."
+            if passed
+            else "Package command manifest is missing required safety metadata."
+        ),
+        "schema_version": report.get("schema_version"),
+        "command_count": len(commands),
+        "training_command_count": len(training_commands),
+        "non_training_command_count": len(non_training_commands),
+        "training_commands": sorted(training_commands),
+        "non_training_commands": sorted(non_training_commands),
+        "missing_training_commands": missing_training,
+        "unexpected_training_commands": unexpected_training,
+        "missing_non_training_commands": missing_non_training,
+        "malformed_commands": malformed,
+        "missing_command_text": missing_command_text,
+        "missing_category": missing_category,
+        "failed_checks": failed_checks,
     }
 
 

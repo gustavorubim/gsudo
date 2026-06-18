@@ -52,6 +52,52 @@ from semantic_mirror.training import (
 )
 
 
+def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, object]]:
+    training_commands = {
+        "wsl_smoke_chain",
+        "sft",
+        "dpo",
+        "rl",
+        "full_training_eval",
+        "smoke_chain",
+    }
+    categories = {
+        "wsl_smoke_chain": "training",
+        "sft": "training",
+        "dpo": "training",
+        "rl": "training",
+        "full_training_eval": "training",
+        "smoke_chain": "training",
+        "inspect_full_training_eval_resume": "inspection",
+        "contract_status": "status",
+        "source_freshness": "status",
+        "report": "diagnostics",
+        "validate": "validation",
+        "audit": "validation",
+        "install": "setup",
+        "bootstrap_linux_cuda": "setup",
+        "bootstrap_wsl_ubuntu": "setup",
+        "generate_candidates": "generation",
+        "score_candidates": "evaluation",
+        "eval_candidates": "evaluation",
+        "inspect_samples": "inspection",
+        "compare_sft": "evaluation",
+        "compare_sft_raw": "evaluation",
+        "compare_dpo": "evaluation",
+        "compare_dpo_raw": "evaluation",
+        "compare_rl": "evaluation",
+        "compare_rl_raw": "evaluation",
+    }
+    return {
+        name: {
+            "command": command,
+            "category": categories[name],
+            "launches_training": name in training_commands,
+        }
+        for name, command in commands.items()
+    }
+
+
 SAMPLE_TRAIN = """\
 import torch
 from pathlib import Path
@@ -1070,13 +1116,54 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     repo_commit = _git(repo, "rev-parse", "HEAD").strip()
     source_freshness = tmp_path / "source_freshness.json"
+    package_root = tmp_path / "package"
+    launch_dir = package_root / "launch"
+    launch_dir.mkdir(parents=True)
+    commands = {
+        "wsl_smoke_chain": "powershell -File launch/run_wsl_smoke_chain.ps1",
+        "sft": "bash launch/run_sft.sh",
+        "dpo": "bash launch/run_dpo.sh",
+        "rl": "bash launch/run_rl.sh",
+        "full_training_eval": "bash launch/run_full_training_eval.sh",
+        "smoke_chain": "bash launch/run_smoke_chain.sh",
+        "inspect_full_training_eval_resume": "bash launch/inspect_full_training_eval_resume.sh",
+        "contract_status": "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs",
+        "source_freshness": "PYTHONPATH=src python -m semantic_mirror.cli train source-freshness .",
+        "report": "PYTHONPATH=src python -m semantic_mirror.cli train report outputs",
+        "validate": "PYTHONPATH=src python -m semantic_mirror.cli train validate training",
+        "audit": "PYTHONPATH=src python -m semantic_mirror.cli train audit training",
+        "install": "python -m pip install -r requirements-training.txt",
+        "bootstrap_linux_cuda": "bash setup/bootstrap_linux_cuda.sh",
+        "bootstrap_wsl_ubuntu": "powershell -File setup/bootstrap_wsl_ubuntu.ps1",
+        "generate_candidates": "bash launch/generate_candidates.sh",
+        "score_candidates": "bash launch/score_candidates.sh",
+        "eval_candidates": "PYTHONPATH=src python -m semantic_mirror.cli eval candidates",
+        "inspect_samples": "PYTHONPATH=src python -m semantic_mirror.cli train inspect-samples",
+        "compare_sft": "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare",
+        "compare_sft_raw": "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare",
+        "compare_dpo": "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare",
+        "compare_dpo_raw": "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare",
+        "compare_rl": "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare",
+        "compare_rl_raw": "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare",
+    }
+    (launch_dir / "commands_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "commands": _test_command_manifest(commands),
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     source_freshness.write_text(
         json.dumps(
             {
                 "mode": "semantic_mirror_package_source_freshness",
                 "git_commit": repo_commit,
                 "repo_root": str(tmp_path),
-                "package_root": str(tmp_path / "package"),
+                "package_root": str(package_root),
                 "compared_scope": "src/semantic_mirror runtime source tree",
                 "compared_file_count": 2,
                 "all_compared_files_match": True,
@@ -1106,6 +1193,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert freshness_status["package_source_status"]["git_commit_matches_repo"] is True
     assert freshness_status["package_source_status"]["compared_file_count"] == 2
     assert freshness_status["package_source_status"]["repo_root"] == str(tmp_path)
+    assert freshness_status["package_command_manifest_status"]["checked"]
+    assert freshness_status["package_command_manifest_status"]["passed"]
+    assert freshness_status["package_command_manifest_status"]["training_command_count"] == 6
+    assert "full_training_eval" in freshness_status["package_command_manifest_status"][
+        "training_commands"
+    ]
     freshness_run_action = next(
         action
         for action in freshness_status["next_actions"]
@@ -1153,6 +1246,15 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_status_json = json.loads(
         (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
     )
+    assert cli_status_json["package_command_manifest_status"]["passed"]
+    assert cli_status_json["package_command_manifest_status"]["training_commands"] == [
+        "dpo",
+        "full_training_eval",
+        "rl",
+        "sft",
+        "smoke_chain",
+        "wsl_smoke_chain",
+    ]
     refresh_action = next(
         action
         for action in cli_status_json["next_actions"]
@@ -1178,6 +1280,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
     assert "Package runtime source freshness is proven" in contract_status_md
+    assert "## Package Command Manifest" in contract_status_md
+    assert "Package command manifest classifies training and non-training commands" in contract_status_md
+    assert "Training command count: `6`" in contract_status_md
     assert "whole_repo_coverage.json" in contract_status_md
     assert "real_timed_reviewer_logs" in contract_status_md
 
