@@ -674,6 +674,7 @@ def inspect_full_training_eval_resume(
         )
         for stage, stage_dir in stage_dirs.items()
     }
+    action_summary = _full_eval_resume_action_summary(decisions)
     manifest = {
         "mode": "full_training_eval_resume_inspection",
         "training_version": TRAINING_VERSION,
@@ -688,6 +689,7 @@ def inspect_full_training_eval_resume(
             "dpo_save_total_limit": dpo_save_total_limit,
         },
         "decisions": decisions,
+        "action_summary": action_summary,
         "files": {
             "json": str(out_path) if out_path is not None else None,
             "markdown": str(markdown_out_path) if markdown_out_path is not None else None,
@@ -9986,12 +9988,44 @@ def _resume_checkpoint_status(path: Path | None) -> dict[str, Any]:
     return {"path": str(path), "exists": path.exists(), "is_dir": path.is_dir()}
 
 
+def _full_eval_resume_action_summary(
+    decisions: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    stages_by_action: dict[str, list[str]] = {}
+    for stage, decision in decisions.items():
+        action = str(decision.get("action") or "unknown")
+        stages_by_action.setdefault(action, []).append(stage)
+    stages_by_action = {
+        action: sorted(stages) for action, stages in sorted(stages_by_action.items())
+    }
+    training_actions = {"resume", "run", "rerun"}
+    training_stages = sorted(
+        stage
+        for stage, decision in decisions.items()
+        if decision.get("action") in training_actions
+    )
+    return {
+        "stage_count": len(decisions),
+        "action_counts": {
+            action: len(stages) for action, stages in stages_by_action.items()
+        },
+        "stages_by_action": stages_by_action,
+        "training_required": bool(training_stages),
+        "training_stages": training_stages,
+        "all_stages_reusable": len(stages_by_action.get("reuse", [])) == len(decisions),
+    }
+
+
 def _full_eval_resume_inspection_markdown(report: dict[str, Any]) -> str:
+    action_summary = report.get("action_summary") or {}
     lines = [
         "# Semantic Mirror Full-Eval Resume Inspection",
         "",
         f"- Run directory: `{report['run_dir']}`",
         f"- Reuse stage outputs: `{report['reuse_stage_outputs_enabled']}`",
+        f"- Training required: `{action_summary.get('training_required')}`",
+        f"- Training stages: `{', '.join(action_summary.get('training_stages') or []) or 'None'}`",
+        f"- Action counts: `{json.dumps(action_summary.get('action_counts') or {}, sort_keys=True)}`",
         "",
         "| Stage | Action | Requested Steps | Manifest Steps | Checkpoint | Reason |",
         "| --- | --- | ---: | ---: | --- | --- |",

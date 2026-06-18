@@ -2711,8 +2711,23 @@ def test_inspect_full_eval_resume_cli_reports_safe_stage_decisions(
     assert report["decisions"]["dpo"]["action"] == "resume"
     assert report["decisions"]["dpo"]["resume_from_checkpoint"]["exists"] is True
     assert report["decisions"]["rl"]["action"] == "run"
+    assert report["action_summary"] == {
+        "action_counts": {"resume": 1, "reuse": 1, "run": 1},
+        "all_stages_reusable": False,
+        "stage_count": 3,
+        "stages_by_action": {
+            "resume": ["dpo"],
+            "reuse": ["sft"],
+            "run": ["rl"],
+        },
+        "training_required": True,
+        "training_stages": ["dpo", "rl"],
+    }
     resume_markdown = (tmp_path / "resume.md").read_text(encoding="utf-8")
     assert "# Semantic Mirror Full-Eval Resume Inspection" in resume_markdown
+    assert "- Training required: `True`" in resume_markdown
+    assert "- Training stages: `dpo, rl`" in resume_markdown
+    assert '- Action counts: `{"resume": 1, "reuse": 1, "run": 1}`' in resume_markdown
     assert "| `dpo` | `resume` | 120 | 10 |" in resume_markdown
 
     cli_json = tmp_path / "resume_cli.json"
@@ -2749,6 +2764,8 @@ def test_inspect_full_eval_resume_cli_reports_safe_stage_decisions(
     assert cli_report["decisions"]["sft"]["action"] == "reuse"
     assert cli_report["decisions"]["dpo"]["action"] == "resume"
     assert cli_report["decisions"]["rl"]["action"] == "run"
+    assert cli_report["action_summary"]["training_required"] is True
+    assert cli_report["action_summary"]["training_stages"] == ["dpo", "rl"]
     assert "full_training_eval_resume_inspection" in cli_status.stdout
     assert cli_markdown.exists()
 
