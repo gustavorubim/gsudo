@@ -1061,6 +1061,13 @@ def summarize_full_eval_contract_status(
     resume_inspection_status = _resume_inspection_contract_status(
         run / "full_training_eval_resume_inspection.json"
     )
+    stage_recovery_status = _stage_recovery_contract_status(
+        run=run,
+        stage_status=stage_status,
+        report_status=report_status,
+        sample_status=sample_status,
+        resume_inspection_status=resume_inspection_status,
+    )
     gates = [
         _contract_gate(
             "training_eval_summary_exists",
@@ -1208,6 +1215,7 @@ def summarize_full_eval_contract_status(
         ),
         "diagnostics_status": diagnostics_status,
         "resume_inspection_status": resume_inspection_status,
+        "stage_recovery_status": stage_recovery_status,
         "repo_hygiene_status": repo_hygiene_status,
         "windows_readiness_status": windows_readiness_status,
         "package_source_status": package_source_status,
@@ -6347,6 +6355,28 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"`{evidence['eval_current']}` | `{evidence['compare_current']}` | "
             f"`{evidence['sample_current']}` |"
         )
+    recovery_status = report.get("stage_recovery_status") or {}
+    if recovery_status:
+        lines.extend(
+            [
+                "",
+                "## Stage Recovery",
+                "",
+                "| Stage | Action | Latest Checkpoint | Missing Current Artifacts |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for stage in ("sft", "dpo", "rl"):
+            recovery = recovery_status.get(stage, {})
+            missing = recovery.get("missing_current_artifacts") or []
+            checkpoint = recovery.get("latest_checkpoint_relative") or recovery.get(
+                "latest_checkpoint"
+            )
+            lines.append(
+                f"| `{stage}` | `{recovery.get('action')}` | "
+                f"`{checkpoint}` | "
+                f"{', '.join(f'`{item}`' for item in missing)} |"
+            )
     summary_status = report["training_eval_summary_status"]
     lines.extend(
         [
@@ -7026,6 +7056,74 @@ def _stage_contract_status(
         "resume_from_checkpoint": manifest.get("resume_from_checkpoint") if manifest else None,
         "output_dir": manifest.get("output_dir") if manifest else None,
     }
+
+
+def _stage_recovery_contract_status(
+    *,
+    run: Path,
+    stage_status: dict[str, dict[str, Any]],
+    report_status: dict[str, dict[str, Any]],
+    sample_status: dict[str, dict[str, Any]],
+    resume_inspection_status: dict[str, Any],
+) -> dict[str, Any]:
+    report_keys = {
+        "sft": ("sft_eval", "sft_vs_baseline"),
+        "dpo": ("dpo_eval", "dpo_vs_sft"),
+        "rl": ("rl_eval", "rl_vs_sft"),
+    }
+    recovery: dict[str, Any] = {}
+    resume_decisions = resume_inspection_status.get("decisions", {})
+    for stage in ("sft", "dpo", "rl"):
+        latest_checkpoint = _latest_checkpoint(run / f"semantic-mirror-{stage}")
+        decision = (
+            resume_decisions.get(stage, {})
+            if isinstance(resume_decisions, dict)
+            else {}
+        )
+        inferred_action = _stage_recovery_action(
+            stage=stage,
+            status=stage_status[stage],
+            latest_checkpoint=latest_checkpoint,
+        )
+        missing_current_artifacts = []
+        if not stage_status[stage]["manifest_matches_requested_max_steps"]:
+            missing_current_artifacts.append("stage_manifest")
+        eval_key, compare_key = report_keys[stage]
+        if not report_status[eval_key]["current_for_requested_stage"]:
+            missing_current_artifacts.append(eval_key)
+        if not report_status[compare_key]["current_for_requested_stage"]:
+            missing_current_artifacts.append(compare_key)
+        if not sample_status[stage]["complete_for_requested_stage"]:
+            missing_current_artifacts.append(f"{stage}_sample_inspection")
+        recovery[stage] = {
+            "action": decision.get("action") or inferred_action,
+            "reason": decision.get("reason"),
+            "requested_max_steps": stage_status[stage]["requested_max_steps"],
+            "manifest_max_steps": stage_status[stage]["manifest_max_steps"],
+            "manifest_current": stage_status[stage][
+                "manifest_matches_requested_max_steps"
+            ],
+            "latest_checkpoint": str(latest_checkpoint) if latest_checkpoint else None,
+            "latest_checkpoint_relative": (
+                _posix_relpath(latest_checkpoint, run) if latest_checkpoint else None
+            ),
+            "resume_supported": stage in {"sft", "dpo"},
+            "missing_current_artifacts": missing_current_artifacts,
+        }
+    return recovery
+
+
+def _stage_recovery_action(
+    *,
+    stage: str,
+    status: dict[str, Any],
+    latest_checkpoint: Path | None,
+) -> str:
+    if status["manifest_matches_requested_max_steps"]:
+        return "reuse"
+    if stage in {"sft", "dpo"} and latest_checkpoint is not None:
+        return "resume"
+    return "run" if not status["manifest_exists"] else "rerun"
 
 
 def _eval_summary_contract_status(

@@ -819,6 +819,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert not status["report_status"]["dpo_eval"]["current_for_requested_stage"]
     assert status["sample_status"]["dpo"]["manifest_exists"]
     assert not status["sample_status"]["dpo"]["complete_for_requested_stage"]
+    assert status["stage_recovery_status"]["sft"]["action"] == "reuse"
+    assert status["stage_recovery_status"]["dpo"]["action"] == "resume"
+    assert status["stage_recovery_status"]["dpo"]["latest_checkpoint_relative"] == (
+        "semantic-mirror-dpo/checkpoint-10"
+    )
+    assert status["stage_recovery_status"]["rl"]["action"] == "run"
+    assert "rl_eval" in status["stage_recovery_status"]["rl"]["missing_current_artifacts"]
     assert status["diagnostics_status"]["all_required_plots_exist"]
     assert not status["diagnostics_status"]["sources_current_for_run"]
     assert not status["diagnostics_status"]["stages_current_for_requested_steps"]
@@ -923,6 +930,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "| `sft` | `True` | `True` | `True` | `True` |" in status_markdown
     assert "| `dpo` | `False` | `False` | `False` | `False` |" in status_markdown
     assert "| `rl` | `False` | `False` | `False` | `False` |" in status_markdown
+    assert "## Stage Recovery" in status_markdown
+    assert "| `dpo` | `resume` | `semantic-mirror-dpo/checkpoint-10` |" in status_markdown
+    assert "| `rl` | `run` | `None` |" in status_markdown
     assert "## Contract Scorecard" in status_markdown
     assert "## Repo Hygiene" in status_markdown
     assert "Repo hygiene not checked" in status_markdown
