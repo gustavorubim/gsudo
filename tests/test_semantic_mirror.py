@@ -4603,6 +4603,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert 'REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"' in full_eval_script
     assert 'SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"' in full_eval_script
     assert 'DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"' in full_eval_script
+    assert 'HUMAN_STUDY_SUITE="${HUMAN_STUDY_SUITE:-}"' in full_eval_script
+    assert 'HUMAN_STUDY_COVERAGE="${HUMAN_STUDY_COVERAGE:-}"' in full_eval_script
     assert 'SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-10}"' in full_eval_script
     assert 'DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-10}"' in full_eval_script
     assert 'SFT_SAVE_TOTAL_LIMIT="${SFT_SAVE_TOTAL_LIMIT:-3}"' in full_eval_script
@@ -4653,6 +4655,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "dpo_raw_vs_sft.json" in full_eval_script
     assert "rl_raw_vs_sft.json" in full_eval_script
     assert "train report outputs" in full_eval_script
+    assert '--human-study-suite "$HUMAN_STUDY_SUITE"' in full_eval_script
+    assert 'IFS=\':\' read -r -a human_study_coverage_paths' in full_eval_script
+    assert '--human-study-coverage "$human_study_coverage_path"' in full_eval_script
     assert "required_reports" in full_eval_script
     assert "diagnostic_reports" in full_eval_script
     assert "eval_run_config" in full_eval_script

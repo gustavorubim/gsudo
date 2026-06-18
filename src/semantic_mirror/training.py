@@ -3307,6 +3307,8 @@ DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"
 PACKAGE_SOURCE_FRESHNESS="${PACKAGE_SOURCE_FRESHNESS:-source_freshness.json}"
 WINDOWS_AUDIT="${WINDOWS_AUDIT:-audit/current_environment.json}"
 WSL_SMOKE_MANIFEST="${WSL_SMOKE_MANIFEST:-outputs/smoke-chain-wsl/smoke_chain_manifest.json}"
+HUMAN_STUDY_SUITE="${HUMAN_STUDY_SUITE:-}"
+HUMAN_STUDY_COVERAGE="${HUMAN_STUDY_COVERAGE:-}"
 
 if [[ -x launch/preflight_full_eval_inputs.sh ]]; then
   bash launch/preflight_full_eval_inputs.sh
@@ -3836,6 +3838,17 @@ if [[ -f "$WINDOWS_AUDIT" ]]; then
 fi
 if [[ -f "$WSL_SMOKE_MANIFEST" ]]; then
   contract_status_args+=(--wsl-smoke-manifest "$WSL_SMOKE_MANIFEST")
+fi
+if [[ -n "$HUMAN_STUDY_SUITE" && -f "$HUMAN_STUDY_SUITE" ]]; then
+  contract_status_args+=(--human-study-suite "$HUMAN_STUDY_SUITE")
+fi
+if [[ -n "$HUMAN_STUDY_COVERAGE" ]]; then
+  IFS=':' read -r -a human_study_coverage_paths <<< "$HUMAN_STUDY_COVERAGE"
+  for human_study_coverage_path in "${human_study_coverage_paths[@]}"; do
+    if [[ -n "$human_study_coverage_path" && -f "$human_study_coverage_path" ]]; then
+      contract_status_args+=(--human-study-coverage "$human_study_coverage_path")
+    fi
+  done
 fi
 PYTHONPATH=src python -m semantic_mirror.cli "${contract_status_args[@]}"
 """,
