@@ -713,10 +713,18 @@ def package_training_bundle(
         _training_package_readme(audit),
         encoding="utf-8",
     )
+    source_freshness = generate_training_package_source_freshness(
+        out,
+        repo_root=Path(__file__).resolve().parents[2],
+        out_path=out / "source_freshness.json",
+        markdown_out_path=out / "source_freshness.md",
+    )
 
     files = {
         "training_dir": "training",
         "runtime_source": "src/semantic_mirror",
+        "source_freshness": "source_freshness.json",
+        "source_freshness_markdown": "source_freshness.md",
         "project_config": "pyproject.toml",
         "requirements": "requirements-training.txt",
         "environment_example": ".env.training.example",
@@ -750,6 +758,13 @@ def package_training_bundle(
         "output_counts": training_manifest.get("output_counts", {}),
         "validation": validation,
         "audit_report": files["audit"],
+        "source_freshness": {
+            "path": files["source_freshness"],
+            "markdown_path": files["source_freshness_markdown"],
+            "all_compared_files_match": source_freshness["all_compared_files_match"],
+            "compared_file_count": source_freshness["compared_file_count"],
+            "git_commit": source_freshness["git_commit"],
+        },
         "files": files,
         "launch_commands": commands,
     }

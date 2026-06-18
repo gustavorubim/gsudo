@@ -1739,8 +1739,19 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert package_manifest["current_runtime_ready"]
     assert package_manifest["output_counts"]["sft_records"] == 4
     assert package_manifest["files"]["smoke_chain_launcher"] == "launch/run_smoke_chain.sh"
+    assert package_manifest["files"]["source_freshness"] == "source_freshness.json"
+    assert package_manifest["files"]["source_freshness_markdown"] == "source_freshness.md"
+    assert package_manifest["source_freshness"]["all_compared_files_match"]
+    assert package_manifest["source_freshness"]["compared_file_count"] > 0
     assert validate_training_batch(bundle_out / "training")["passed"]
     assert (bundle_out / "training" / "run_unsloth_sft.py").exists()
+    packaged_freshness = json.loads(
+        (bundle_out / "source_freshness.json").read_text(encoding="utf-8")
+    )
+    assert packaged_freshness["all_compared_files_match"]
+    assert "Source Freshness Evidence" in (bundle_out / "source_freshness.md").read_text(
+        encoding="utf-8"
+    )
     freshness = generate_training_package_source_freshness(
         bundle_out,
         repo_root=Path.cwd(),
