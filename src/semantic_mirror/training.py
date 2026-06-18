@@ -7472,8 +7472,16 @@ def _remaining_gate_recovery_item(
     if stage:
         required_action = str(stage_recovery.get("action") or "run")
         requires_training = required_action in {"resume", "run", "rerun"}
+        current_evidence = item.get("actual")
+        if (
+            isinstance(current_evidence, dict)
+            and current_evidence.get("stage_current_for_requested_steps") is False
+        ):
+            blocked_by = [stage]
+            requires_training = True
         if gate.endswith("_sample_inspection_complete"):
             artifacts = [str(item.get("evidence")), f"{item.get('evidence')}/sample_manifest.json"]
+            required_action = "generate_sample_inspection_after_stage"
         elif "_eval_" in gate or "_vs_" in gate:
             required_action = "generate_eval_report_after_stage"
     elif area == "diagnostics":

@@ -862,6 +862,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert recovery_plan["rl_stage_manifest_matches_requested_steps"][
         "requires_training"
     ]
+    assert recovery_plan["dpo_eval_exists_and_passed"]["required_action"] == (
+        "generate_eval_report_after_stage"
+    )
+    assert recovery_plan["dpo_eval_exists_and_passed"]["blocked_by_stages"] == ["dpo"]
+    assert recovery_plan["dpo_sample_inspection_complete"]["required_action"] == (
+        "generate_sample_inspection_after_stage"
+    )
+    assert recovery_plan["dpo_sample_inspection_complete"]["blocked_by_stages"] == ["dpo"]
     assert recovery_plan["diagnostic_plots_exist"]["required_action"] == (
         "regenerate_diagnostics"
     )
@@ -983,6 +991,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "| `diagnostics` |" in status_markdown
     assert "### Recovery Plan" in status_markdown
     assert "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `True` |" in status_markdown
+    assert (
+        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `True` | `dpo` |"
+        in status_markdown
+    )
     assert "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `True` | `dpo`, `rl` |" in status_markdown
     assert "## Resume Inspection" in status_markdown
     assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
@@ -1477,6 +1489,21 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "expected_evidence"
     ] == 120
+    assert stdout_recovery_plan["dpo_eval_exists_and_passed"][
+        "required_action"
+    ] == "generate_eval_report_after_stage"
+    assert stdout_recovery_plan["dpo_eval_exists_and_passed"][
+        "blocked_by_stages"
+    ] == ["dpo"]
+    assert stdout_recovery_plan["dpo_sample_inspection_complete"][
+        "required_action"
+    ] == "generate_sample_inspection_after_stage"
+    assert stdout_recovery_plan["dpo_sample_inspection_complete"][
+        "blocked_by_stages"
+    ] == ["dpo"]
+    assert stdout_recovery_plan["rl_sample_inspection_complete"][
+        "blocked_by_stages"
+    ] == ["rl"]
     assert stdout_recovery_plan["diagnostic_plots_exist"][
         "blocked_by_stages"
     ] == ["dpo", "rl"]
