@@ -1261,9 +1261,13 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "remaining_recovery_plan": [
                 {
                     "gate": item["gate"],
+                    "area": item.get("area"),
+                    "stage": item.get("stage"),
                     "required_action": item["required_action"],
                     "requires_training": item["requires_training"],
                     "blocked_by_stages": item["blocked_by_stages"],
+                    "current_evidence": item.get("current_evidence"),
+                    "expected_evidence": item.get("expected_evidence"),
                     "artifacts": item["artifacts"],
                 }
                 for item in manifest["remaining_recovery_plan"]

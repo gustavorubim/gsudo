@@ -1410,8 +1410,25 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "area"
+    ] == "dpo"
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "stage"
+    ] == "dpo"
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "current_evidence"
+    ] == 10
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "expected_evidence"
+    ] == 120
     assert stdout_recovery_plan["diagnostic_plots_exist"][
         "blocked_by_stages"
+    ] == ["dpo", "rl"]
+    assert stdout_recovery_plan["diagnostic_plots_exist"]["area"] == "diagnostics"
+    assert stdout_recovery_plan["diagnostic_plots_exist"]["stage"] is None
+    assert stdout_recovery_plan["diagnostic_plots_exist"]["current_evidence"][
+        "stale_or_missing_stages"
     ] == ["dpo", "rl"]
     assert any(
         action["title"] == "Inspect resume plan"
