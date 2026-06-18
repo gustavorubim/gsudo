@@ -6764,6 +6764,23 @@ def _phase6_collection_next_action(
     first_coverage_path = coverage_reports[0].get("path")
     if first_coverage_path:
         coverage_parent = Path(first_coverage_path).resolve().parent
+    collection_plan = _find_phase6_collection_plan(coverage_parent)
+    if collection_plan is not None:
+        conduct_commands = _phase6_collection_plan_conduct_commands(collection_plan)
+        if conduct_commands:
+            command = "\n".join(conduct_commands)
+            plan_path = _posix_relpath(Path(collection_plan["path"]), package_root)
+            return {
+                "title": "Conduct real Phase 6 study sessions",
+                "category": "human_study",
+                "launches_training": False,
+                "reason": (
+                    "A Phase 6 collection plan already exists; run its conduct-study "
+                    "commands to replace template answers with real timed reviewer logs."
+                ),
+                "command": f"# plan: {plan_path}\n{command}",
+                "windows_powershell_command": command,
+            }
     answers_dir = (coverage_parent or package_root) / "phase6_real_answers"
     out_path = answers_dir / "phase6_real_collection_plan.json"
     study_flags = []
@@ -6789,6 +6806,39 @@ def _phase6_collection_next_action(
         "command": f"# from {package_root}\n{command}",
         "windows_powershell_command": _windows_wsl_command(package_root, command),
     }
+
+
+def _find_phase6_collection_plan(coverage_parent: Path | None) -> dict[str, Any] | None:
+    if coverage_parent is None:
+        return None
+    for name in (
+        "phase6_real_collection_plan.json",
+        "phase6_collection_manifest.json",
+        "phase6_collection_manifest_from_package.json",
+    ):
+        path = coverage_parent / name
+        report = _read_json_file(path)
+        if (
+            isinstance(report, dict)
+            and report.get("mode") == "phase6_real_human_study_collection_plan"
+        ):
+            report["path"] = str(path)
+            return report
+    return None
+
+
+def _phase6_collection_plan_conduct_commands(plan: dict[str, Any]) -> list[str]:
+    studies = plan.get("studies")
+    if not isinstance(studies, dict):
+        return []
+    commands = []
+    for label, study in sorted(studies.items()):
+        if not isinstance(study, dict):
+            continue
+        command = study.get("conduct_command")
+        if isinstance(command, str) and command:
+            commands.append(f"# {label}\n{command}")
+    return commands
 
 
 def _phase6_collection_study_label(coverage: dict[str, Any]) -> str:
