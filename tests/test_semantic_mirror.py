@@ -115,12 +115,38 @@ def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, obje
         "compare_rl": ["sft_candidates", "rl_candidates"],
         "compare_rl_raw": ["sft_raw_candidates", "rl_raw_candidates"],
     }
+    optional_inputs = {
+        "source_freshness": ["repo_root"],
+        "contract_status": [
+            "repo_root",
+            "windows_audit",
+            "wsl_smoke_manifest",
+            "package_source_freshness",
+            "human_study_coverage",
+            "human_study_suite",
+        ],
+        "full_training_eval": [
+            "source_freshness_repo_root",
+            "windows_audit",
+            "wsl_smoke_manifest",
+            "package_source_freshness",
+        ],
+        "inspect_full_training_eval_resume": [
+            "sft_resume_from_checkpoint",
+            "dpo_resume_from_checkpoint",
+        ],
+        "inspect_resume": [
+            "sft_resume_from_checkpoint",
+            "dpo_resume_from_checkpoint",
+        ],
+    }
     return {
         name: {
             "command": command,
             "category": categories[name],
             "launches_training": name in training_commands,
             "required_inputs": required_inputs.get(name, []),
+            "optional_inputs": optional_inputs.get(name, []),
         }
         for name, command in commands.items()
     }
@@ -1216,6 +1242,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "launches_training_count": 1,
         "missing_command_metadata_count": 0,
         "non_training_count": 3,
+        "optional_input_action_count": 0,
         "required_input_action_count": 0,
         "total_items": 4,
     }
@@ -2043,11 +2070,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["package_command_manifest_summary"][
         "required_input_command_count"
     ] == 23
+    assert cli_stdout["package_command_manifest_summary"][
+        "optional_input_command_count"
+    ] == 5
     assert "dpo" in cli_stdout["package_command_manifest_summary"][
         "commands_with_required_inputs"
     ]
     assert "rl" in cli_stdout["package_command_manifest_summary"][
         "commands_with_required_inputs"
+    ]
+    assert "contract_status" in cli_stdout["package_command_manifest_summary"][
+        "commands_with_optional_inputs"
     ]
     assert cli_stdout["package_command_manifest_summary"]["command_category_counts"] == {
         "diagnostics": 1,
@@ -2193,6 +2226,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "next_action_command_required_inputs"
     ] == ["held_out_dataset", "baseline_candidates"]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_optional_inputs"
+    ] == [
+        "source_freshness_repo_root",
+        "windows_audit",
+        "wsl_smoke_manifest",
+        "package_source_freshness",
+    ]
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "area"
     ] == "dpo"
@@ -2346,6 +2387,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "launches_training_count": 1,
         "missing_command_metadata_count": 0,
         "non_training_count": 4,
+        "optional_input_action_count": 3,
         "required_input_action_count": 4,
         "total_items": 5,
     }
@@ -2392,6 +2434,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert (
         cli_status_json["package_command_manifest_summary"]["required_input_command_count"]
         == 23
+    )
+    assert (
+        cli_status_json["package_command_manifest_summary"]["optional_input_command_count"]
+        == 5
     )
     assert cli_status_json["package_command_manifest_summary"]["command_category_counts"][
         "evaluation"
@@ -2492,10 +2538,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "## Package Command Manifest" in contract_status_md
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
+    assert "Commands with optional inputs:" in contract_status_md
     assert "Command category counts:" in contract_status_md
     assert "`status`: `contract_status`, `source_freshness`" in contract_status_md
     assert "Actions with required inputs: `4`" in contract_status_md
+    assert "Actions with optional inputs: `3`" in contract_status_md
     assert "Required inputs: `held_out_dataset, baseline_candidates`" in contract_status_md
+    assert "Optional inputs: `source_freshness_repo_root, windows_audit, wsl_smoke_manifest, package_source_freshness`" in contract_status_md
     assert "## Package Python Metadata" in contract_status_md
     assert "Requires Python: `>=3.11,<3.14`" in contract_status_md
     assert "Run real Phase 6 collection and eval sequence" in contract_status_md
@@ -3804,6 +3853,24 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         "dpo_or_sft_model_or_adapter",
         "output_dir",
     ]
+    assert manifest_commands["contract_status"]["optional_inputs"] == [
+        "repo_root",
+        "windows_audit",
+        "wsl_smoke_manifest",
+        "package_source_freshness",
+        "human_study_coverage",
+        "human_study_suite",
+    ]
+    assert manifest_commands["full_training_eval"]["optional_inputs"] == [
+        "source_freshness_repo_root",
+        "windows_audit",
+        "wsl_smoke_manifest",
+        "package_source_freshness",
+    ]
+    assert manifest_commands["inspect_full_training_eval_resume"]["optional_inputs"] == [
+        "sft_resume_from_checkpoint",
+        "dpo_resume_from_checkpoint",
+    ]
     assert "--schema-prefix-mode schema-scaffold" in commands["rl"]
     assert "--schema-prefix-mode schema-scaffold" in commands["generate_candidates"]
     assert "outputs/dpo_eval.json" in commands["compare_dpo"]
@@ -4065,7 +4132,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
-    assert "required-input action count" in package_readme
+    assert "required-input and optional-input action" in package_readme
     assert "readiness next-command routing fields" in package_readme
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
@@ -4073,6 +4140,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "per-action `command_name`, `command_category`" in package_readme
     assert "`blocked_by_stages`" in package_readme
     assert "`required_inputs`" in package_readme
+    assert "`optional_inputs`" in package_readme
     assert "`stage_actions`" in package_readme
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
@@ -4090,6 +4158,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "next_action_command_name" in package_readme
     assert "next_action_launches_training" in package_readme
     assert "next_action_command_required_inputs" in package_readme
+    assert "next_action_command_optional_inputs" in package_readme
     assert "Recovery Plan" in package_readme
     assert "generate_eval_report_after_stage" in package_readme
     assert "generate_sample_inspection_after_stage" in package_readme
@@ -4106,7 +4175,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "reuse decisions can be separated from" in root_readme
     assert "next_action_summary" in root_readme
     assert "current next-action set" in root_readme
-    assert "actions with declared required inputs" in root_readme
+    assert "actions with declared required and optional inputs" in root_readme
     assert "next readiness command name" in root_readme
     assert "recovery_plan_summary" in root_readme
     assert "training_dependency_summary" in root_readme
@@ -4117,11 +4186,13 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "next_action_command_name" in root_readme
     assert "next_action_launches_training" in root_readme
     assert "next_action_command_required_inputs" in root_readme
+    assert "next_action_command_optional_inputs" in root_readme
     assert "package Python" in root_readme
     assert "metadata so" in root_readme
     assert "Next-action rows also expose" in root_readme
     assert "`command_name`, `command_category`, `blocked_by_stages`" in root_readme
     assert "`required_inputs`" in root_readme
+    assert "`optional_inputs`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
     assert "command category rollups" in root_readme
     assert "non-training command is still waiting on training evidence" in root_readme

@@ -2377,6 +2377,31 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
         "compare_rl": ["sft_candidates", "rl_candidates"],
         "compare_rl_raw": ["sft_raw_candidates", "rl_raw_candidates"],
     }
+    optional_inputs = {
+        "source_freshness": ["repo_root"],
+        "contract_status": [
+            "repo_root",
+            "windows_audit",
+            "wsl_smoke_manifest",
+            "package_source_freshness",
+            "human_study_coverage",
+            "human_study_suite",
+        ],
+        "full_training_eval": [
+            "source_freshness_repo_root",
+            "windows_audit",
+            "wsl_smoke_manifest",
+            "package_source_freshness",
+        ],
+        "inspect_full_training_eval_resume": [
+            "sft_resume_from_checkpoint",
+            "dpo_resume_from_checkpoint",
+        ],
+        "inspect_resume": [
+            "sft_resume_from_checkpoint",
+            "dpo_resume_from_checkpoint",
+        ],
+    }
     return {
         "schema_version": 1,
         "commands": {
@@ -2385,6 +2410,7 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
                 "category": categories.get(name, "other"),
                 "launches_training": name in training_commands,
                 "required_inputs": required_inputs.get(name, []),
+                "optional_inputs": optional_inputs.get(name, []),
             }
             for name, command in commands.items()
         },
@@ -3517,8 +3543,11 @@ stage will be reused, resumed, rerun, or started fresh.
 For automation, `launch/commands_manifest.json` classifies every packaged
 command by category and includes a `launches_training` boolean so inspection,
 status, and diagnostic commands can be selected without accidentally starting a
-training run. The older `launch/commands.json` remains a flat command lookup for
-backward compatibility.
+training run. Each command row separates `required_inputs` from
+`optional_inputs`; optional evidence inputs such as Windows audits, WSL smoke
+manifests, and package source freshness can be supplied to strengthen status
+without making a non-training refresh invalid when they are absent. The older
+`launch/commands.json` remains a flat command lookup for backward compatibility.
 
 After packaging or refreshing bundled source, generate source freshness evidence
 from the package root:
@@ -3575,15 +3604,16 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `training_dependency_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. `next_action_summary` also includes
-a blocked-stage command matrix and required-input action count for the current next-action set. `stage_recovery_summary`
+a blocked-stage command matrix plus required-input and optional-input action
+counts for the current next-action set. `stage_recovery_summary`
 includes per-stage next command names, categories, launch flags, and blocked
 stages so reuse decisions can be separated from training launches. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
 per-action `command_name`, `command_category`, `blocked_by_stages`,
-`required_inputs`, and `stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
+`required_inputs`, `optional_inputs`, and `stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
 `next_action_command_name`, `next_action_launches_training`,
 `next_action_command_exists`, `next_action_command_required_inputs`, and
-`next_action_command_link_valid`, native and WSL
+`next_action_command_optional_inputs`, and `next_action_command_link_valid`, native and WSL
 readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, remaining-area command
 rollups, training-dependency rollups, command category rollups, and package Python metadata.
@@ -6817,6 +6847,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Training command count: `{command_manifest.get('training_command_count')}`",
             f"- Non-training command count: `{command_manifest.get('non_training_command_count')}`",
             f"- Commands with required inputs: `{command_manifest.get('required_input_command_count')}`",
+            f"- Commands with optional inputs: `{command_manifest.get('optional_input_command_count')}`",
             f"- Command category counts: `{json.dumps(command_manifest.get('command_category_counts') or {}, sort_keys=True)}`",
         ]
     )
@@ -6840,6 +6871,14 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             + ", ".join(
                 f"`{command}`"
                 for command in command_manifest["commands_with_required_inputs"]
+            )
+        )
+    if command_manifest.get("commands_with_optional_inputs"):
+        lines.append(
+            "- Commands with optional inputs: "
+            + ", ".join(
+                f"`{command}`"
+                for command in command_manifest["commands_with_optional_inputs"]
             )
         )
     if command_manifest.get("failed_checks"):
@@ -7085,6 +7124,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- Non-training items: `{next_action_summary.get('non_training_count', 0)}`",
                 f"- Missing command metadata: `{next_action_summary.get('missing_command_metadata_count', 0)}`",
                 f"- Actions with required inputs: `{next_action_summary.get('required_input_action_count', 0)}`",
+                f"- Actions with optional inputs: `{next_action_summary.get('optional_input_action_count', 0)}`",
                 f"- Command counts: `{json.dumps(next_action_summary.get('command_counts', {}), sort_keys=True)}`",
                 f"- Command category counts: `{json.dumps(next_action_summary.get('command_category_counts', {}), sort_keys=True)}`",
                 f"- Blocked stage command matrix: `{json.dumps(next_action_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
@@ -7101,6 +7141,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Command category: `{action.get('command_category') or action.get('category', 'unspecified')}`",
                     f"- Launches training: `{action.get('launches_training', False)}`",
                     f"- Required inputs: `{', '.join(action.get('required_inputs') or []) or 'None'}`",
+                    f"- Optional inputs: `{', '.join(action.get('optional_inputs') or []) or 'None'}`",
                     f"- Blocked by stages: `{', '.join(action.get('blocked_by_stages') or []) or 'None'}`",
                     f"- Stage actions: `{json.dumps(action.get('stage_actions') or {}, sort_keys=True)}`",
                     "",
@@ -7376,6 +7417,7 @@ def _annotate_next_actions_with_command_inputs(
             {
                 **action,
                 "required_inputs": command.get("required_inputs", []),
+                "optional_inputs": command.get("optional_inputs", []),
             }
         )
     return annotated
@@ -8129,6 +8171,7 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
     non_training_count = 0
     missing_command_metadata_count = 0
     required_input_action_count = 0
+    optional_input_action_count = 0
     for action in actions:
         launches_training = bool(action.get("launches_training"))
         if launches_training:
@@ -8141,6 +8184,8 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
             missing_command_metadata_count += 1
         if action.get("required_inputs"):
             required_input_action_count += 1
+        if action.get("optional_inputs"):
+            optional_input_action_count += 1
         command_key = str(command_name or "unknown")
         command_counts[command_key] = command_counts.get(command_key, 0) + 1
         category_key = str(command_category or action.get("category") or "unspecified")
@@ -8169,6 +8214,7 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
         "non_training_count": non_training_count,
         "missing_command_metadata_count": missing_command_metadata_count,
         "required_input_action_count": required_input_action_count,
+        "optional_input_action_count": optional_input_action_count,
         "command_counts": {
             key: command_counts[key] for key in sorted(command_counts)
         },
@@ -8260,6 +8306,8 @@ def _package_command_manifest_contract_summary(
         "commands_by_category": status.get("commands_by_category", {}),
         "commands_with_required_inputs": status.get("commands_with_required_inputs", []),
         "required_input_command_count": status.get("required_input_command_count"),
+        "commands_with_optional_inputs": status.get("commands_with_optional_inputs", []),
+        "optional_input_command_count": status.get("optional_input_command_count"),
         "failed_checks": status.get("failed_checks", []),
     }
 
@@ -8537,6 +8585,7 @@ def _remaining_recovery_command_link(
             "next_action_command_category": None,
             "next_action_command_launches_training": None,
             "next_action_command_required_inputs": [],
+            "next_action_command_optional_inputs": [],
             "next_action_command_link_valid": None,
             "next_action_command_link_errors": ["command_manifest_not_checked"],
         }
@@ -8548,6 +8597,7 @@ def _remaining_recovery_command_link(
             "next_action_command_category": None,
             "next_action_command_launches_training": None,
             "next_action_command_required_inputs": [],
+            "next_action_command_optional_inputs": [],
             "next_action_command_link_valid": False,
             "next_action_command_link_errors": ["missing_command"],
         }
@@ -8563,6 +8613,7 @@ def _remaining_recovery_command_link(
         "next_action_command_category": command_category,
         "next_action_command_launches_training": command_launches_training,
         "next_action_command_required_inputs": command.get("required_inputs", []),
+        "next_action_command_optional_inputs": command.get("optional_inputs", []),
         "next_action_command_link_valid": not errors,
         "next_action_command_link_errors": errors,
     }
@@ -9300,12 +9351,31 @@ def _package_command_manifest_contract_status(
             )
         )
     )
+    invalid_optional_inputs = sorted(
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict)
+        and (
+            not isinstance(command.get("optional_inputs", []), list)
+            or not all(
+                isinstance(item, str) and item
+                for item in command.get("optional_inputs", [])
+            )
+        )
+    )
     commands_with_required_inputs = sorted(
         name
         for name, command in commands.items()
         if isinstance(command, dict)
         and isinstance(command.get("required_inputs"), list)
         and command.get("required_inputs")
+    )
+    commands_with_optional_inputs = sorted(
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict)
+        and isinstance(command.get("optional_inputs"), list)
+        and command.get("optional_inputs")
     )
     commands_by_category: dict[str, list[str]] = {}
     command_lookup: dict[str, dict[str, Any]] = {}
@@ -9317,6 +9387,7 @@ def _package_command_manifest_contract_status(
             "launches_training": command.get("launches_training"),
             "has_command": isinstance(command.get("command"), str),
             "required_inputs": command.get("required_inputs", []),
+            "optional_inputs": command.get("optional_inputs", []),
         }
         commands_by_category.setdefault(str(command["category"]), []).append(name)
     commands_by_category = {
@@ -9339,6 +9410,8 @@ def _package_command_manifest_contract_status(
         failed_checks.append("missing_category")
     if invalid_required_inputs:
         failed_checks.append("invalid_required_inputs")
+    if invalid_optional_inputs:
+        failed_checks.append("invalid_optional_inputs")
     passed = not failed_checks
     return {
         "checked": True,
@@ -9361,6 +9434,8 @@ def _package_command_manifest_contract_status(
         "commands_by_category": commands_by_category,
         "commands_with_required_inputs": commands_with_required_inputs,
         "required_input_command_count": len(commands_with_required_inputs),
+        "commands_with_optional_inputs": commands_with_optional_inputs,
+        "optional_input_command_count": len(commands_with_optional_inputs),
         "command_lookup": command_lookup,
         "missing_training_commands": missing_training,
         "unexpected_training_commands": unexpected_training,
@@ -9369,6 +9444,7 @@ def _package_command_manifest_contract_status(
         "missing_command_text": missing_command_text,
         "missing_category": missing_category,
         "invalid_required_inputs": invalid_required_inputs,
+        "invalid_optional_inputs": invalid_optional_inputs,
         "failed_checks": failed_checks,
     }
 

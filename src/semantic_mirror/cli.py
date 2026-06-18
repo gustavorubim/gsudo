@@ -1335,6 +1335,9 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "next_action_command_required_inputs": item.get(
                         "next_action_command_required_inputs", []
                     ),
+                    "next_action_command_optional_inputs": item.get(
+                        "next_action_command_optional_inputs", []
+                    ),
                     "requires_training": item["requires_training"],
                     "blocked_by_stages": item["blocked_by_stages"],
                     "current_evidence": item.get("current_evidence"),
@@ -1353,6 +1356,7 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "reason": action.get("reason"),
                     "blocked_by_stages": action.get("blocked_by_stages", []),
                     "required_inputs": action.get("required_inputs", []),
+                    "optional_inputs": action.get("optional_inputs", []),
                     "stage_actions": action.get("stage_actions", {}),
                     "has_command": bool(action.get("command")),
                     "has_windows_powershell_command": bool(
@@ -1417,6 +1421,10 @@ def _package_command_manifest_summary(status: object) -> dict[str, object]:
         "non_training_command_count": status.get("non_training_command_count"),
         "command_category_counts": status.get("command_category_counts", {}),
         "commands_by_category": status.get("commands_by_category", {}),
+        "commands_with_required_inputs": status.get("commands_with_required_inputs", []),
+        "required_input_command_count": status.get("required_input_command_count"),
+        "commands_with_optional_inputs": status.get("commands_with_optional_inputs", []),
+        "optional_input_command_count": status.get("optional_input_command_count"),
         "failed_checks": status.get("failed_checks", []),
     }
 
@@ -1883,6 +1891,8 @@ def _next_action_summary(actions: object) -> dict[str, object]:
     launches_training_count = 0
     non_training_count = 0
     missing_command_metadata_count = 0
+    required_input_action_count = 0
+    optional_input_action_count = 0
     total_items = 0
     for action in actions:
         if not isinstance(action, dict):
@@ -1897,6 +1907,10 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         command_category = action.get("command_category")
         if not command_name or not command_category:
             missing_command_metadata_count += 1
+        if action.get("required_inputs"):
+            required_input_action_count += 1
+        if action.get("optional_inputs"):
+            optional_input_action_count += 1
         command_key = str(command_name or "unknown")
         command_counts[command_key] = command_counts.get(command_key, 0) + 1
         category_key = str(command_category or action.get("category") or "unspecified")
@@ -1927,6 +1941,8 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         "launches_training_count": launches_training_count,
         "non_training_count": non_training_count,
         "missing_command_metadata_count": missing_command_metadata_count,
+        "required_input_action_count": required_input_action_count,
+        "optional_input_action_count": optional_input_action_count,
         "command_counts": {
             key: command_counts[key] for key in sorted(command_counts)
         },
