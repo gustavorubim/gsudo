@@ -6766,17 +6766,18 @@ def _phase6_collection_next_action(
         coverage_parent = Path(first_coverage_path).resolve().parent
     collection_plan = _find_phase6_collection_plan(coverage_parent)
     if collection_plan is not None:
-        conduct_commands = _phase6_collection_plan_conduct_commands(collection_plan)
-        if conduct_commands:
-            command = "\n".join(conduct_commands)
+        command_sequence = _phase6_collection_plan_commands(collection_plan)
+        if command_sequence:
+            command = "\n".join(command_sequence)
             plan_path = _posix_relpath(Path(collection_plan["path"]), package_root)
             return {
-                "title": "Conduct real Phase 6 study sessions",
+                "title": "Run real Phase 6 collection and eval sequence",
                 "category": "human_study",
                 "launches_training": False,
                 "reason": (
-                    "A Phase 6 collection plan already exists; run its conduct-study "
-                    "commands to replace template answers with real timed reviewer logs."
+                    "A Phase 6 collection plan already exists; run its conduct-study, "
+                    "coverage, eval, and suite commands to replace template answers "
+                    "with real timed reviewer logs and refreshed usefulness gates."
                 ),
                 "command": f"# plan: {plan_path}\n{command}",
                 "windows_powershell_command": command,
@@ -6827,7 +6828,7 @@ def _find_phase6_collection_plan(coverage_parent: Path | None) -> dict[str, Any]
     return None
 
 
-def _phase6_collection_plan_conduct_commands(plan: dict[str, Any]) -> list[str]:
+def _phase6_collection_plan_commands(plan: dict[str, Any]) -> list[str]:
     studies = plan.get("studies")
     if not isinstance(studies, dict):
         return []
@@ -6835,9 +6836,17 @@ def _phase6_collection_plan_conduct_commands(plan: dict[str, Any]) -> list[str]:
     for label, study in sorted(studies.items()):
         if not isinstance(study, dict):
             continue
-        command = study.get("conduct_command")
-        if isinstance(command, str) and command:
-            commands.append(f"# {label}\n{command}")
+        for key, header in (
+            ("conduct_command", "conduct"),
+            ("coverage_command", "coverage"),
+            ("eval_command", "eval"),
+        ):
+            command = study.get(key)
+            if isinstance(command, str) and command:
+                commands.append(f"# {label} {header}\n{command}")
+    suite_command = plan.get("suite_command")
+    if isinstance(suite_command, str) and suite_command:
+        commands.append(f"# suite\n{suite_command}")
     return commands
 
 

@@ -1132,9 +1132,23 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
                     "uv run semantic-mirror review conduct-study "
                     f"{tmp_path / 'study'} --out {tmp_path / 'whole_answers.jsonl'} "
                     "--reviewer reviewer-a --task-set all --append --max-tasks 20"
-                )
+                ),
+                "coverage_command": (
+                    "uv run semantic-mirror review study-status "
+                    f"{tmp_path / 'study'} --answers {tmp_path / 'whole_answers.jsonl'} "
+                    f"--out {tmp_path / 'whole_coverage.json'}"
+                ),
+                "eval_command": (
+                    "uv run semantic-mirror eval human-study "
+                    f"{tmp_path / 'study'} --answers {tmp_path / 'whole_answers.jsonl'} "
+                    f"--out {tmp_path / 'whole_eval.json'}"
+                ),
             }
         },
+        "suite_command": (
+            "uv run semantic-mirror eval human-study-suite "
+            f"--report {tmp_path / 'whole_eval.json'} --out {tmp_path / 'phase6_suite.json'}"
+        ),
     }
     (tmp_path / "phase6_collection_manifest.json").write_text(
         json.dumps(collection_plan, sort_keys=True) + "\n",
@@ -1148,12 +1162,15 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     conduct_action = next(
         action
         for action in planned_status["next_actions"]
-        if action["title"] == "Conduct real Phase 6 study sessions"
+        if action["title"] == "Run real Phase 6 collection and eval sequence"
     )
     assert conduct_action["category"] == "human_study"
     assert conduct_action["launches_training"] is False
     assert "phase6_collection_manifest.json" in conduct_action["command"]
     assert "review conduct-study" in conduct_action["command"]
+    assert "review study-status" in conduct_action["command"]
+    assert "eval human-study" in conduct_action["command"]
+    assert "eval human-study-suite" in conduct_action["command"]
     repo_commit = _git(repo, "rev-parse", "HEAD").strip()
     source_freshness = tmp_path / "source_freshness.json"
     package_root = tmp_path / "package"
@@ -1319,11 +1336,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_phase6_action = next(
         action
         for action in cli_status_json["next_actions"]
-        if action["title"] == "Conduct real Phase 6 study sessions"
+        if action["title"] == "Run real Phase 6 collection and eval sequence"
     )
     assert cli_phase6_action["category"] == "human_study"
     assert cli_phase6_action["launches_training"] is False
     assert "review conduct-study" in cli_phase6_action["command"]
+    assert "review study-status" in cli_phase6_action["command"]
+    assert "eval human-study-suite" in cli_phase6_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
@@ -1331,7 +1350,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "## Package Command Manifest" in contract_status_md
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
-    assert "Conduct real Phase 6 study sessions" in contract_status_md
+    assert "Run real Phase 6 collection and eval sequence" in contract_status_md
     assert "whole_repo_coverage.json" in contract_status_md
     assert "real_timed_reviewer_logs" in contract_status_md
 
