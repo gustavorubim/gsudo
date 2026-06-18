@@ -1611,7 +1611,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_status_json = json.loads(
         (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
     )
+    assert cli_status_json["windows_readiness_summary"]["passed"] is True
+    assert cli_status_json["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
+        "smoke_chain"
+    )
+    assert cli_status_json["package_source_summary"]["passed"] is True
+    assert cli_status_json["package_source_summary"]["mismatched_file_count"] == 0
+    assert cli_status_json["package_source_summary"][
+        "missing_package_specific_doc_count"
+    ] == 0
     assert cli_status_json["package_command_manifest_status"]["passed"]
+    assert cli_status_json["package_command_manifest_summary"]["training_command_count"] == 6
     assert cli_status_json["package_command_manifest_status"]["training_commands"] == [
         "dpo",
         "full_training_eval",
@@ -1621,6 +1631,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "wsl_smoke_chain",
     ]
     assert cli_status_json["package_metadata_status"]["passed"]
+    assert cli_status_json["package_metadata_summary"]["requires_python"] == ">=3.11,<3.14"
     assert cli_status_json["package_metadata_status"]["requires_python"] == ">=3.11,<3.14"
     assert cli_status_json["human_usefulness_status"]["collection_plan_status"][
         "answer_record_count"

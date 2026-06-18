@@ -1397,9 +1397,21 @@ def summarize_full_eval_contract_status(
         "stage_recovery_status": stage_recovery_status,
         "repo_hygiene_status": repo_hygiene_status,
         "windows_readiness_status": windows_readiness_status,
+        "windows_readiness_summary": _windows_readiness_contract_summary(
+            windows_readiness_status
+        ),
         "package_source_status": package_source_status,
+        "package_source_summary": _package_source_contract_summary(
+            package_source_status
+        ),
         "package_command_manifest_status": package_command_manifest_status,
+        "package_command_manifest_summary": _package_command_manifest_contract_summary(
+            package_command_manifest_status
+        ),
         "package_metadata_status": package_metadata_status,
+        "package_metadata_summary": _package_metadata_contract_summary(
+            package_metadata_status
+        ),
         "human_usefulness_status": human_usefulness_status,
         "next_actions": next_actions,
         "remaining_items": remaining_items,
@@ -7543,6 +7555,71 @@ def _stage_evidence_summary(
             "sample_exists": sample_status[stage]["manifest_exists"],
         }
     return summary
+
+
+def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "native_passed": status.get("native_passed"),
+        "native_blocked": status.get("native_blocked"),
+        "native_failed_required_checks": status.get(
+            "native_failed_required_checks", []
+        ),
+        "native_recommended_fallback": status.get("native_recommended_fallback"),
+        "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
+        "wsl_smoke_complete": status.get("wsl_smoke_complete"),
+        "wsl_failed_checks": status.get("wsl_failed_checks", []),
+        "wsl_missing_stage_manifest_count": len(
+            status.get("wsl_missing_stage_manifests", []) or []
+        ),
+        "wsl_missing_sample_manifest_count": len(
+            status.get("wsl_missing_sample_manifests", []) or []
+        ),
+        "wsl_diagnostics_exists": status.get("wsl_diagnostics_exists"),
+        "summary": status.get("summary"),
+    }
+
+
+def _package_source_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "git_commit_matches_repo": status.get("git_commit_matches_repo"),
+        "compared_file_count": status.get("compared_file_count"),
+        "mismatched_file_count": len(status.get("mismatched_files", []) or []),
+        "all_package_specific_docs_present": status.get(
+            "all_package_specific_docs_present"
+        ),
+        "missing_package_specific_doc_count": len(
+            status.get("missing_package_specific_docs", []) or []
+        ),
+        "summary": status.get("summary"),
+    }
+
+
+def _package_command_manifest_contract_summary(
+    status: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "command_count": status.get("command_count"),
+        "training_command_count": status.get("training_command_count"),
+        "non_training_command_count": status.get("non_training_command_count"),
+        "failed_checks": status.get("failed_checks", []),
+    }
+
+
+def _package_metadata_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "requires_python": status.get("requires_python"),
+        "expected_requires_python": status.get("expected_requires_python"),
+        "excludes_python_3_14": status.get("excludes_python_3_14"),
+        "summary": status.get("summary"),
+    }
 
 
 def _remaining_by_area(remaining_items: list[dict[str, Any]]) -> dict[str, list[str]]:
