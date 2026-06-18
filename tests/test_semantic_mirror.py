@@ -2539,6 +2539,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert ordered_by_command["report"]["blocked_by_preconditions"] == [
         "stage_current_evidence"
     ]
+    assert ordered_by_command["phase6_collection_sequence"][
+        "missing_answer_targets"
+    ] == []
+    assert ordered_by_command["phase6_collection_sequence"][
+        "remaining_answer_records"
+    ] == 107
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -2951,6 +2957,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "- Ready non-training actions: `1`" in contract_status_md
     assert (
         '- Ready non-training command counts: `{"phase6_collection_sequence": 1}`'
+        in contract_status_md
+    )
+    assert "Missing Answer Targets | Remaining Answer Records" in contract_status_md
+    assert (
+        "| 5 | `Run real Phase 6 collection and eval sequence` | "
+        "`phase6_collection_sequence` | `ready` | `None` | `None` | `False` | "
+        "`None` | 107 |"
         in contract_status_md
     )
     assert "- Missing answer targets: `None`" in contract_status_md

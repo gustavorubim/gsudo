@@ -7178,6 +7178,8 @@ def _ordered_execution_plan_summary(
                 "required_inputs": required_inputs,
                 "optional_inputs": action.get("optional_inputs", []) or [],
                 "blocked_by_stages": action.get("blocked_by_stages", []) or [],
+                "missing_answer_targets": action.get("missing_answer_targets"),
+                "remaining_answer_records": action.get("remaining_answer_records"),
                 "reason": action.get("reason"),
             }
         )
@@ -7753,19 +7755,23 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- First ready non-training command: `{ordered_execution_plan.get('first_ready_non_training_command') or 'None'}`",
                 f"- State counts: `{json.dumps(ordered_execution_plan.get('state_counts', {}), sort_keys=True)}`",
                 "",
-                "| Order | Action | Command | State | Preconditions | Required Inputs | Launches Training |",
-                "| ---: | --- | --- | --- | --- | --- | --- |",
+                "| Order | Action | Command | State | Preconditions | Required Inputs | Launches Training | Missing Answer Targets | Remaining Answer Records |",
+                "| ---: | --- | --- | --- | --- | --- | --- | --- | ---: |",
             ]
         )
         for item in ordered_execution_plan["items"]:
             preconditions = item.get("blocked_by_preconditions") or []
             required_inputs = item.get("required_inputs") or []
+            missing_answer_targets = item.get("missing_answer_targets") or []
+            remaining_answer_records = item.get("remaining_answer_records")
             lines.append(
                 f"| {item.get('order')} | `{item.get('title')}` | "
                 f"`{item.get('command_name')}` | `{item.get('execution_state')}` | "
                 f"{', '.join(f'`{precondition}`' for precondition in preconditions) or '`None`'} | "
                 f"{', '.join(f'`{input_name}`' for input_name in required_inputs) or '`None`'} | "
-                f"`{item.get('launches_training', False)}` |"
+                f"`{item.get('launches_training', False)}` | "
+                f"{', '.join(f'`{target}`' for target in missing_answer_targets) or '`None`'} | "
+                f"{remaining_answer_records if remaining_answer_records is not None else '`None`'} |"
             )
     if report.get("next_actions"):
         lines.extend(["", "## Next Actions", ""])
