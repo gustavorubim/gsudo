@@ -1485,11 +1485,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
     assert "## Next Actions" in status_markdown
+    assert "- Ready actions: `1`" in status_markdown
+    assert "- Ready training actions: `1`" in status_markdown
+    assert "- Ready non-training actions: `0`" in status_markdown
+    assert '- Ready command counts: `{"full_training_eval": 1}`' in status_markdown
     assert "Resume full eval through DPO and RL" in status_markdown
     assert "- Category: `training`" in status_markdown
     assert "- Launches training: `True`" in status_markdown
     assert "- Blocked by stages: `dpo, rl`" in status_markdown
     assert '- Stage actions: `{"dpo": "resume", "rl": "run", "sft": "reuse"}`' in status_markdown
+    assert "- Missing answer targets: `None`" in status_markdown
+    assert "- Remaining answer records: `None`" in status_markdown
     assert "- Category: `inspection`" in status_markdown
     assert "- Launches training: `False`" in status_markdown
     assert "- Blocked by stages: `None`" in status_markdown
@@ -2934,6 +2940,15 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "eval human-study-suite" in cli_phase6_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
+    assert "- Ready actions: `2`" in contract_status_md
+    assert "- Ready training actions: `1`" in contract_status_md
+    assert "- Ready non-training actions: `1`" in contract_status_md
+    assert (
+        '- Ready non-training command counts: `{"phase6_collection_sequence": 1}`'
+        in contract_status_md
+    )
+    assert "- Missing answer targets: `None`" in contract_status_md
+    assert "- Remaining answer records: `107`" in contract_status_md
     assert "## Windows Readiness" in contract_status_md
     assert "Native Python executable: `C:/repo/.venv/Scripts/python.exe`" in contract_status_md
     assert "Native Python version: `3.14.0`" in contract_status_md
