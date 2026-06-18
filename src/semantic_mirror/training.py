@@ -1453,6 +1453,10 @@ def summarize_full_eval_contract_status(
         ),
         "next_actions": next_actions,
         "next_action_summary": _next_actions_contract_summary(next_actions),
+        "ordered_execution_plan": _ordered_execution_plan_summary(
+            next_actions,
+            windows_readiness_status=windows_readiness_status,
+        ),
         "remaining_items": remaining_items,
         "remaining_by_area": remaining_by_area,
         "remaining_area_summary": _remaining_area_summary(
@@ -3792,11 +3796,15 @@ stage that must be completed before those artifacts are current.
 `recovery_plan_summary` rolls the same rows up by action category, training
 dependency, command launch behavior, blocking stage, blocked-stage command
 matrix, command-link validity, and next packaged command.
+`ordered_execution_plan` sorts the current next actions into an operator-safe
+sequence and marks longer training commands as blocked while the smoke-chain
+readiness prerequisite is still open.
 `outputs/contract_status.json` and `train contract-status` stdout are automation
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
-`human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`,
+`human_usefulness_summary`, `next_action_summary`, `ordered_execution_plan`,
+`stage_recovery_summary`, `remaining_by_area`,
 `remaining_area_summary`, `remaining_recovery_plan`, `recovery_plan_summary`, and
 `training_dependency_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
@@ -6920,6 +6928,87 @@ def _referenced_contract_input_names(report: dict[str, Any]) -> set[str]:
     return names
 
 
+def _ordered_execution_plan_summary(
+    next_actions: list[dict[str, Any]],
+    *,
+    windows_readiness_status: dict[str, Any],
+) -> dict[str, Any]:
+    smoke_prerequisite_open = (
+        windows_readiness_status.get("checked")
+        and not windows_readiness_status.get("passed")
+        and windows_readiness_status.get("native_blocked")
+        and not windows_readiness_status.get("wsl_smoke_complete")
+    )
+    priority = {
+        "inspect_full_training_eval_resume": 10,
+        "wsl_smoke_chain": 20,
+        "full_training_eval": 30,
+        "report": 40,
+        "contract_status": 50,
+        "phase6_collection_sequence": 60,
+    }
+    rows: list[dict[str, Any]] = []
+    for action in sorted(
+        next_actions,
+        key=lambda item: (
+            priority.get(str(item.get("command_name") or ""), 100),
+            str(item.get("title") or ""),
+        ),
+    ):
+        command_name = str(action.get("command_name") or "unknown")
+        preconditions: list[str] = []
+        if command_name == "full_training_eval" and smoke_prerequisite_open:
+            preconditions.append("wsl_smoke_chain")
+        if command_name in {"report", "contract_status"} and action.get(
+            "blocked_by_stages"
+        ):
+            preconditions.append("stage_current_evidence")
+        required_inputs = [
+            item for item in action.get("required_inputs", []) or [] if isinstance(item, str)
+        ]
+        if preconditions:
+            execution_state = "blocked_by_preconditions"
+        elif required_inputs:
+            execution_state = "ready_after_inputs"
+        else:
+            execution_state = "ready"
+        rows.append(
+            {
+                "order": len(rows) + 1,
+                "title": action.get("title"),
+                "command_name": command_name,
+                "command_category": action.get("command_category"),
+                "launches_training": action.get("launches_training", False),
+                "execution_state": execution_state,
+                "blocked_by_preconditions": preconditions,
+                "required_inputs": required_inputs,
+                "optional_inputs": action.get("optional_inputs", []) or [],
+                "blocked_by_stages": action.get("blocked_by_stages", []) or [],
+                "reason": action.get("reason"),
+            }
+        )
+    state_counts: dict[str, int] = {}
+    for row in rows:
+        state = str(row["execution_state"])
+        state_counts[state] = state_counts.get(state, 0) + 1
+    first_ready = next(
+        (
+            row
+            for row in rows
+            if row["execution_state"] in {"ready", "ready_after_inputs"}
+        ),
+        None,
+    )
+    return {
+        "total_items": len(rows),
+        "state_counts": {key: state_counts[key] for key in sorted(state_counts)},
+        "smoke_prerequisite_open": bool(smoke_prerequisite_open),
+        "first_ready_command": first_ready["command_name"] if first_ready else None,
+        "first_ready_title": first_ready["title"] if first_ready else None,
+        "items": rows,
+    }
+
+
 def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Semantic Mirror Full-Eval Contract Status",
@@ -7401,6 +7490,31 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"{decision.get('requested_max_steps')} | "
                 f"{decision.get('manifest_max_steps')} | "
                 f"`{checkpoint.get('path')}` | `{decision.get('reason')}` |"
+            )
+    ordered_execution_plan = report.get("ordered_execution_plan") or {}
+    if ordered_execution_plan.get("items"):
+        lines.extend(
+            [
+                "",
+                "## Ordered Execution Plan",
+                "",
+                f"- Smoke prerequisite open: `{ordered_execution_plan.get('smoke_prerequisite_open')}`",
+                f"- First ready command: `{ordered_execution_plan.get('first_ready_command') or 'None'}`",
+                f"- State counts: `{json.dumps(ordered_execution_plan.get('state_counts', {}), sort_keys=True)}`",
+                "",
+                "| Order | Action | Command | State | Preconditions | Required Inputs | Launches Training |",
+                "| ---: | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for item in ordered_execution_plan["items"]:
+            preconditions = item.get("blocked_by_preconditions") or []
+            required_inputs = item.get("required_inputs") or []
+            lines.append(
+                f"| {item.get('order')} | `{item.get('title')}` | "
+                f"`{item.get('command_name')}` | `{item.get('execution_state')}` | "
+                f"{', '.join(f'`{precondition}`' for precondition in preconditions) or '`None`'} | "
+                f"{', '.join(f'`{input_name}`' for input_name in required_inputs) or '`None`'} | "
+                f"`{item.get('launches_training', False)}` |"
             )
     if report.get("next_actions"):
         lines.extend(["", "## Next Actions", ""])

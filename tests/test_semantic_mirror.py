@@ -1799,6 +1799,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "-HeldOutDataset <windows_dataset_dir>" in wsl_smoke_action[
         "windows_powershell_command"
     ]
+    wrong_ordered_plan = wrong_wsl_status["ordered_execution_plan"]
+    assert wrong_ordered_plan["smoke_prerequisite_open"] is True
+    assert wrong_ordered_plan["first_ready_command"] == "inspect_full_training_eval_resume"
+    wrong_ordered_by_command = {
+        item["command_name"]: item for item in wrong_ordered_plan["items"]
+    }
+    assert wrong_ordered_by_command["wsl_smoke_chain"]["execution_state"] == "ready"
+    assert wrong_ordered_by_command["full_training_eval"]["execution_state"] == (
+        "blocked_by_preconditions"
+    )
+    assert wrong_ordered_by_command["full_training_eval"][
+        "blocked_by_preconditions"
+    ] == ["wsl_smoke_chain"]
     human_suite = tmp_path / "phase6_summary.json"
     human_suite.write_text(
         json.dumps(
@@ -2411,6 +2424,31 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["command_input_reference"]["windows_audit"][
         "optional_by"
     ] == ["contract_status", "full_training_eval"]
+    ordered_plan = cli_stdout["ordered_execution_plan"]
+    assert ordered_plan["smoke_prerequisite_open"] is False
+    assert ordered_plan["first_ready_command"] == "inspect_full_training_eval_resume"
+    assert ordered_plan["state_counts"] == {
+        "blocked_by_preconditions": 2,
+        "ready": 1,
+        "ready_after_inputs": 2,
+    }
+    ordered_by_command = {
+        item["command_name"]: item for item in ordered_plan["items"]
+    }
+    assert ordered_by_command["full_training_eval"]["execution_state"] == (
+        "ready_after_inputs"
+    )
+    assert ordered_by_command["full_training_eval"]["blocked_by_preconditions"] == []
+    assert ordered_by_command["full_training_eval"]["required_inputs"] == [
+        "held_out_dataset",
+        "baseline_candidates",
+    ]
+    assert ordered_by_command["report"]["execution_state"] == (
+        "blocked_by_preconditions"
+    )
+    assert ordered_by_command["report"]["blocked_by_preconditions"] == [
+        "stage_current_evidence"
+    ]
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -2682,6 +2720,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "package_metadata_summary",
         "human_usefulness_summary",
         "next_action_summary",
+        "ordered_execution_plan",
         "stage_recovery_summary",
         "remaining_area_summary",
         "training_dependency_summary",

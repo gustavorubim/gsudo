@@ -1278,6 +1278,7 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 "next_action_summary",
                 _next_action_summary(manifest.get("next_actions")),
             ),
+            "ordered_execution_plan": manifest.get("ordered_execution_plan", {}),
             "stage_recovery_summary": _summary_value(
                 manifest,
                 "stage_recovery_summary",
