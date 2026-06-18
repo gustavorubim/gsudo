@@ -43,6 +43,7 @@ from semantic_mirror.training import (
     audit_training_environment,
     create_sample_inspection,
     generate_training_diagnostics,
+    generate_training_package_source_freshness,
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
@@ -1725,6 +1726,41 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert package_manifest["files"]["smoke_chain_launcher"] == "launch/run_smoke_chain.sh"
     assert validate_training_batch(bundle_out / "training")["passed"]
     assert (bundle_out / "training" / "run_unsloth_sft.py").exists()
+    freshness = generate_training_package_source_freshness(
+        bundle_out,
+        repo_root=Path.cwd(),
+        out_path=bundle_out / "source_freshness.json",
+        markdown_out_path=bundle_out / "source_freshness.md",
+    )
+    assert freshness["mode"] == "semantic_mirror_package_source_freshness"
+    assert freshness["all_compared_files_match"]
+    assert freshness["compared_file_count"] > 0
+    assert (bundle_out / "source_freshness.json").exists()
+    assert "Source Freshness Evidence" in (bundle_out / "source_freshness.md").read_text(
+        encoding="utf-8"
+    )
+    freshness_cli = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "train",
+            "source-freshness",
+            str(bundle_out),
+            "--repo-root",
+            str(Path.cwd()),
+            "--out",
+            str(bundle_out / "source_freshness_cli.json"),
+            "--markdown-out",
+            str(bundle_out / "source_freshness_cli.md"),
+        ],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert freshness_cli.returncode == 0
+    assert json.loads(freshness_cli.stdout)["all_compared_files_match"] is True
+    assert (bundle_out / "source_freshness_cli.json").exists()
     sft_script = (bundle_out / "training" / "run_unsloth_sft.py").read_text(encoding="utf-8")
     assert "SFTConfig" in sft_script
     assert "processing_class=tokenizer" in sft_script

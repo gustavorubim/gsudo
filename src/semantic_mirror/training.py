@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -754,6 +755,80 @@ def package_training_bundle(
     }
     _write_package_manifest(out, manifest)
     return manifest
+
+
+def generate_training_package_source_freshness(
+    package_path: Path | str,
+    *,
+    repo_root: Path | str | None = None,
+    out_path: Path | str | None = None,
+    markdown_out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Hash-compare a packaged runtime source tree against repository source."""
+
+    package = Path(package_path).resolve()
+    repo = Path(repo_root).resolve() if repo_root is not None else Path.cwd().resolve()
+    repo_source = repo / "src" / "semantic_mirror"
+    package_source = package / "src" / "semantic_mirror"
+    source_files = _runtime_source_files(repo_source)
+    comparisons = [
+        _source_freshness_comparison(
+            relative_path=relative_path,
+            repo_root=repo,
+            package_root=package,
+        )
+        for relative_path in source_files
+    ]
+    report = {
+        "mode": "semantic_mirror_package_source_freshness",
+        "training_version": TRAINING_VERSION,
+        "generated_at": _now(),
+        "repo_root": str(repo),
+        "package_root": str(package),
+        "git_commit": _repo_current_commit(repo),
+        "compared_scope": "src/semantic_mirror runtime source tree",
+        "repo_source_exists": repo_source.exists(),
+        "package_source_exists": package_source.exists(),
+        "all_compared_files_match": bool(source_files)
+        and not any(not row["match"] for row in comparisons),
+        "compared_file_count": len(comparisons),
+        "comparisons": comparisons,
+        "package_specific_docs": [
+            {
+                "relative_path": "README.md",
+                "reason": "Generated training-bundle README, intentionally not the repository README.",
+            },
+            {
+                "relative_path": "ENVIRONMENT.md",
+                "reason": "Generated package environment/runbook documentation.",
+            },
+            {
+                "relative_path": ".env.training.example",
+                "reason": "Generated sanitized package environment template.",
+            },
+        ],
+        "git_status_short_branch_ignored": _repo_git_status_short(repo),
+        "files": {},
+    }
+    json_out = (
+        Path(out_path).resolve()
+        if out_path is not None
+        else package / "source_freshness.json"
+    )
+    markdown_out = (
+        Path(markdown_out_path).resolve()
+        if markdown_out_path is not None
+        else package / "source_freshness.md"
+    )
+    report["files"] = {
+        "json": str(json_out),
+        "markdown": str(markdown_out),
+    }
+    json_out.parent.mkdir(parents=True, exist_ok=True)
+    markdown_out.parent.mkdir(parents=True, exist_ok=True)
+    json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_out.write_text(_source_freshness_markdown(report), encoding="utf-8")
+    return report
 
 
 DIAGNOSTIC_PLOT_SPECS = {
@@ -7087,6 +7162,102 @@ def _repo_current_commit(repo_root: Any) -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
+
+
+def _repo_git_status_short(repo_root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short", "--branch", "--ignored"],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        return f"git status failed: {exc}"
+    return result.stdout.rstrip()
+
+
+def _runtime_source_files(source_root: Path) -> list[str]:
+    if not source_root.exists():
+        return []
+    files = [
+        path.relative_to(source_root.parent.parent).as_posix()
+        for path in source_root.rglob("*.py")
+        if "__pycache__" not in path.parts
+    ]
+    return sorted(files)
+
+
+def _source_freshness_comparison(
+    *,
+    relative_path: str,
+    repo_root: Path,
+    package_root: Path,
+) -> dict[str, Any]:
+    repo_file = repo_root / relative_path
+    package_file = package_root / relative_path
+    repo_exists = repo_file.exists()
+    package_exists = package_file.exists()
+    repo_hash = _sha256_file(repo_file) if repo_exists else None
+    package_hash = _sha256_file(package_file) if package_exists else None
+    return {
+        "relative_path": relative_path,
+        "repo_exists": repo_exists,
+        "package_exists": package_exists,
+        "repo_sha256": repo_hash,
+        "package_sha256": package_hash,
+        "match": repo_exists and package_exists and repo_hash == package_hash,
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_freshness_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# Source Freshness Evidence",
+        "",
+        f"Generated: {report['generated_at']}",
+        f"Repo commit: {report.get('git_commit')}",
+        f"Repo root: {report['repo_root']}",
+        f"Package root: {report['package_root']}",
+        f"Compared scope: {report['compared_scope']}",
+        f"Compared files: {report['compared_file_count']}",
+        f"All compared files match: {report['all_compared_files_match']}",
+        "",
+        "## Package-Specific Docs",
+        "",
+        "| File | Reason |",
+        "| --- | --- |",
+    ]
+    for doc in report["package_specific_docs"]:
+        lines.append(f"| {doc['relative_path']} | {doc['reason']} |")
+    lines.extend(
+        [
+            "",
+            "## Compared Files",
+            "",
+            "| File | Match | Repo SHA256 | Package SHA256 |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    for row in report["comparisons"]:
+        lines.append(
+            f"| {row['relative_path']} | {row['match']} | "
+            f"{row['repo_sha256']} | {row['package_sha256']} |"
+        )
+    mismatches = [row["relative_path"] for row in report["comparisons"] if not row["match"]]
+    if mismatches:
+        lines.extend(["", "## Mismatches"])
+        lines.extend(f"- {path}" for path in mismatches)
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _human_usefulness_contract_status(

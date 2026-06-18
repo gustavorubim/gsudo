@@ -267,6 +267,7 @@ uv run semantic-mirror train run-sft <training_dir> --output-dir <sft_model_dir>
 uv run semantic-mirror train run-dpo <training_dir> --model-name-or-path <sft_model_dir> --output-dir <dpo_model_dir> --max-steps 120 --dry-run
 uv run semantic-mirror train run-rl <training_dir> --model-name-or-path <dpo_model_dir> --output-dir <rl_model_dir> --max-steps 120 --dry-run
 uv run semantic-mirror train report <run_outputs_dir> --out <run_outputs_dir>/diagnostics
+uv run semantic-mirror train source-freshness <training_bundle_dir> --repo-root . --out <training_bundle_dir>/source_freshness.json --markdown-out <training_bundle_dir>/source_freshness.md
 uv run semantic-mirror train contract-status <run_outputs_dir> --sft-steps 300 --dpo-steps 120 --rl-steps 120 --repo-root . --windows-audit <windows_audit.json> --wsl-smoke-manifest <smoke_chain_manifest.json> --package-source-freshness <source_freshness.json> --human-study-coverage <coverage.json> --human-study-suite <phase6_summary.json> --out <run_outputs_dir>/contract_status.json --markdown-out <run_outputs_dir>/contract_status.md
 uv run semantic-mirror train inspect-samples <dataset_dir> --raw-candidates <raw.jsonl> --repaired-candidates <repaired.jsonl> --out <samples_dir> --model-name <run_name>
 ```
@@ -381,6 +382,9 @@ repaired schema validity.
 Use `train report` after smoke or full runs to produce
 `diagnostics/training_summary.json`, `diagnostics/training_summary.md`, and PNG
 plots for SFT, DPO, RL, generation, eval, and schema/coverage metrics. Use
+`train source-freshness` after packaging or refreshing a bundle to write
+`source_freshness.json` and `source_freshness.md`, proving the packaged
+`src/semantic_mirror` runtime source matches the repo source by SHA256 hash. Use
 `train contract-status` on a full-eval `outputs` directory to list which target
 stage manifests, eval reports, sample inspections, diagnostics, and final gates
 are proven or still missing; pass `--markdown-out` for a reviewer-readable

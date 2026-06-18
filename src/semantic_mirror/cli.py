@@ -42,6 +42,7 @@ from semantic_mirror.training import (
     audit_training_environment,
     create_sample_inspection,
     generate_training_diagnostics,
+    generate_training_package_source_freshness,
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
@@ -321,6 +322,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
         return 0
+    elif args.command == "train" and args.train_command == "source-freshness":
+        manifest = generate_training_package_source_freshness(
+            Path(args.package_dir),
+            repo_root=Path(args.repo_root) if args.repo_root is not None else None,
+            out_path=Path(args.out) if args.out is not None else None,
+            markdown_out_path=Path(args.markdown_out) if args.markdown_out is not None else None,
+        )
+        print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
+        return 0 if manifest["all_compared_files_match"] else 1
     elif args.command == "train" and args.train_command == "contract-status":
         manifest = summarize_full_eval_contract_status(
             Path(args.run_dir),
@@ -787,6 +797,24 @@ def _parser() -> argparse.ArgumentParser:
     report_train.add_argument("run_dir", help="Training run or outputs directory.")
     report_train.add_argument("--out", help="Diagnostics output directory. Defaults to run_dir/diagnostics.")
 
+    source_freshness = train_subparsers.add_parser(
+        "source-freshness",
+        help="Hash-compare packaged runtime source against the current repository source.",
+    )
+    source_freshness.add_argument("package_dir", help="Training package directory.")
+    source_freshness.add_argument(
+        "--repo-root",
+        help="Repository root containing src/semantic_mirror. Defaults to the current working directory.",
+    )
+    source_freshness.add_argument(
+        "--out",
+        help="Optional JSON output path. Defaults to package_dir/source_freshness.json.",
+    )
+    source_freshness.add_argument(
+        "--markdown-out",
+        help="Optional Markdown output path. Defaults to package_dir/source_freshness.md.",
+    )
+
     contract_status = train_subparsers.add_parser(
         "contract-status",
         help="Summarize which full-eval contract gates are proven by an outputs directory.",
@@ -1085,6 +1113,21 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 name: {"path": plot["path"], "points": plot["points"], "missing": plot["missing"]}
                 for name, plot in manifest["plots"].items()
             },
+        }
+    if manifest.get("mode") == "semantic_mirror_package_source_freshness":
+        return {
+            "mode": manifest["mode"],
+            "package_root": manifest["package_root"],
+            "repo_root": manifest["repo_root"],
+            "git_commit": manifest["git_commit"],
+            "compared_file_count": manifest["compared_file_count"],
+            "all_compared_files_match": manifest["all_compared_files_match"],
+            "mismatched_files": [
+                row["relative_path"]
+                for row in manifest["comparisons"]
+                if not row["match"]
+            ],
+            "files": manifest["files"],
         }
     if manifest.get("mode") == "sample_inspection":
         return {
