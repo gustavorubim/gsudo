@@ -2000,6 +2000,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert conduct_action["launches_training"] is False
     assert conduct_action["blocked_by_stages"] == []
     assert conduct_action["stage_actions"] == {}
+    assert conduct_action["required_inputs"] == []
+    assert conduct_action["optional_inputs"] == []
     assert conduct_action["missing_answer_targets"] == []
     assert conduct_action["remaining_answer_records"] == 107
     assert "phase6_collection_manifest.json" in conduct_action["command"]
@@ -2657,6 +2659,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["has_command"] is True
         and action["blocked_by_stages"] == []
         and action["stage_actions"] == {}
+        and action["required_inputs"] == []
+        and action["optional_inputs"] == []
         and action["missing_answer_targets"] == []
         and action["remaining_answer_records"] == 107
         and "real timed reviewer logs" in action["reason"]
@@ -2935,6 +2939,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_phase6_action["command_name"] == "phase6_collection_sequence"
     assert cli_phase6_action["command_category"] == "human_study"
     assert cli_phase6_action["launches_training"] is False
+    assert cli_phase6_action["required_inputs"] == []
+    assert cli_phase6_action["optional_inputs"] == []
     assert "review conduct-study" in cli_phase6_action["command"]
     assert "review study-status" in cli_phase6_action["command"]
     assert "eval human-study-suite" in cli_phase6_action["command"]
