@@ -3018,6 +3018,12 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "generate_eval_report_after_stage" in package_readme
     assert "generate_sample_inspection_after_stage" in package_readme
     assert "blocked_by_stages" in package_readme
+    root_readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "generate_eval_report_after_stage" in root_readme
+    assert "generate_sample_inspection_after_stage" in root_readme
+    assert "package source, command-manifest" in root_readme
     assert (
         package_manifest["files"]["full_training_eval_resume_inspector"]
         == "launch/inspect_full_training_eval_resume.sh"

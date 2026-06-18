@@ -295,7 +295,12 @@ list any missing stage manifests, eval reports, sample inspections,
 diagnostics, or final gates. The status JSON includes `remaining_recovery_plan`,
 and the Markdown includes a `Recovery Plan` table mapping every failed gate to
 the required action, whether training is required, blocking stages, and target
-artifacts. Generated prompts include
+artifacts. Stale stage-derived eval rows use `generate_eval_report_after_stage`,
+sample rows use `generate_sample_inspection_after_stage`, and
+`blocked_by_stages` names the stage that must finish before those artifacts are
+current. Contract-status stdout also includes package source, command-manifest,
+and Python metadata summaries so automation can distinguish package evidence
+repairs from training work. Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
 model to return that object as the final JSON. The
