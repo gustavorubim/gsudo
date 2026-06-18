@@ -3399,13 +3399,17 @@ training is required, blocking stages, and target artifacts. The
 `train contract-status` stdout is also an automation surface: it includes
 `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
-`package_command_manifest_summary`, `human_usefulness_summary`,
+`package_command_manifest_summary`, `package_metadata_summary`,
+`human_usefulness_summary`,
 `stage_recovery_summary`, `remaining_by_area`, `remaining_recovery_plan`, and
 compact `next_actions`, including current-versus-expected failed-gate evidence,
 DPO/RL resume decisions, Phase 6 failed gates, real timed-answer counts, package
-source freshness, and command-manifest safety checks. Sample manifests and the
-summary include raw parseability, cap hits, repair-free contract counts, exact
-identity counts, top-level key validity, and compact shape validity.
+source freshness, command-manifest safety checks, and package Python metadata.
+Checked package evidence failures surface as package-area gates with non-training
+recovery actions for source freshness, command manifest, and Python metadata.
+Sample manifests and the summary include raw parseability, cap hits, repair-free
+contract counts, exact identity counts, top-level key validity, and compact shape
+validity.
 
 The bundle does not include `.env` or secret values. Use `.env.training.example`
 as a template on the target machine.
