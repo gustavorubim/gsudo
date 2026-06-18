@@ -6484,6 +6484,9 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 [
                     f"### {action['title']}",
                     "",
+                    f"- Category: `{action.get('category', 'unspecified')}`",
+                    f"- Launches training: `{action.get('launches_training', False)}`",
+                    "",
                     action["reason"],
                     "",
                     "```bash",
@@ -6526,9 +6529,9 @@ def _full_eval_next_actions(
     windows_readiness_status: dict[str, Any],
     package_source_status: dict[str, Any],
     human_usefulness_status: dict[str, Any],
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     package_root = run.parent if run.name == "outputs" else run
-    actions: list[dict[str, str]] = []
+    actions: list[dict[str, Any]] = []
     sft_steps = stage_status["sft"]["requested_max_steps"]
     dpo_steps = stage_status["dpo"]["requested_max_steps"]
     rl_steps = stage_status["rl"]["requested_max_steps"]
@@ -6570,6 +6573,8 @@ def _full_eval_next_actions(
     actions.append(
         {
             "title": "Inspect resume plan",
+            "category": "inspection",
+            "launches_training": False,
             "reason": "Preview stage reuse and resume decisions before launching training.",
             "command": f"# from {package_root}\n{inspect_command}",
             "windows_powershell_command": _windows_wsl_command(package_root, inspect_command),
@@ -6588,6 +6593,8 @@ def _full_eval_next_actions(
                     if rl_incomplete
                     else "Resume full eval through DPO"
                 ),
+                "category": "training",
+                "launches_training": True,
                 "reason": (
                     "DPO has not reached the requested max_steps, and RL/final eval evidence is incomplete; "
                     "resume from the newest available DPO checkpoint if present, then continue the full chain."
@@ -6606,6 +6613,8 @@ def _full_eval_next_actions(
         actions.append(
             {
                 "title": "Run RL and final eval",
+                "category": "training",
+                "launches_training": True,
                 "reason": "DPO is complete but RL/final eval evidence is missing.",
                 "command": f"# from {package_root}\n{run_command}",
                 "windows_powershell_command": _windows_wsl_command(package_root, run_command),
@@ -6618,6 +6627,8 @@ def _full_eval_next_actions(
         actions.append(
             {
                 "title": "Regenerate target diagnostics",
+                "category": "diagnostics",
+                "launches_training": False,
                 "reason": "Diagnostic plots must be regenerated from this target outputs directory after target-stage evidence is current.",
                 "command": f"# from {package_root}\n{diagnostics_command}",
                 "windows_powershell_command": _windows_wsl_command(
@@ -6628,6 +6639,8 @@ def _full_eval_next_actions(
     actions.append(
         {
             "title": "Regenerate contract status",
+            "category": "status",
+            "launches_training": False,
             "reason": "Refresh JSON and Markdown status after the next full-eval attempt.",
             "command": f"# from {package_root}\n{status_command}",
             "windows_powershell_command": _windows_wsl_command(package_root, status_command),

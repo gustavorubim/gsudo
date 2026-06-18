@@ -836,10 +836,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert any(
         action["title"] == "Resume full eval through DPO and RL"
         and "RL/final eval evidence is incomplete" in action["reason"]
+        and action["category"] == "training"
+        and action["launches_training"] is True
         for action in status["next_actions"]
     )
+    inspect_action = next(
+        action for action in status["next_actions"] if action["title"] == "Inspect resume plan"
+    )
+    assert inspect_action["category"] == "inspection"
+    assert inspect_action["launches_training"] is False
     assert any(
         action["title"] == "Regenerate target diagnostics"
+        and action["category"] == "diagnostics"
+        and action["launches_training"] is False
         and "train report outputs --out outputs/diagnostics" in action["command"]
         for action in status["next_actions"]
     )
@@ -887,6 +896,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
     assert "## Next Actions" in status_markdown
     assert "Resume full eval through DPO and RL" in status_markdown
+    assert "- Category: `training`" in status_markdown
+    assert "- Launches training: `True`" in status_markdown
+    assert "- Category: `inspection`" in status_markdown
+    assert "- Launches training: `False`" in status_markdown
     assert "RL/final eval evidence is incomplete" in status_markdown
     assert "Regenerate target diagnostics" in status_markdown
     assert "bash launch/inspect_full_training_eval_resume.sh" in status_markdown
@@ -1145,6 +1158,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         for action in cli_status_json["next_actions"]
         if action["title"] == "Regenerate contract status"
     )
+    assert refresh_action["category"] == "status"
+    assert refresh_action["launches_training"] is False
     assert "--repo-root 'repo'" in refresh_action["command"]
     assert "--windows-audit 'windows_audit.json'" in refresh_action["command"]
     assert "--wsl-smoke-manifest 'smoke_chain_manifest.json'" in refresh_action["command"]
@@ -1156,6 +1171,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         for action in cli_status_json["next_actions"]
         if action["title"] == "Resume full eval through DPO and RL"
     )
+    assert resume_action["category"] == "training"
+    assert resume_action["launches_training"] is True
     assert "SOURCE_FRESHNESS_REPO_ROOT='repo'" in resume_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
