@@ -6523,6 +6523,9 @@ def _full_eval_next_actions(
         f"RL_MAX_STEPS={rl_steps}" if rl_steps is not None else "",
         "REUSE_STAGE_OUTPUTS=1",
     ]
+    if repo_hygiene_status.get("checked") and repo_hygiene_status.get("repo_root"):
+        source_repo = _posix_relpath(Path(repo_hygiene_status["repo_root"]), package_root)
+        env_parts.append(f"SOURCE_FRESHNESS_REPO_ROOT={_shell_single_quoted(source_repo)}")
     dpo_checkpoint = _latest_checkpoint(run / "semantic-mirror-dpo")
     if (
         dpo_checkpoint is not None
@@ -7160,6 +7163,8 @@ def _package_source_freshness_contract_status(
         "path": str(path),
         "summary": summary,
         "mode": report.get("mode"),
+        "repo_root": report.get("repo_root"),
+        "package_root": report.get("package_root"),
         "git_commit": report_commit,
         "current_repo_commit": current_commit,
         "git_commit_matches_repo": commit_matches,

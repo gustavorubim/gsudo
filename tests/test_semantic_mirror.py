@@ -1062,6 +1062,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             {
                 "mode": "semantic_mirror_package_source_freshness",
                 "git_commit": repo_commit,
+                "repo_root": str(tmp_path),
+                "package_root": str(tmp_path / "package"),
                 "compared_scope": "src/semantic_mirror runtime source tree",
                 "compared_file_count": 2,
                 "all_compared_files_match": True,
@@ -1090,6 +1092,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert freshness_status["package_source_status"]["passed"]
     assert freshness_status["package_source_status"]["git_commit_matches_repo"] is True
     assert freshness_status["package_source_status"]["compared_file_count"] == 2
+    assert freshness_status["package_source_status"]["repo_root"] == str(tmp_path)
+    freshness_run_action = next(
+        action
+        for action in freshness_status["next_actions"]
+        if action["title"] == "Resume full eval through DPO and RL"
+    )
+    assert "SOURCE_FRESHNESS_REPO_ROOT='repo'" in freshness_run_action["command"]
 
     cli_status = subprocess.run(
         [
@@ -1142,6 +1151,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "--package-source-freshness 'source_freshness.json'" in refresh_action["command"]
     assert "--human-study-suite 'phase6_summary.json'" in refresh_action["command"]
     assert "--human-study-coverage 'whole_repo_coverage.json'" in refresh_action["command"]
+    resume_action = next(
+        action
+        for action in cli_status_json["next_actions"]
+        if action["title"] == "Resume full eval through DPO and RL"
+    )
+    assert "SOURCE_FRESHNESS_REPO_ROOT='repo'" in resume_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
