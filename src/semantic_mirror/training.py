@@ -4063,6 +4063,18 @@ BASELINE_CANDIDATES=/path/to/teacher_results/teacher_candidates.jsonl \
 bash launch/run_full_training_eval.sh
 ```
 
+If Phase 6 human-study coverage or suite reports already exist, pass them
+through the full-eval launcher so the final `outputs/contract_status.json` and
+`outputs/contract_status.md` retain human-usefulness evidence:
+
+```bash
+HUMAN_STUDY_SUITE=outputs/phase6/phase6_real_suite_summary.json \
+HUMAN_STUDY_COVERAGE=outputs/phase6/whole_repo_real_coverage.json:outputs/phase6/diff_mode_real_coverage.json \
+HELD_OUT_DATASET=/path/to/heldout_dataset \
+BASELINE_CANDIDATES=/path/to/teacher_results/teacher_candidates.jsonl \
+bash launch/run_full_training_eval.sh
+```
+
 For long full-eval runs, set `REUSE_STAGE_OUTPUTS=1` to reuse an existing
 SFT/DPO/RL output directory only when its `training_stage_manifest.json`
 `max_steps` matches the requested stage cap.
@@ -4126,8 +4138,9 @@ PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . \
 ```
 
 When regenerating contract status outside `run_full_training_eval.sh`, include
-the package source freshness report, native audit report, and WSL smoke-chain
-manifest so Windows readiness evidence is not dropped:
+the package source freshness report, native audit report, WSL smoke-chain
+manifest, and any Phase 6 human-study evidence so Windows readiness and
+human-usefulness evidence are not dropped:
 
 ```bash
 PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs \
@@ -4137,6 +4150,9 @@ PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs \
   --windows-audit audit/current_environment.json \
   --wsl-smoke-manifest outputs/smoke-chain-wsl/smoke_chain_manifest.json \
   --package-source-freshness source_freshness.json \
+  --human-study-coverage outputs/phase6/whole_repo_real_coverage.json \
+  --human-study-coverage outputs/phase6/diff_mode_real_coverage.json \
+  --human-study-suite outputs/phase6/phase6_real_suite_summary.json \
   --out outputs/contract_status.json \
   --markdown-out outputs/contract_status.md
 ```
