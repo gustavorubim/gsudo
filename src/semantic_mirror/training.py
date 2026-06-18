@@ -6480,6 +6480,33 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"{coverage.get('real_timed_answer_records')} | "
                 f"{', '.join(f'`{gate}`' for gate in failed)} |"
             )
+    collection_plan = human_usefulness.get("collection_plan_status") or {}
+    if collection_plan.get("checked"):
+        lines.extend(
+            [
+                "",
+                "### Collection Plan",
+                "",
+                f"- Passed: `{collection_plan.get('passed')}`",
+                f"- Summary: {collection_plan.get('summary')}",
+                f"- Plan path: `{collection_plan.get('path')}`",
+                f"- Answer records: `{collection_plan.get('answer_record_count')}/{collection_plan.get('required_total_answer_records')}`",
+            ]
+        )
+        studies = collection_plan.get("studies") or {}
+        if studies:
+            lines.extend(
+                [
+                    "",
+                    "| Study | Answer Target Exists | Answer Records | Required Records |",
+                    "| --- | --- | ---: | ---: |",
+                ]
+            )
+            for label, study in studies.items():
+                lines.append(
+                    f"| `{label}` | `{study.get('answer_target_exists')}` | "
+                    f"{study.get('answer_records')} | {study.get('required_answer_records')} |"
+                )
     lines.extend(
         [
             "",
@@ -7669,11 +7696,13 @@ def _human_usefulness_contract_status(
     coverage_paths: Iterable[Path | str] | None = None,
 ) -> dict[str, Any]:
     coverage_reports = _human_study_coverage_contract_status(coverage_paths)
+    collection_plan_status = _phase6_collection_plan_contract_status(coverage_reports)
     if suite_path is None:
         return {
             "checked": bool(coverage_reports),
             "passed": None,
             "coverage_reports": coverage_reports,
+            "collection_plan_status": collection_plan_status,
             "summary": "Human usefulness not checked; pass --human-study-suite with an eval human-study-suite report.",
         }
     path = Path(suite_path).resolve()
@@ -7684,6 +7713,7 @@ def _human_usefulness_contract_status(
             "passed": False,
             "path": str(path),
             "coverage_reports": coverage_reports,
+            "collection_plan_status": collection_plan_status,
             "summary": "Human-study suite report is missing or not a JSON object.",
         }
     phase6 = report.get("phase6_gate_summary", {})
@@ -7722,6 +7752,7 @@ def _human_usefulness_contract_status(
         "required_phase6_gates": gate_status,
         "metrics": report.get("metrics", {}),
         "coverage_reports": coverage_reports,
+        "collection_plan_status": collection_plan_status,
     }
 
 
@@ -7773,6 +7804,77 @@ def _human_study_coverage_contract_status(
             }
         )
     return reports
+
+
+def _phase6_collection_plan_contract_status(
+    coverage_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+    coverage_parent = None
+    for coverage in coverage_reports:
+        if coverage.get("path"):
+            coverage_parent = Path(coverage["path"]).resolve().parent
+            break
+    plan = _find_phase6_collection_plan(coverage_parent)
+    if plan is None:
+        return {
+            "checked": bool(coverage_reports),
+            "passed": None if coverage_reports else False,
+            "summary": (
+                "No Phase 6 collection plan found next to coverage reports."
+                if coverage_reports
+                else "No Phase 6 coverage reports supplied."
+            ),
+        }
+    studies = plan.get("studies")
+    if not isinstance(studies, dict):
+        return {
+            "checked": True,
+            "passed": False,
+            "path": plan.get("path"),
+            "summary": "Phase 6 collection plan has no studies object.",
+        }
+    study_statuses = {}
+    total_required = 0
+    total_answer_records = 0
+    missing_answer_targets = []
+    for label, study in sorted(studies.items()):
+        if not isinstance(study, dict):
+            study_statuses[label] = {"valid": False}
+            continue
+        answer_target = study.get("answer_target")
+        answer_path = Path(answer_target) if isinstance(answer_target, str) else None
+        records = _read_jsonl(answer_path) if answer_path is not None else []
+        answer_records = len(records)
+        required_records = int(study.get("answer_template_records") or 0)
+        exists = bool(answer_path and answer_path.exists())
+        if not exists:
+            missing_answer_targets.append(label)
+        total_required += required_records
+        total_answer_records += answer_records
+        study_statuses[label] = {
+            "answer_target": str(answer_path) if answer_path is not None else None,
+            "answer_target_exists": exists,
+            "answer_records": answer_records,
+            "required_answer_records": required_records,
+            "coverage_report": study.get("coverage_report"),
+            "eval_report": study.get("eval_report"),
+        }
+    plan_required = int(plan.get("required_total_answer_records") or total_required)
+    passed = total_answer_records >= plan_required and not missing_answer_targets
+    return {
+        "checked": True,
+        "passed": passed,
+        "path": plan.get("path"),
+        "summary": (
+            "Phase 6 real answer targets have the required record count."
+            if passed
+            else "Phase 6 real answer targets are missing or incomplete."
+        ),
+        "required_total_answer_records": plan_required,
+        "answer_record_count": total_answer_records,
+        "missing_answer_targets": missing_answer_targets,
+        "studies": study_statuses,
+    }
 
 
 def _contract_scorecard(report: dict[str, Any]) -> list[dict[str, Any]]:

@@ -1128,6 +1128,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "mode": "phase6_real_human_study_collection_plan",
         "studies": {
             "whole_repo": {
+                "answer_target": str(tmp_path / "whole_answers.jsonl"),
+                "answer_template_records": 108,
                 "conduct_command": (
                     "uv run semantic-mirror review conduct-study "
                     f"{tmp_path / 'study'} --out {tmp_path / 'whole_answers.jsonl'} "
@@ -1149,7 +1151,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             "uv run semantic-mirror eval human-study-suite "
             f"--report {tmp_path / 'whole_eval.json'} --out {tmp_path / 'phase6_suite.json'}"
         ),
+        "required_total_answer_records": 108,
     }
+    _write_jsonl(tmp_path / "whole_answers.jsonl", [{"task_id": "one"}])
     (tmp_path / "phase6_collection_manifest.json").write_text(
         json.dumps(collection_plan, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1164,6 +1168,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         for action in planned_status["next_actions"]
         if action["title"] == "Run real Phase 6 collection and eval sequence"
     )
+    collection_status = planned_status["human_usefulness_status"][
+        "collection_plan_status"
+    ]
+    assert collection_status["checked"]
+    assert not collection_status["passed"]
+    assert collection_status["answer_record_count"] == 1
+    assert collection_status["required_total_answer_records"] == 108
+    assert collection_status["studies"]["whole_repo"]["answer_target_exists"]
     assert conduct_action["category"] == "human_study"
     assert conduct_action["launches_training"] is False
     assert "phase6_collection_manifest.json" in conduct_action["command"]
@@ -1312,6 +1324,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "smoke_chain",
         "wsl_smoke_chain",
     ]
+    assert cli_status_json["human_usefulness_status"]["collection_plan_status"][
+        "answer_record_count"
+    ] == 1
     refresh_action = next(
         action
         for action in cli_status_json["next_actions"]
@@ -1351,6 +1366,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
     assert "Run real Phase 6 collection and eval sequence" in contract_status_md
+    assert "### Collection Plan" in contract_status_md
+    assert "Answer records: `1/108`" in contract_status_md
     assert "whole_repo_coverage.json" in contract_status_md
     assert "real_timed_reviewer_logs" in contract_status_md
 
