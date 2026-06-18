@@ -8157,6 +8157,23 @@ def _phase6_collection_next_action(
         return None
     if not coverage_reports:
         return None
+    collection_plan_status = human_usefulness_status.get("collection_plan_status")
+    if not isinstance(collection_plan_status, dict):
+        collection_plan_status = {}
+    missing_answer_targets = list(
+        collection_plan_status.get("missing_answer_targets") or []
+    )
+    remaining_answer_records = collection_plan_status.get(
+        "remaining_total_answer_records"
+    )
+    if remaining_answer_records is None:
+        required_answer_records = _contract_summary_int(
+            collection_plan_status.get("required_total_answer_records")
+        )
+        answered_records = _contract_summary_int(
+            collection_plan_status.get("answer_record_count")
+        )
+        remaining_answer_records = max(required_answer_records - answered_records, 0)
     coverage_parent = None
     first_coverage_path = coverage_reports[0].get("path")
     if first_coverage_path:
@@ -8178,6 +8195,10 @@ def _phase6_collection_next_action(
                     "coverage, eval, and suite commands to replace template answers "
                     "with real timed reviewer logs and refreshed usefulness gates."
                 ),
+                "blocked_by_stages": [],
+                "stage_actions": {},
+                "missing_answer_targets": missing_answer_targets,
+                "remaining_answer_records": remaining_answer_records,
                 "command": f"# plan: {plan_path}\n{command}",
                 "windows_powershell_command": command,
             }
@@ -8205,6 +8226,10 @@ def _phase6_collection_next_action(
             "Human usefulness evidence is checked but failing; create a real timed "
             "reviewer-answer plan before re-running study-status and eval human-study."
         ),
+        "blocked_by_stages": [],
+        "stage_actions": {},
+        "missing_answer_targets": missing_answer_targets,
+        "remaining_answer_records": remaining_answer_records,
         "command": f"# from {package_root}\n{command}",
         "windows_powershell_command": _windows_wsl_command(package_root, command),
     }

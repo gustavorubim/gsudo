@@ -1361,6 +1361,8 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "required_inputs": action.get("required_inputs", []),
                     "optional_inputs": action.get("optional_inputs", []),
                     "stage_actions": action.get("stage_actions", {}),
+                    "missing_answer_targets": action.get("missing_answer_targets"),
+                    "remaining_answer_records": action.get("remaining_answer_records"),
                     "has_command": bool(action.get("command")),
                     "has_windows_powershell_command": bool(
                         action.get("windows_powershell_command")

@@ -1986,6 +1986,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert conduct_action["command_name"] == "phase6_collection_sequence"
     assert conduct_action["command_category"] == "human_study"
     assert conduct_action["launches_training"] is False
+    assert conduct_action["blocked_by_stages"] == []
+    assert conduct_action["stage_actions"] == {}
+    assert conduct_action["missing_answer_targets"] == []
+    assert conduct_action["remaining_answer_records"] == 107
     assert "phase6_collection_manifest.json" in conduct_action["command"]
     assert "review conduct-study" in conduct_action["command"]
     assert "review study-status" in conduct_action["command"]
@@ -2639,6 +2643,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["command_category"] == "human_study"
         and action["launches_training"] is False
         and action["has_command"] is True
+        and action["blocked_by_stages"] == []
+        and action["stage_actions"] == {}
+        and action["missing_answer_targets"] == []
+        and action["remaining_answer_records"] == 107
         and "real timed reviewer logs" in action["reason"]
         for action in cli_stdout["next_actions"]
     )
