@@ -4574,6 +4574,11 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "[string]$BaselineCandidates" in full_eval_preflight_ps
     assert "preflight_full_eval_inputs.ps1" in package_readme
     assert "-BaselineCandidates C:\\path\\to\\teacher_results\\teacher_candidates.jsonl" in package_readme
+    assert "bash launch/preflight_full_eval_inputs.sh" in full_eval_script
+    assert "Missing executable launch/preflight_full_eval_inputs.sh" in full_eval_script
+    assert full_eval_script.index("bash launch/preflight_full_eval_inputs.sh") < (
+        full_eval_script.index("train validate training --out outputs/validation_report.json")
+    )
     assert "eval candidates" in full_eval_script
     assert "eval model-compare" in full_eval_script
     assert "train validate training --out outputs/validation_report.json" in full_eval_script

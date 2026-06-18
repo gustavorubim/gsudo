@@ -3151,6 +3151,13 @@ PACKAGE_SOURCE_FRESHNESS="${PACKAGE_SOURCE_FRESHNESS:-source_freshness.json}"
 WINDOWS_AUDIT="${WINDOWS_AUDIT:-audit/current_environment.json}"
 WSL_SMOKE_MANIFEST="${WSL_SMOKE_MANIFEST:-outputs/smoke-chain-wsl/smoke_chain_manifest.json}"
 
+if [[ -x launch/preflight_full_eval_inputs.sh ]]; then
+  bash launch/preflight_full_eval_inputs.sh
+else
+  echo "Missing executable launch/preflight_full_eval_inputs.sh; cannot verify full-eval inputs before launch." >&2
+  exit 1
+fi
+
 if [[ -n "${SOURCE_FRESHNESS_REPO_ROOT:-}" ]]; then
   PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . \
     --repo-root "$SOURCE_FRESHNESS_REPO_ROOT" \
