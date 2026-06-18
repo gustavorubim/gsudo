@@ -1618,6 +1618,7 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         plan = []
     action_category_counts: dict[str, int] = {}
     blocked_stage_counts: dict[str, int] = {}
+    blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
     non_training_action_counts: dict[str, int] = {}
     next_action_command_counts: dict[str, int] = {}
     next_action_command_category_counts: dict[str, int] = {}
@@ -1659,6 +1660,20 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
             blocked_stage_counts[stage_name] = (
                 blocked_stage_counts.get(stage_name, 0) + 1
             )
+            stage_commands = blocked_stage_command_matrix.setdefault(stage_name, {})
+            command_counts = stage_commands.setdefault(
+                command_name,
+                {
+                    "total_items": 0,
+                    "launches_training_count": 0,
+                    "non_training_count": 0,
+                },
+            )
+            command_counts["total_items"] += 1
+            if item.get("next_action_launches_training"):
+                command_counts["launches_training_count"] += 1
+            else:
+                command_counts["non_training_count"] += 1
         if item.get("next_action_launches_training"):
             command_launches_training_count += 1
         else:
@@ -1699,6 +1714,13 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         },
         "blocked_stage_counts": {
             key: blocked_stage_counts[key] for key in sorted(blocked_stage_counts)
+        },
+        "blocked_stage_command_matrix": {
+            stage: {
+                command: blocked_stage_command_matrix[stage][command]
+                for command in sorted(blocked_stage_command_matrix[stage])
+            }
+            for stage in sorted(blocked_stage_command_matrix)
         },
         "non_training_action_counts": {
             key: non_training_action_counts[key]

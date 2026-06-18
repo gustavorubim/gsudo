@@ -859,6 +859,42 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         },
         "blocked_item_count": 10,
         "blocked_stage_counts": {"dpo": 7, "rl": 7},
+        "blocked_stage_command_matrix": {
+            "dpo": {
+                "contract_status": {
+                    "launches_training_count": 0,
+                    "non_training_count": 3,
+                    "total_items": 3,
+                },
+                "full_training_eval": {
+                    "launches_training_count": 3,
+                    "non_training_count": 0,
+                    "total_items": 3,
+                },
+                "report": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+            },
+            "rl": {
+                "contract_status": {
+                    "launches_training_count": 0,
+                    "non_training_count": 3,
+                    "total_items": 3,
+                },
+                "full_training_eval": {
+                    "launches_training_count": 3,
+                    "non_training_count": 0,
+                    "total_items": 3,
+                },
+                "report": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+            },
+        },
         "command_link_invalid_count": 0,
         "command_link_unchecked_count": 12,
         "command_link_valid_count": 0,
@@ -3549,6 +3585,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "timed-answer counts" in package_readme
     assert "remaining_recovery_plan" in package_readme
     assert "recovery_plan_summary" in package_readme
+    assert "blocked-stage command" in package_readme
+    assert "matrix" in package_readme
     assert "next_action_title" in package_readme
     assert "next_action_category" in package_readme
     assert "next_action_command_name" in package_readme
@@ -3568,6 +3606,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package_metadata_summary" in root_readme
     assert "next_action_summary" in root_readme
     assert "recovery_plan_summary" in root_readme
+    assert "blocked-stage command" in root_readme
+    assert "matrix" in root_readme
     assert "next_action_title" in root_readme
     assert "next_action_category" in root_readme
     assert "next_action_command_name" in root_readme

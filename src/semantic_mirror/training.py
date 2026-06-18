@@ -3509,8 +3509,8 @@ stage-derived eval and sample artifacts from missing reports: eval rows use
 `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
 `recovery_plan_summary` rolls the same rows up by action category, training
-dependency, command launch behavior, blocking stage, command-link validity, and
-next packaged command.
+dependency, command launch behavior, blocking stage, blocked-stage command
+matrix, command-link validity, and next packaged command.
 `outputs/contract_status.json` and `train contract-status` stdout are automation
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
@@ -6867,6 +6867,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Next action command category counts: `{json.dumps(recovery_summary.get('next_action_command_category_counts', {}), sort_keys=True)}`",
                     f"- Action category counts: `{json.dumps(recovery_summary.get('action_category_counts', {}), sort_keys=True)}`",
                     f"- Blocked stage counts: `{json.dumps(recovery_summary.get('blocked_stage_counts', {}), sort_keys=True)}`",
+                    f"- Blocked stage command matrix: `{json.dumps(recovery_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
                     f"- Non-training action counts: `{json.dumps(recovery_summary.get('non_training_action_counts', {}), sort_keys=True)}`",
                     "",
                     "| Gate | Action | Category | Next Action | Command | Command Link | Requires Training | Blocked By | Artifacts |",
@@ -7754,6 +7755,7 @@ def _recovery_plan_contract_summary(
 ) -> dict[str, Any]:
     action_category_counts: dict[str, int] = {}
     blocked_stage_counts: dict[str, int] = {}
+    blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
     non_training_action_counts: dict[str, int] = {}
     next_action_command_counts: dict[str, int] = {}
     next_action_command_category_counts: dict[str, int] = {}
@@ -7786,6 +7788,20 @@ def _recovery_plan_contract_summary(
             blocked_item_count += 1
         for stage in blocked_by:
             blocked_stage_counts[stage] = blocked_stage_counts.get(stage, 0) + 1
+            stage_commands = blocked_stage_command_matrix.setdefault(stage, {})
+            command_counts = stage_commands.setdefault(
+                command_name,
+                {
+                    "total_items": 0,
+                    "launches_training_count": 0,
+                    "non_training_count": 0,
+                },
+            )
+            command_counts["total_items"] += 1
+            if item.get("next_action_launches_training"):
+                command_counts["launches_training_count"] += 1
+            else:
+                command_counts["non_training_count"] += 1
         if item.get("next_action_launches_training"):
             command_launches_training_count += 1
         else:
@@ -7825,6 +7841,13 @@ def _recovery_plan_contract_summary(
         },
         "blocked_stage_counts": {
             key: blocked_stage_counts[key] for key in sorted(blocked_stage_counts)
+        },
+        "blocked_stage_command_matrix": {
+            stage: {
+                command: blocked_stage_command_matrix[stage][command]
+                for command in sorted(blocked_stage_command_matrix[stage])
+            }
+            for stage in sorted(blocked_stage_command_matrix)
         },
         "non_training_action_counts": {
             key: non_training_action_counts[key]
