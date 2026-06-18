@@ -1395,7 +1395,11 @@ def summarize_full_eval_contract_status(
         "diagnostics_status": diagnostics_status,
         "resume_inspection_status": resume_inspection_status,
         "stage_recovery_status": stage_recovery_status,
+        "stage_recovery_summary": _stage_recovery_contract_summary(
+            stage_recovery_status
+        ),
         "repo_hygiene_status": repo_hygiene_status,
+        "repo_hygiene_summary": _repo_hygiene_contract_summary(repo_hygiene_status),
         "windows_readiness_status": windows_readiness_status,
         "windows_readiness_summary": _windows_readiness_contract_summary(
             windows_readiness_status
@@ -1413,12 +1417,18 @@ def summarize_full_eval_contract_status(
             package_metadata_status
         ),
         "human_usefulness_status": human_usefulness_status,
+        "human_usefulness_summary": _human_usefulness_contract_summary(
+            human_usefulness_status
+        ),
         "next_actions": next_actions,
         "remaining_items": remaining_items,
         "remaining_by_area": _remaining_by_area(remaining_items),
         "remaining_recovery_plan": remaining_recovery_plan,
     }
     report["contract_scorecard"] = _contract_scorecard(report)
+    report["contract_scorecard_summary"] = _contract_scorecard_contract_summary(
+        report["contract_scorecard"]
+    )
     report["contract_reward_summary"] = _contract_reward_summary(report["contract_scorecard"])
     if out_path is not None:
         out = Path(out_path)
@@ -7557,6 +7567,52 @@ def _stage_evidence_summary(
     return summary
 
 
+def _contract_scorecard_contract_summary(
+    scorecard: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "area": row.get("area"),
+            "required": row.get("required"),
+            "passed": row.get("passed"),
+            "earned_reward": row.get("earned_reward"),
+            "max_reward": row.get("max_reward"),
+            "evidence": row.get("evidence"),
+        }
+        for row in scorecard
+    ]
+
+
+def _repo_hygiene_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "summary": status.get("summary"),
+        "tracked_change_count": len(status.get("tracked_changes", []) or []),
+        "untracked_count": len(status.get("untracked", []) or []),
+        "unexpected_ignored_count": len(status.get("ignored_unexpected", []) or []),
+    }
+
+
+def _stage_recovery_contract_summary(
+    status: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for stage, recovery in status.items():
+        if not isinstance(recovery, dict):
+            continue
+        summary[str(stage)] = {
+            "action": recovery.get("action"),
+            "requested_max_steps": recovery.get("requested_max_steps"),
+            "manifest_max_steps": recovery.get("manifest_max_steps"),
+            "latest_checkpoint_relative": recovery.get("latest_checkpoint_relative"),
+            "missing_current_artifact_count": len(
+                recovery.get("missing_current_artifacts", []) or []
+            ),
+        }
+    return summary
+
+
 def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
     return {
         "checked": status.get("checked", False),
@@ -7620,6 +7676,92 @@ def _package_metadata_contract_summary(status: dict[str, Any]) -> dict[str, Any]
         "excludes_python_3_14": status.get("excludes_python_3_14"),
         "summary": status.get("summary"),
     }
+
+
+def _human_usefulness_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
+    collection_plan = status.get("collection_plan_status")
+    if not isinstance(collection_plan, dict):
+        collection_plan = {}
+    collection_studies = collection_plan.get("studies")
+    if not isinstance(collection_studies, dict):
+        collection_studies = {}
+    required_phase6_gates = status.get("required_phase6_gates")
+    if not isinstance(required_phase6_gates, dict):
+        required_phase6_gates = {}
+    metrics = status.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    coverage_reports = status.get("coverage_reports")
+    if not isinstance(coverage_reports, list):
+        coverage_reports = []
+    answer_record_count = _contract_summary_int(
+        collection_plan.get("answer_record_count")
+    )
+    required_total_answer_records = _contract_summary_int(
+        collection_plan.get("required_total_answer_records")
+    )
+    remaining_total_answer_records = max(
+        required_total_answer_records - answer_record_count, 0
+    )
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "summary": status.get("summary"),
+        "failed_phase6_gates": [
+            gate for gate, passed in required_phase6_gates.items() if not passed
+        ],
+        "total_real_timed_answer_records": metrics.get(
+            "total_real_timed_answer_records"
+        ),
+        "total_valid_answer_records": metrics.get("total_valid_answer_records"),
+        "coverage_reports": [
+            {
+                "path": report.get("path"),
+                "passed": report.get("passed"),
+                "pending_task_count": report.get("pending_task_count"),
+                "real_timed_answer_records": report.get("real_timed_answer_records"),
+                "failed_gates": report.get("failed_gates", []),
+            }
+            for report in coverage_reports
+            if isinstance(report, dict)
+        ],
+        "collection_plan": {
+            "checked": collection_plan.get("checked", False),
+            "passed": collection_plan.get("passed"),
+            "answer_record_count": answer_record_count,
+            "required_total_answer_records": required_total_answer_records,
+            "remaining_total_answer_records": remaining_total_answer_records,
+            "complete": remaining_total_answer_records == 0,
+            "missing_answer_targets": collection_plan.get("missing_answer_targets", []),
+            "studies": {
+                str(label): _human_usefulness_study_contract_summary(study)
+                for label, study in collection_studies.items()
+                if isinstance(study, dict)
+            },
+        },
+    }
+
+
+def _human_usefulness_study_contract_summary(
+    study: dict[str, Any],
+) -> dict[str, Any]:
+    answer_records = _contract_summary_int(study.get("answer_records"))
+    required_answer_records = _contract_summary_int(study.get("required_answer_records"))
+    remaining_answer_records = max(required_answer_records - answer_records, 0)
+    return {
+        "answer_records": answer_records,
+        "required_answer_records": required_answer_records,
+        "remaining_answer_records": remaining_answer_records,
+        "complete": remaining_answer_records == 0,
+        "answer_target_exists": study.get("answer_target_exists"),
+        "answer_target": study.get("answer_target"),
+        "coverage_report": study.get("coverage_report"),
+        "eval_report": study.get("eval_report"),
+    }
+
+
+def _contract_summary_int(value: Any) -> int:
+    return value if isinstance(value, int) else 0
 
 
 def _remaining_by_area(remaining_items: list[dict[str, Any]]) -> dict[str, list[str]]:

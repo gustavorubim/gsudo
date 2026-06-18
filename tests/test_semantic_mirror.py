@@ -1611,6 +1611,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_status_json = json.loads(
         (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
     )
+    saved_scorecard = {
+        row["area"]: row for row in cli_status_json["contract_scorecard_summary"]
+    }
+    assert saved_scorecard["repo_hygiene"]["passed"] is False
+    assert saved_scorecard["windows_unsloth_readiness"]["earned_reward"] == 65
+    assert cli_status_json["repo_hygiene_summary"]["tracked_change_count"] == 1
+    assert cli_status_json["repo_hygiene_summary"]["untracked_count"] == 2
     assert cli_status_json["windows_readiness_summary"]["passed"] is True
     assert cli_status_json["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
@@ -1633,6 +1640,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_status_json["package_metadata_status"]["passed"]
     assert cli_status_json["package_metadata_summary"]["requires_python"] == ">=3.11,<3.14"
     assert cli_status_json["package_metadata_status"]["requires_python"] == ">=3.11,<3.14"
+    assert cli_status_json["human_usefulness_summary"]["collection_plan"][
+        "remaining_total_answer_records"
+    ] == 107
+    assert cli_status_json["human_usefulness_summary"]["coverage_reports"][0][
+        "failed_gates"
+    ] == ["answer_task_id_coverage", "real_timed_reviewer_logs"]
+    assert cli_status_json["stage_recovery_summary"]["dpo"]["action"] == "resume"
+    assert cli_status_json["stage_recovery_summary"]["rl"][
+        "missing_current_artifact_count"
+    ] >= 1
     assert cli_status_json["human_usefulness_status"]["collection_plan_status"][
         "answer_record_count"
     ] == 1
