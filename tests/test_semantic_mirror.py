@@ -1047,6 +1047,42 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         for action in status["next_actions"]
     )
     assert status["next_action_summary"] == {
+        "blocked_stage_command_matrix": {
+            "dpo": {
+                "contract_status": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+                "full_training_eval": {
+                    "launches_training_count": 1,
+                    "non_training_count": 0,
+                    "total_items": 1,
+                },
+                "report": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+            },
+            "rl": {
+                "contract_status": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+                "full_training_eval": {
+                    "launches_training_count": 1,
+                    "non_training_count": 0,
+                    "total_items": 1,
+                },
+                "report": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+            },
+        },
         "command_category_counts": {
             "diagnostics": 1,
             "inspection": 1,
@@ -1945,6 +1981,42 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         for action in cli_stdout["next_actions"]
     )
     assert cli_stdout["next_action_summary"] == {
+        "blocked_stage_command_matrix": {
+            "dpo": {
+                "contract_status": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+                "full_training_eval": {
+                    "launches_training_count": 1,
+                    "non_training_count": 0,
+                    "total_items": 1,
+                },
+                "report": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+            },
+            "rl": {
+                "contract_status": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+                "full_training_eval": {
+                    "launches_training_count": 1,
+                    "non_training_count": 0,
+                    "total_items": 1,
+                },
+                "report": {
+                    "launches_training_count": 0,
+                    "non_training_count": 1,
+                    "total_items": 1,
+                },
+            },
+        },
         "command_category_counts": {
             "diagnostics": 1,
             "human_study": 1,
@@ -3572,6 +3644,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "contract_scorecard_summary" in package_readme
     assert "stage_recovery_summary" in package_readme
     assert "next_action_summary" in package_readme
+    assert "current next-action set" in package_readme
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
@@ -3605,6 +3678,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "The JSON keeps full `next_actions` commands" in root_readme
     assert "package_metadata_summary" in root_readme
     assert "next_action_summary" in root_readme
+    assert "current next-action set" in root_readme
     assert "recovery_plan_summary" in root_readme
     assert "blocked-stage command" in root_readme
     assert "matrix" in root_readme

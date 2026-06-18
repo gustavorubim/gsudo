@@ -310,7 +310,7 @@ package evidence repairs from training work. Next-action rows also expose
 callers can route WSL smoke, DPO resume, RL launch, diagnostics, and
 status-refresh work without parsing prose. The status JSON and stdout also
 include `next_action_summary` counts by command, command category, and launch
-behavior.
+behavior, plus a blocked-stage command matrix for the current next-action set.
 Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
@@ -446,6 +446,8 @@ stdout is the compact pass/fail summary for callers. Both include
 `human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`, and
 `remaining_recovery_plan`, plus `recovery_plan_summary` for category, blocker,
 blocked-stage command matrix, command-link, command-launch, and next-command counts.
+`next_action_summary` also includes a blocked-stage command matrix for the
+currently recommended next actions.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,

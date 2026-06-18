@@ -1734,6 +1734,7 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         actions = []
     command_counts: dict[str, int] = {}
     command_category_counts: dict[str, int] = {}
+    blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
     launches_training_count = 0
     non_training_count = 0
     missing_command_metadata_count = 0
@@ -1742,7 +1743,8 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         if not isinstance(action, dict):
             continue
         total_items += 1
-        if action.get("launches_training"):
+        launches_training = bool(action.get("launches_training"))
+        if launches_training:
             launches_training_count += 1
         else:
             non_training_count += 1
@@ -1756,6 +1758,25 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         command_category_counts[category_key] = (
             command_category_counts.get(category_key, 0) + 1
         )
+        blocked_by = action.get("blocked_by_stages")
+        if not isinstance(blocked_by, list):
+            blocked_by = []
+        for stage in blocked_by:
+            stage_key = str(stage)
+            stage_commands = blocked_stage_command_matrix.setdefault(stage_key, {})
+            stage_command_counts = stage_commands.setdefault(
+                command_key,
+                {
+                    "total_items": 0,
+                    "launches_training_count": 0,
+                    "non_training_count": 0,
+                },
+            )
+            stage_command_counts["total_items"] += 1
+            if launches_training:
+                stage_command_counts["launches_training_count"] += 1
+            else:
+                stage_command_counts["non_training_count"] += 1
     return {
         "total_items": total_items,
         "launches_training_count": launches_training_count,
@@ -1767,6 +1788,13 @@ def _next_action_summary(actions: object) -> dict[str, object]:
         "command_category_counts": {
             key: command_category_counts[key]
             for key in sorted(command_category_counts)
+        },
+        "blocked_stage_command_matrix": {
+            stage: {
+                command: blocked_stage_command_matrix[stage][command]
+                for command in sorted(blocked_stage_command_matrix[stage])
+            }
+            for stage in sorted(blocked_stage_command_matrix)
         },
     }
 

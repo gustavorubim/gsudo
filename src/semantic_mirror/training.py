@@ -3518,7 +3518,8 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`,
 `remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
-presence flags for safer automation summaries. These surfaces include
+presence flags for safer automation summaries. `next_action_summary` also includes
+a blocked-stage command matrix for the current next-action set. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
 per-action `command_name`, `command_category`, `blocked_by_stages`, and
 `stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
@@ -6933,6 +6934,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- Missing command metadata: `{next_action_summary.get('missing_command_metadata_count', 0)}`",
                 f"- Command counts: `{json.dumps(next_action_summary.get('command_counts', {}), sort_keys=True)}`",
                 f"- Command category counts: `{json.dumps(next_action_summary.get('command_category_counts', {}), sort_keys=True)}`",
+                f"- Blocked stage command matrix: `{json.dumps(next_action_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
                 "",
             ]
         )
@@ -7859,11 +7861,13 @@ def _recovery_plan_contract_summary(
 def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, Any]:
     command_counts: dict[str, int] = {}
     command_category_counts: dict[str, int] = {}
+    blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
     launches_training_count = 0
     non_training_count = 0
     missing_command_metadata_count = 0
     for action in actions:
-        if action.get("launches_training"):
+        launches_training = bool(action.get("launches_training"))
+        if launches_training:
             launches_training_count += 1
         else:
             non_training_count += 1
@@ -7877,6 +7881,22 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
         command_category_counts[category_key] = (
             command_category_counts.get(category_key, 0) + 1
         )
+        for stage in action.get("blocked_by_stages", []) or []:
+            stage_key = str(stage)
+            stage_commands = blocked_stage_command_matrix.setdefault(stage_key, {})
+            stage_command_counts = stage_commands.setdefault(
+                command_key,
+                {
+                    "total_items": 0,
+                    "launches_training_count": 0,
+                    "non_training_count": 0,
+                },
+            )
+            stage_command_counts["total_items"] += 1
+            if launches_training:
+                stage_command_counts["launches_training_count"] += 1
+            else:
+                stage_command_counts["non_training_count"] += 1
     return {
         "total_items": len(actions),
         "launches_training_count": launches_training_count,
@@ -7888,6 +7908,13 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
         "command_category_counts": {
             key: command_category_counts[key]
             for key in sorted(command_category_counts)
+        },
+        "blocked_stage_command_matrix": {
+            stage: {
+                command: blocked_stage_command_matrix[stage][command]
+                for command in sorted(blocked_stage_command_matrix[stage])
+            }
+            for stage in sorted(blocked_stage_command_matrix)
         },
     }
 
