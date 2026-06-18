@@ -431,14 +431,15 @@ The saved `contract_status.json` is the durable automation surface, and command
 stdout is the compact pass/fail summary for callers. Both include
 `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
-`package_command_manifest_summary`, `human_usefulness_summary`,
-`stage_recovery_summary`, `remaining_by_area`, and `remaining_recovery_plan`.
+`package_command_manifest_summary`, `package_metadata_summary`,
+`human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`, and
+`remaining_recovery_plan`.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, Phase 6 failed gates, real timed-answer counts,
-package source freshness, and command-manifest safety checks so automation can
-decide whether the next step is inspection, human study collection, status
-refresh, or a training launch. Use
+package source freshness, command-manifest safety checks, and package Python
+metadata so automation can decide whether the next step is inspection, human
+study collection, status refresh, or a training launch. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired

@@ -3207,6 +3207,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         root_readme
     )
     assert "The JSON keeps full `next_actions` commands" in root_readme
+    assert "package_metadata_summary" in root_readme
+    assert "package Python" in root_readme
+    assert "metadata so automation can decide" in root_readme
     assert "generate_eval_report_after_stage" in root_readme
     assert "generate_sample_inspection_after_stage" in root_readme
     assert (
