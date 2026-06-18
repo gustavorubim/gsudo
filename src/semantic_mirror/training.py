@@ -836,6 +836,7 @@ def package_training_bundle(
         "full_training_eval_launcher": "launch/run_full_training_eval.sh",
         "full_training_eval_resume_inspector": "launch/inspect_full_training_eval_resume.sh",
         "full_training_eval_input_preflight": "launch/preflight_full_eval_inputs.sh",
+        "full_training_eval_input_preflight_windows": "launch/preflight_full_eval_inputs.ps1",
         "smoke_chain_launcher": "launch/run_smoke_chain.sh",
         "wsl_smoke_input_preflight": "launch/preflight_wsl_smoke_inputs.ps1",
         "wsl_smoke_chain_launcher": "launch/run_wsl_smoke_chain.ps1",
@@ -2263,9 +2264,9 @@ def _package_launch_commands() -> dict[str, str]:
             "bash launch/run_full_training_eval.sh"
         ),
         "preflight_full_eval_inputs": (
-            "HELD_OUT_DATASET=<dataset_dir> "
-            "BASELINE_CANDIDATES=<teacher_results_dir>/teacher_candidates.jsonl "
-            "bash launch/preflight_full_eval_inputs.sh"
+            "powershell -ExecutionPolicy Bypass -File launch/preflight_full_eval_inputs.ps1 "
+            "-HeldOutDataset <windows_dataset_dir> "
+            "-BaselineCandidates <windows_baseline_candidates_jsonl>"
         ),
         "inspect_full_training_eval_resume": (
             "SFT_MAX_STEPS=300 DPO_MAX_STEPS=120 RL_MAX_STEPS=120 "
@@ -2732,6 +2733,66 @@ print(json.dumps(report, indent=2, sort_keys=True))
 if issues:
     raise SystemExit(2)
 PY
+""",
+        "preflight_full_eval_inputs.ps1": """param(
+  [Parameter(Mandatory = $true)]
+  [string]$HeldOutDataset,
+  [Parameter(Mandatory = $true)]
+  [string]$BaselineCandidates,
+  [string]$Out = "outputs/preflight/full_eval_inputs.json"
+)
+
+$ErrorActionPreference = "Stop"
+$issues = New-Object System.Collections.Generic.List[string]
+try {
+  $datasetPath = (Resolve-Path $HeldOutDataset -ErrorAction Stop).Path
+} catch {
+  $datasetPath = $HeldOutDataset
+  $issues.Add("held_out_dataset does not exist: $HeldOutDataset")
+}
+if ($issues.Count -eq 0) {
+  $datasetItem = Get-Item -LiteralPath $datasetPath
+  if (-not $datasetItem.PSIsContainer) {
+    $issues.Add("held_out_dataset is not a directory: $datasetPath")
+  }
+  $manifest = Join-Path $datasetPath "manifest.json"
+  if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+    $issues.Add("held_out_dataset missing manifest.json: $manifest")
+  }
+} else {
+  $manifest = Join-Path $datasetPath "manifest.json"
+}
+try {
+  $baselinePath = (Resolve-Path $BaselineCandidates -ErrorAction Stop).Path
+} catch {
+  $baselinePath = $BaselineCandidates
+  $issues.Add("baseline_candidates does not exist: $BaselineCandidates")
+}
+if (Test-Path -LiteralPath $baselinePath) {
+  $baselineItem = Get-Item -LiteralPath $baselinePath
+  if ($baselineItem.PSIsContainer) {
+    $issues.Add("baseline_candidates is not a file: $baselinePath")
+  } elseif ($baselineItem.Length -eq 0) {
+    $issues.Add("baseline_candidates is empty: $baselinePath")
+  }
+}
+$outPath = Join-Path (Get-Location).Path $Out
+$outDir = Split-Path -Parent $outPath
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+$report = [ordered]@{
+  mode = "full_eval_input_preflight"
+  passed = ($issues.Count -eq 0)
+  held_out_dataset = $datasetPath
+  held_out_manifest = $manifest
+  baseline_candidates = $baselinePath
+  issues = @($issues)
+}
+$json = $report | ConvertTo-Json -Depth 5
+Set-Content -LiteralPath $outPath -Value $json -Encoding UTF8
+Write-Output $json
+if ($issues.Count -ne 0) {
+  exit 2
+}
 """,
         "run_smoke_chain.sh": """#!/usr/bin/env bash
 set -euo pipefail
@@ -3798,7 +3859,16 @@ HELD_OUT_REPO=/path/to/held-out/repo bash launch/score_candidates.sh
 Run the full training and model-gate sequence when a held-out dataset and a
 baseline candidate JSONL are available. `semantic-mirror teacher ingest` writes
 `teacher_candidates.jsonl`, which can be used as `BASELINE_CANDIDATES` when the
-teacher run covered the same held-out units:
+teacher run covered the same held-out units. The PowerShell preflight validates
+the concrete Windows paths without launching WSL or training:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File launch/preflight_full_eval_inputs.ps1 `
+  -HeldOutDataset C:\\path\\to\\heldout_dataset `
+  -BaselineCandidates C:\\path\\to\\teacher_results\\teacher_candidates.jsonl
+```
+
+Linux and WSL operators can run the equivalent shell preflight:
 
 ```bash
 HELD_OUT_DATASET=/path/to/heldout_dataset \

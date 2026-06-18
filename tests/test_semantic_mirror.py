@@ -1995,7 +1995,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "dpo": "bash launch/run_dpo.sh",
         "rl": "bash launch/run_rl.sh",
             "full_training_eval": "bash launch/run_full_training_eval.sh",
-            "preflight_full_eval_inputs": "bash launch/preflight_full_eval_inputs.sh",
+            "preflight_full_eval_inputs": (
+                "powershell -File launch/preflight_full_eval_inputs.ps1"
+            ),
             "smoke_chain": "bash launch/run_smoke_chain.sh",
         "inspect_full_training_eval_resume": "bash launch/inspect_full_training_eval_resume.sh",
         "inspect_resume": "PYTHONPATH=src python -m semantic_mirror.cli train inspect-resume outputs",
@@ -4195,7 +4197,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert manifest_commands["report"]["category"] == "diagnostics"
     assert manifest_commands["report"]["launches_training"] is False
     assert "run_full_training_eval.sh" in commands["full_training_eval"]
-    assert "preflight_full_eval_inputs.sh" in commands["preflight_full_eval_inputs"]
+    assert "preflight_full_eval_inputs.ps1" in commands["preflight_full_eval_inputs"]
+    assert "-BaselineCandidates <windows_baseline_candidates_jsonl>" in commands[
+        "preflight_full_eval_inputs"
+    ]
     assert "run_smoke_chain.sh" in commands["smoke_chain"]
     assert "run_wsl_smoke_chain.ps1" in commands["wsl_smoke_chain"]
     assert "preflight_wsl_smoke_inputs.ps1" in commands["preflight_wsl_smoke_inputs"]
@@ -4291,6 +4296,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         package_manifest["files"]["full_training_eval_input_preflight"]
         == "launch/preflight_full_eval_inputs.sh"
     )
+    assert (
+        package_manifest["files"]["full_training_eval_input_preflight_windows"]
+        == "launch/preflight_full_eval_inputs.ps1"
+    )
     assert package_manifest["files"]["launch_command_manifest"] == "launch/commands_manifest.json"
     assert (
         package_manifest["launch_command_manifest"]["commands"]["full_training_eval"][
@@ -4316,6 +4325,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert (bundle_out / "launch" / "preflight_wsl_smoke_inputs.ps1").exists()
     assert (bundle_out / "launch" / "run_wsl_smoke_chain.ps1").exists()
     assert (bundle_out / "launch" / "preflight_full_eval_inputs.sh").exists()
+    assert (bundle_out / "launch" / "preflight_full_eval_inputs.ps1").exists()
     assert (bundle_out / "launch" / "run_full_training_eval.sh").exists()
     for shell_script in [
         bundle_out / "setup" / "bootstrap_linux_cuda.sh",
@@ -4407,6 +4417,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     full_eval_preflight_script = (
         bundle_out / "launch" / "preflight_full_eval_inputs.sh"
     ).read_text(encoding="utf-8")
+    full_eval_preflight_ps = (
+        bundle_out / "launch" / "preflight_full_eval_inputs.ps1"
+    ).read_text(encoding="utf-8")
     resume_inspector = (
         bundle_out / "launch" / "inspect_full_training_eval_resume.sh"
     ).read_text(encoding="utf-8")
@@ -4417,6 +4430,12 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "full_eval_input_preflight" in full_eval_preflight_script
     assert "baseline_candidates is empty" in full_eval_preflight_script
     assert "outputs/preflight/full_eval_inputs.json" in full_eval_preflight_script
+    assert "full_eval_input_preflight" in full_eval_preflight_ps
+    assert "baseline_candidates is empty" in full_eval_preflight_ps
+    assert "outputs/preflight/full_eval_inputs.json" in full_eval_preflight_ps
+    assert "[string]$BaselineCandidates" in full_eval_preflight_ps
+    assert "preflight_full_eval_inputs.ps1" in package_readme
+    assert "-BaselineCandidates C:\\path\\to\\teacher_results\\teacher_candidates.jsonl" in package_readme
     assert "eval candidates" in full_eval_script
     assert "eval model-compare" in full_eval_script
     assert "train validate training --out outputs/validation_report.json" in full_eval_script
