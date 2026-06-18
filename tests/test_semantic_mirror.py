@@ -1113,6 +1113,18 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert diagnostic_item["actual"]["foreign_source_file_examples"]
     assert diagnostic_item["actual"]["stale_or_missing_stages"] == ["dpo", "rl"]
     assert status["resume_inspection_status"]["exists"]
+    assert status["resume_inspection_status"]["mode_valid"]
+    assert status["resume_inspection_status"]["current_for_requested_steps"]
+    assert status["resume_inspection_status"]["requested_step_matches"] == {
+        "dpo": True,
+        "rl": True,
+        "sft": True,
+    }
+    assert status["resume_inspection_status"]["decision_requested_step_matches"] == {
+        "dpo": True,
+        "rl": True,
+        "sft": True,
+    }
     assert status["resume_inspection_status"]["decisions"]["sft"]["action"] == "reuse"
     assert status["resume_inspection_status"]["decisions"]["dpo"]["action"] == "resume"
     assert status["resume_inspection_status"]["decisions"]["rl"]["action"] == "run"
@@ -1317,6 +1329,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         in status_markdown
     )
     assert "## Resume Inspection" in status_markdown
+    assert "- Mode valid: `True`" in status_markdown
+    assert "- Current for requested steps: `True`" in status_markdown
+    assert (
+        '- Requested step matches: `{"dpo": true, "rl": true, "sft": true}`'
+        in status_markdown
+    )
+    assert (
+        '- Decision requested step matches: `{"dpo": true, "rl": true, "sft": true}`'
+        in status_markdown
+    )
     assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
     assert "## Next Actions" in status_markdown
     assert "Resume full eval through DPO and RL" in status_markdown

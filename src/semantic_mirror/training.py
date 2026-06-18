@@ -1173,7 +1173,8 @@ def summarize_full_eval_contract_status(
         if not stage_status[stage]["manifest_matches_requested_max_steps"]
     ]
     resume_inspection_status = _resume_inspection_contract_status(
-        run / "full_training_eval_resume_inspection.json"
+        run / "full_training_eval_resume_inspection.json",
+        requested_steps=requested_steps,
     )
     stage_recovery_status = _stage_recovery_contract_status(
         run=run,
@@ -7052,6 +7053,10 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 "## Resume Inspection",
                 "",
                 f"- Evidence: `{resume_status['path']}`",
+                f"- Mode valid: `{resume_status.get('mode_valid')}`",
+                f"- Current for requested steps: `{resume_status.get('current_for_requested_steps')}`",
+                f"- Requested step matches: `{json.dumps(resume_status.get('requested_step_matches') or {}, sort_keys=True)}`",
+                f"- Decision requested step matches: `{json.dumps(resume_status.get('decision_requested_step_matches') or {}, sort_keys=True)}`",
                 f"- Reuse enabled: `{resume_status['reuse_stage_outputs_enabled']}`",
                 "",
                 "| Stage | Action | Requested | Manifest | Checkpoint | Reason |",
@@ -9871,16 +9876,52 @@ def _path_match_tokens(path: Path) -> list[str]:
     return sorted(tokens)
 
 
-def _resume_inspection_contract_status(path: Path) -> dict[str, Any]:
+def _resume_inspection_contract_status(
+    path: Path,
+    *,
+    requested_steps: dict[str, int | None],
+) -> dict[str, Any]:
     inspection = _read_json_file(path)
     decisions = inspection.get("decisions", {}) if isinstance(inspection, dict) else {}
+    inspection_requested = (
+        inspection.get("requested_max_steps") if isinstance(inspection, dict) else None
+    )
+    requested_step_matches = {
+        stage: (
+            isinstance(inspection_requested, dict)
+            and inspection_requested.get(stage) == requested_steps.get(stage)
+        )
+        for stage in ("sft", "dpo", "rl")
+    }
+    decision_requested_step_matches = {
+        stage: (
+            isinstance(decisions, dict)
+            and isinstance(decisions.get(stage), dict)
+            and decisions[stage].get("requested_max_steps") == requested_steps.get(stage)
+        )
+        for stage in ("sft", "dpo", "rl")
+    }
+    mode_valid = (
+        isinstance(inspection, dict)
+        and inspection.get("mode") == "full_training_eval_resume_inspection"
+    )
+    current_for_requested_steps = (
+        mode_valid
+        and all(requested_step_matches.values())
+        and all(decision_requested_step_matches.values())
+    )
     return {
         "path": str(path),
         "exists": isinstance(inspection, dict),
         "mode": inspection.get("mode") if isinstance(inspection, dict) else None,
-        "requested_max_steps": (
-            inspection.get("requested_max_steps") if isinstance(inspection, dict) else None
-        ),
+        "mode_valid": mode_valid,
+        "requested_max_steps": inspection_requested,
+        "expected_requested_max_steps": {
+            stage: requested_steps.get(stage) for stage in ("sft", "dpo", "rl")
+        },
+        "requested_step_matches": requested_step_matches,
+        "decision_requested_step_matches": decision_requested_step_matches,
+        "current_for_requested_steps": current_for_requested_steps,
         "reuse_stage_outputs_enabled": (
             inspection.get("reuse_stage_outputs_enabled")
             if isinstance(inspection, dict)
