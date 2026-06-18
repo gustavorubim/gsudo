@@ -1416,6 +1416,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["package_source_summary"]["passed"] is True
     assert cli_stdout["package_source_summary"]["git_commit_matches_repo"] is True
     assert cli_stdout["package_source_summary"]["compared_file_count"] == 2
+    assert cli_stdout["package_source_summary"]["all_package_specific_docs_present"]
+    assert cli_stdout["package_source_summary"]["missing_package_specific_doc_count"] == 0
     assert cli_stdout["package_command_manifest_summary"]["passed"] is True
     assert cli_stdout["package_command_manifest_summary"]["training_command_count"] == 6
     assert cli_stdout["package_metadata_summary"]["passed"] is True

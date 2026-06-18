@@ -1419,6 +1419,12 @@ def _package_source_summary(status: object) -> dict[str, object]:
         "git_commit_matches_repo": status.get("git_commit_matches_repo"),
         "compared_file_count": status.get("compared_file_count"),
         "mismatched_file_count": len(status.get("mismatched_files", []) or []),
+        "all_package_specific_docs_present": status.get(
+            "all_package_specific_docs_present"
+        ),
+        "missing_package_specific_doc_count": len(
+            status.get("missing_package_specific_docs", []) or []
+        ),
         "summary": status.get("summary"),
     }
 
