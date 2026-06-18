@@ -3396,6 +3396,10 @@ SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
 status JSON includes `remaining_recovery_plan`, and the Markdown includes a
 `Recovery Plan` table mapping each failed gate to the required action, whether
 training is required, blocking stages, and target artifacts. The
+recovery plan distinguishes stale stage-derived eval and sample artifacts from
+missing reports: eval rows use `generate_eval_report_after_stage`, sample rows
+use `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
+stage that must be completed before those artifacts are current.
 `train contract-status` stdout is also an automation surface: it includes
 `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
