@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 import json
+import os
 import platform
 import shutil
+import struct
 import subprocess
 import sys
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from semantic_mirror.schema import DATA_ML_DETAIL_CATEGORIES
+from semantic_mirror.schema import (
+    DATA_ML_DETAIL_CATEGORIES,
+    SchemaValidationError,
+    validate_unit,
+)
 
 TRAINING_VERSION = "0.1.0"
-DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
+DEFAULT_BASE_MODEL = "unsloth/Qwen3.5-4B"
 REQUIRED_TRAINING_MODULES = (
     "torch",
     "unsloth",
@@ -24,10 +32,14 @@ REQUIRED_TRAINING_MODULES = (
     "datasets",
     "transformers",
     "bitsandbytes",
+    "peft",
+)
+OPTIONAL_TRAINING_MODULES = (
     "mergekit",
     "llm_blender",
     "weave",
 )
+AUDITED_TRAINING_MODULES = REQUIRED_TRAINING_MODULES + OPTIONAL_TRAINING_MODULES
 UNSLOTH_PYTHON_MIN = (3, 11)
 UNSLOTH_PYTHON_MAX_EXCLUSIVE = (3, 14)
 UNSLOTH_PYTHON_RANGE = ">=3.11,<3.14"
@@ -52,6 +64,49 @@ COMPACT_FACT_LIMITS = {
 }
 COMPACT_DATA_ML_LIMIT = 1
 COMPACT_CODE_CHARS = 240
+SIR_UNIT_TOP_LEVEL_KEYS = (
+    "unit_id",
+    "source_spans",
+    "language",
+    "symbol_type",
+    "name",
+    "qualified_name",
+    "algorithm",
+    "control_flow",
+    "reads",
+    "writes",
+    "calls",
+    "returns",
+    "side_effects",
+    "failure_modes",
+    "state_mutations",
+    "external_dependencies",
+    "data_ml_details",
+    "hazards",
+    "uncertainty",
+    "confidence",
+)
+SIR_IDENTITY_FIELDS = (
+    "unit_id",
+    "language",
+    "symbol_type",
+    "name",
+    "qualified_name",
+    "source_spans",
+)
+SIR_LIST_FIELDS = (
+    "control_flow",
+    "reads",
+    "writes",
+    "calls",
+    "returns",
+    "side_effects",
+    "failure_modes",
+    "state_mutations",
+    "external_dependencies",
+    "hazards",
+    "uncertainty",
+)
 
 
 def prepare_training_data(
@@ -151,8 +206,8 @@ def prepare_training_data(
             "reward_script": "score_sir_candidates.py",
         },
         "training_defaults": {
-            "method": "QLoRA",
-            "target_model_size": "7-14B",
+            "method": sft_config["method"],
+            "target_model_size": sft_config["model_size_target"],
             "faithfulness_priority": "preserve required static facts before compactness",
         },
         "teacher_results": None if teacher_results is None else str(teacher_results),
@@ -223,6 +278,7 @@ def audit_training_environment(
     env_file: Path | str | None = None,
     require_gpu: bool = True,
     require_hf_token: bool = False,
+    python_executable: str | None = None,
     module_probe: ModuleProbe | None = None,
     torch_probe: TorchProbe | None = None,
     nvidia_smi_runner: NvidiaSmiRunner | None = None,
@@ -234,12 +290,33 @@ def audit_training_environment(
 
     root = Path(training_path).resolve()
     validation = validate_training_batch(root)
+    runtime_probe = (
+        _probe_python_runtime(python_executable, AUDITED_TRAINING_MODULES)
+        if python_executable is not None
+        and module_probe is None
+        and torch_probe is None
+        and python_version is None
+        else None
+    )
+    if runtime_probe is not None:
+        module_details = runtime_probe["module_details"]
+        torch_info = runtime_probe["torch"]
+    else:
+        module_details = {
+            module: _module_detail(module, module_probe=module_probe)
+            for module in REQUIRED_TRAINING_MODULES
+            + OPTIONAL_TRAINING_MODULES
+        }
+        torch_info = _probe_torch(torch_probe=torch_probe)
     module_status = {
-        module: _module_available(module, module_probe=module_probe)
-        for module in REQUIRED_TRAINING_MODULES
+        module: bool(details.get("importable")) for module, details in module_details.items()
     }
-    missing_modules = [module for module, available in module_status.items() if not available]
-    torch_info = _probe_torch(torch_probe=torch_probe)
+    missing_modules = [
+        module for module in REQUIRED_TRAINING_MODULES if not module_status.get(module)
+    ]
+    missing_optional_modules = [
+        module for module in OPTIONAL_TRAINING_MODULES if not module_status.get(module)
+    ]
     nvidia_smi = _probe_nvidia_smi(nvidia_smi_runner=nvidia_smi_runner)
     env, loaded_env_path = (
         (dict(env_values), None)
@@ -251,10 +328,33 @@ def audit_training_environment(
         "wandb_api_key_present": bool(env.get("WANDB_API_KEY")),
     }
     current_platform = platform_name or platform.system()
-    current_python_version = python_version or platform.python_version()
+    current_python_version = (
+        python_version
+        or (runtime_probe or {}).get("python_version")
+        or platform.python_version()
+    )
+    runtime_python_executable = (
+        (runtime_probe or {}).get("python_executable")
+        or python_executable
+        or sys.executable
+    )
     python_supported = _python_version_supported_for_unsloth(current_python_version)
 
-    checks = [
+    checks = []
+    if python_executable is not None:
+        checks.append(
+            _check(
+                "python_executable_probe",
+                bool((runtime_probe or {}).get("ok", False)),
+                required=True,
+                actual={
+                    "python_executable": python_executable,
+                    "probe_error": (runtime_probe or {}).get("probe_error"),
+                },
+                detail="The requested training Python executable can run the runtime probe.",
+            )
+        )
+    checks.extend([
         _check(
             "training_batch_valid",
             validation["passed"],
@@ -279,11 +379,26 @@ def audit_training_environment(
             "required_training_modules",
             not missing_modules,
             required=True,
-            actual={"missing": missing_modules, "available": module_status},
+            actual={
+                "missing": missing_modules,
+                "available": module_status,
+                "details": module_details,
+            },
             detail=(
                 "Unsloth, TRL, DPO optional dependencies, datasets, transformers, "
-                "torch, and bitsandbytes are importable."
+                "torch, bitsandbytes, and peft are importable."
             ),
+        ),
+        _check(
+            "optional_training_modules",
+            not missing_optional_modules,
+            required=False,
+            actual={
+                "missing": missing_optional_modules,
+                "available": module_status,
+                "details": module_details,
+            },
+            detail="Optional merge/eval/telemetry helpers are importable when available.",
         ),
         _check(
             "torch_importable",
@@ -300,8 +415,10 @@ def audit_training_environment(
                 "cuda_available": torch_info.get("cuda_available"),
                 "device_count": torch_info.get("device_count"),
                 "cuda_version": torch_info.get("cuda_version"),
+                "bf16_supported": torch_info.get("bf16_supported"),
+                "error": torch_info.get("error"),
             },
-            detail="CUDA is required for the default 7-14B QLoRA training target.",
+            detail="CUDA is required for the default Qwen3-family LoRA training target.",
         ),
         _check(
             "hf_token_available",
@@ -310,7 +427,7 @@ def audit_training_environment(
             actual={"present": secrets["hf_token_present"]},
             detail="A Hugging Face token is available for model or dataset downloads.",
         ),
-    ]
+    ])
     if current_platform == "Windows":
         checks.append(
             _check(
@@ -332,6 +449,23 @@ def audit_training_environment(
     )
 
     passed = all(check["passed"] for check in checks if check["required"])
+    failed_required_checks = [
+        check["name"] for check in checks if check["required"] and not check["passed"]
+    ]
+    repro_command = _training_audit_repro_command(
+        root,
+        env_file=loaded_env_path,
+        require_gpu=require_gpu,
+        require_hf_token=require_hf_token,
+        python_executable=python_executable,
+    )
+    blocker_summary = _training_audit_blocker_summary(
+        failed_required_checks,
+        python_supported=python_supported,
+        missing_modules=missing_modules,
+        torch_info=torch_info,
+        require_gpu=require_gpu,
+    )
     return {
         "mode": "training_environment_audit",
         "training_version": TRAINING_VERSION,
@@ -343,12 +477,30 @@ def audit_training_environment(
         "require_hf_token": require_hf_token,
         "validation": validation,
         "environment": {
-            "python_executable": sys.executable,
+            "python_executable": runtime_python_executable,
             "python_version": current_python_version,
             "platform": current_platform,
             "platform_release": platform.release(),
             "loaded_env_file": None if loaded_env_path is None else str(loaded_env_path),
             "secrets": secrets,
+        },
+        "repro": {
+            "audit_command": repro_command,
+            "required_python_range": UNSLOTH_PYTHON_RANGE,
+            "required_modules": list(REQUIRED_TRAINING_MODULES),
+            "optional_modules": list(OPTIONAL_TRAINING_MODULES),
+            "training_requirements": _training_requirements().splitlines(),
+        },
+        "blocker": {
+            "blocked": not passed,
+            "failed_required_checks": failed_required_checks,
+            "summary": blocker_summary,
+            "recommended_fallback": (
+                "Use the generated Windows-hosted WSL CUDA bundle path until "
+                "this audit passes in a Windows-native Python runtime."
+                if not passed
+                else None
+            ),
         },
         "checks": checks,
         "command_hints": _training_command_hints(
@@ -373,6 +525,9 @@ def launch_training_job(
     beta: float = 0.1,
     max_steps: int | None = None,
     kl_coef: float = 0.05,
+    schema_prefix_mode: str = "schema-scaffold",
+    resume_from_checkpoint: str | None = None,
+    seed: int | None = None,
     report_out: Path | str | None = None,
     audit_report: dict[str, Any] | None = None,
     runner: TrainingRunner | None = None,
@@ -388,6 +543,7 @@ def launch_training_job(
         env_file=env_file,
         require_gpu=require_gpu,
         require_hf_token=require_hf_token,
+        python_executable=python_executable,
     )
     command: list[str] | None = None
     command_error: str | None = None
@@ -401,6 +557,9 @@ def launch_training_job(
             beta=beta,
             max_steps=max_steps,
             kl_coef=kl_coef,
+            schema_prefix_mode=schema_prefix_mode,
+            resume_from_checkpoint=resume_from_checkpoint,
+            seed=seed,
         )
     except Exception as exc:
         command_error = str(exc)
@@ -459,6 +618,7 @@ def package_training_bundle(
     env_file: Path | str | None = None,
     require_gpu: bool = True,
     require_hf_token: bool = False,
+    python_executable: str | None = None,
     module_probe: ModuleProbe | None = None,
     torch_probe: TorchProbe | None = None,
     nvidia_smi_runner: NvidiaSmiRunner | None = None,
@@ -495,6 +655,7 @@ def package_training_bundle(
         env_file=env_file,
         require_gpu=require_gpu,
         require_hf_token=require_hf_token,
+        python_executable=python_executable,
         module_probe=module_probe,
         torch_probe=torch_probe,
         nvidia_smi_runner=nvidia_smi_runner,
@@ -564,6 +725,9 @@ def package_training_bundle(
         "linux_cuda_bootstrap": "setup/bootstrap_linux_cuda.sh",
         "wsl_bootstrap": "setup/bootstrap_wsl_ubuntu.ps1",
         "full_training_eval_launcher": "launch/run_full_training_eval.sh",
+        "full_training_eval_resume_inspector": "launch/inspect_full_training_eval_resume.sh",
+        "smoke_chain_launcher": "launch/run_smoke_chain.sh",
+        "wsl_smoke_chain_launcher": "launch/run_wsl_smoke_chain.ps1",
         "sft_launcher": "launch/run_sft.sh",
         "dpo_launcher": "launch/run_dpo.sh",
         "rl_launcher": "launch/run_rl.sh",
@@ -589,6 +753,480 @@ def package_training_bundle(
         "launch_commands": commands,
     }
     _write_package_manifest(out, manifest)
+    return manifest
+
+
+DIAGNOSTIC_PLOT_SPECS = {
+    "sft_loss": {
+        "title": "SFT loss",
+        "x_label": "training step",
+        "y_label": "loss",
+        "metric": "loss",
+    },
+    "dpo_loss": {
+        "title": "DPO loss",
+        "x_label": "training step",
+        "y_label": "loss",
+        "metric": "loss",
+    },
+    "dpo_reward_accuracy": {
+        "title": "DPO reward accuracy",
+        "x_label": "training step",
+        "y_label": "reward accuracy",
+        "metric": "reward_accuracy",
+    },
+    "rl_reward": {
+        "title": "RL reward",
+        "x_label": "training step",
+        "y_label": "reward",
+        "metric": "reward",
+    },
+    "rl_parseability": {
+        "title": "RL raw parseability",
+        "x_label": "training step",
+        "y_label": "parseable raw output",
+        "metric": "raw_parseable",
+    },
+    "generation_lengths": {
+        "title": "Generation lengths",
+        "x_label": "sample",
+        "y_label": "characters",
+        "metric": "generation_length",
+    },
+    "eval_metrics": {
+        "title": "Evaluation metrics",
+        "x_label": "report",
+        "y_label": "metric value",
+        "metric": "eval_metric",
+    },
+    "schema_coverage": {
+        "title": "Schema and coverage",
+        "x_label": "report",
+        "y_label": "rate",
+        "metric": "schema_coverage",
+    },
+}
+
+
+def generate_training_diagnostics(
+    run_path: Path | str,
+    *,
+    out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Generate JSON/Markdown/PNG diagnostics from training logs and eval reports."""
+
+    run = Path(run_path).resolve()
+    diagnostics = Path(out_path).resolve() if out_path is not None else run / "diagnostics"
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    collected = _collect_training_metrics(run)
+    plots: dict[str, dict[str, Any]] = {}
+    for plot_name, spec in DIAGNOSTIC_PLOT_SPECS.items():
+        points = collected["series"].get(plot_name, [])
+        png_name = f"{plot_name}.png"
+        png_path = diagnostics / png_name
+        _write_metric_png(
+            png_path,
+            title=spec["title"],
+            x_label=spec["x_label"],
+            y_label=spec["y_label"],
+            points=points,
+        )
+        plots[plot_name] = {
+            "path": png_name,
+            "title": spec["title"],
+            "x_axis": spec["x_label"],
+            "y_axis": spec["y_label"],
+            "metric": spec["metric"],
+            "points": len(points),
+            "source_files": sorted({point["source"] for point in points}),
+            "missing": not points,
+        }
+
+    summary = {
+        "mode": "training_diagnostics",
+        "training_version": TRAINING_VERSION,
+        "run_dir": str(run),
+        "diagnostics_dir": str(diagnostics),
+        "generated_at": _now(),
+        "plots": plots,
+        "sources": collected["sources"],
+        "missing_metrics": [
+            name for name, plot in plots.items() if plot["missing"]
+        ],
+    }
+    (diagnostics / "training_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (diagnostics / "training_summary.md").write_text(
+        _training_diagnostics_markdown(summary),
+        encoding="utf-8",
+    )
+    return summary
+
+
+def summarize_full_eval_contract_status(
+    run_path: Path | str,
+    *,
+    sft_steps: int | None = None,
+    dpo_steps: int | None = None,
+    rl_steps: int | None = None,
+    repo_root: Path | str | None = None,
+    windows_audit_path: Path | str | None = None,
+    wsl_smoke_manifest_path: Path | str | None = None,
+    human_study_suite_path: Path | str | None = None,
+    out_path: Path | str | None = None,
+    markdown_out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Summarize whether a full-eval outputs directory proves the contract gates."""
+
+    run = Path(run_path).resolve()
+    summary_path = run / "training_eval_summary.json"
+    eval_summary = _read_json_file(summary_path)
+    requested_steps = {
+        "sft": sft_steps,
+        "dpo": dpo_steps,
+        "rl": rl_steps,
+    }
+    configured_steps = (
+        eval_summary.get("eval_run_config", {}).get("requested_max_steps", {})
+    if isinstance(eval_summary, dict)
+    else {}
+    )
+    for stage in requested_steps:
+        if requested_steps[stage] is None and isinstance(configured_steps, dict):
+            configured_value = configured_steps.get(stage)
+            if isinstance(configured_value, int):
+                requested_steps[stage] = configured_value
+    eval_summary_status = _eval_summary_contract_status(eval_summary, requested_steps)
+
+    stage_status = {
+        stage: _stage_contract_status(run, stage, requested_steps[stage])
+        for stage in ("sft", "dpo", "rl")
+    }
+    required_reports = {
+        "sft_eval": run / "sft_eval.json",
+        "sft_vs_baseline": run / "sft_vs_baseline.json",
+        "dpo_eval": run / "dpo_eval.json",
+        "dpo_vs_sft": run / "dpo_vs_sft.json",
+        "rl_eval": run / "rl_eval.json",
+        "rl_vs_sft": run / "rl_vs_sft.json",
+    }
+    report_status = {
+        name: _json_report_status(path, require_passed=True)
+        for name, path in required_reports.items()
+    }
+    report_stage_map = {
+        "sft_eval": "sft",
+        "sft_vs_baseline": "sft",
+        "dpo_eval": "dpo",
+        "dpo_vs_sft": "dpo",
+        "rl_eval": "rl",
+        "rl_vs_sft": "rl",
+    }
+    for name, status in report_status.items():
+        stage = report_stage_map[name]
+        stage_current = stage_status[stage]["manifest_matches_requested_max_steps"]
+        status["stage"] = stage
+        status["stage_current_for_requested_steps"] = stage_current
+        status["current_for_requested_stage"] = (
+            status["exists"] and status["passed"] is True and stage_current
+        )
+    sample_status = {
+        stage: _sample_contract_status(run / "samples" / stage)
+        for stage in ("sft", "dpo", "rl")
+    }
+    for stage, status in sample_status.items():
+        complete = (
+            status["manifest_exists"]
+            and status["raw_candidates_exist"]
+            and status["repaired_candidates_exist"]
+            and status["inspection_markdown_exists"]
+        )
+        status["stage_current_for_requested_steps"] = stage_status[stage][
+            "manifest_matches_requested_max_steps"
+        ]
+        status["complete_for_requested_stage"] = (
+            complete and status["stage_current_for_requested_steps"]
+        )
+    diagnostics_status = _diagnostics_contract_status(run / "diagnostics", run=run)
+    diagnostics_status["stages_current_for_requested_steps"] = all(
+        stage_status[stage]["manifest_matches_requested_max_steps"]
+        for stage in ("sft", "dpo", "rl")
+    )
+    diagnostics_status["stale_or_missing_stages"] = [
+        stage
+        for stage in ("sft", "dpo", "rl")
+        if not stage_status[stage]["manifest_matches_requested_max_steps"]
+    ]
+    resume_inspection_status = _resume_inspection_contract_status(
+        run / "full_training_eval_resume_inspection.json"
+    )
+    gates = [
+        _contract_gate(
+            "training_eval_summary_exists",
+            eval_summary is not None,
+            evidence=str(summary_path),
+        ),
+        _contract_gate(
+            "training_eval_summary_passed",
+            bool(eval_summary and eval_summary.get("passed")),
+            evidence=str(summary_path),
+        ),
+        _contract_gate(
+            "training_eval_summary_matches_requested_steps",
+            eval_summary_status["matches_requested_steps"],
+            actual=eval_summary_status["actual"],
+            expected=eval_summary_status["expected"],
+            evidence=str(summary_path),
+        ),
+        _contract_gate(
+            "all_final_eval_gates_passed",
+            bool(eval_summary and eval_summary.get("all_final_eval_gates_passed")),
+            evidence=str(summary_path),
+        ),
+        *[
+            _contract_gate(
+                f"{stage}_stage_manifest_matches_requested_steps",
+                status["manifest_exists"]
+                and status["requested_max_steps"] is not None
+                and status["manifest_max_steps"] == status["requested_max_steps"],
+                actual=status["manifest_max_steps"],
+                expected=status["requested_max_steps"],
+                evidence=status["manifest_path"],
+            )
+            for stage, status in stage_status.items()
+        ],
+        *[
+            _contract_gate(
+                f"{name}_exists_and_passed",
+                status["current_for_requested_stage"],
+                actual={
+                    "exists": status["exists"],
+                    "passed": status["passed"],
+                    "stage": status["stage"],
+                    "stage_current_for_requested_steps": status[
+                        "stage_current_for_requested_steps"
+                    ],
+                },
+                expected=True,
+                evidence=status["path"],
+            )
+            for name, status in report_status.items()
+        ],
+        *[
+            _contract_gate(
+                f"{stage}_sample_inspection_complete",
+                status["complete_for_requested_stage"],
+                actual={
+                    "complete": (
+                        status["manifest_exists"]
+                        and status["raw_candidates_exist"]
+                        and status["repaired_candidates_exist"]
+                        and status["inspection_markdown_exists"]
+                    ),
+                    "stage_current_for_requested_steps": status[
+                        "stage_current_for_requested_steps"
+                    ],
+                },
+                expected=True,
+                evidence=status["sample_dir"],
+            )
+            for stage, status in sample_status.items()
+        ],
+        _contract_gate(
+            "diagnostic_summary_exists",
+            diagnostics_status["summary_exists"],
+            evidence=diagnostics_status["summary_path"],
+        ),
+        _contract_gate(
+            "diagnostic_plots_exist",
+            (
+                diagnostics_status["all_required_plots_exist"]
+                and diagnostics_status["sources_current_for_run"]
+                and diagnostics_status["stages_current_for_requested_steps"]
+            ),
+            actual=_diagnostic_gate_actual(diagnostics_status),
+            expected={
+                "required_plots": diagnostics_status["required_plots"],
+                "sources_current_for_run": True,
+                "stages_current_for_requested_steps": True,
+            },
+            evidence=str(run / "diagnostics"),
+        ),
+    ]
+    missing_or_failed = [gate for gate in gates if not gate["passed"]]
+    repo_hygiene_status = _repo_hygiene_contract_status(repo_root)
+    windows_readiness_status = _windows_readiness_contract_status(
+        windows_audit_path=windows_audit_path,
+        wsl_smoke_manifest_path=wsl_smoke_manifest_path,
+    )
+    human_usefulness_status = _human_usefulness_contract_status(
+        human_study_suite_path
+    )
+    next_actions = _full_eval_next_actions(
+        run,
+        stage_status,
+        report_status,
+        sample_status,
+        diagnostics_status,
+        repo_hygiene_status,
+        windows_readiness_status,
+        human_usefulness_status,
+    )
+    remaining_items = [
+        {
+            "gate": gate["name"],
+            "actual": gate.get("actual"),
+            "expected": gate.get("expected"),
+            "evidence": gate.get("evidence"),
+        }
+        for gate in missing_or_failed
+    ]
+    report = {
+        "mode": "full_eval_contract_status",
+        "training_version": TRAINING_VERSION,
+        "run_dir": str(run),
+        "generated_at": _now(),
+        "passed": not missing_or_failed,
+        "requested_max_steps": requested_steps,
+        "training_eval_summary_status": eval_summary_status,
+        "gates": gates,
+        "stage_status": stage_status,
+        "report_status": report_status,
+        "sample_status": sample_status,
+        "stage_evidence_summary": _stage_evidence_summary(
+            stage_status, report_status, sample_status
+        ),
+        "diagnostics_status": diagnostics_status,
+        "resume_inspection_status": resume_inspection_status,
+        "repo_hygiene_status": repo_hygiene_status,
+        "windows_readiness_status": windows_readiness_status,
+        "human_usefulness_status": human_usefulness_status,
+        "next_actions": next_actions,
+        "remaining_items": remaining_items,
+        "remaining_by_area": _remaining_by_area(remaining_items),
+    }
+    report["contract_scorecard"] = _contract_scorecard(report)
+    report["contract_reward_summary"] = _contract_reward_summary(report["contract_scorecard"])
+    if out_path is not None:
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if markdown_out_path is not None:
+        markdown_out = Path(markdown_out_path)
+        markdown_out.parent.mkdir(parents=True, exist_ok=True)
+        markdown_out.write_text(_full_eval_contract_status_markdown(report), encoding="utf-8")
+    return report
+
+
+def create_sample_inspection(
+    dataset_path: Path | str,
+    *,
+    raw_candidates_path: Path | str,
+    repaired_candidates_path: Path | str,
+    out_path: Path | str,
+    model_name: str,
+    model_or_adapter_path: Path | str | None = None,
+    generation_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write raw/repaired sample evals and a human-readable inspection bundle."""
+
+    from semantic_mirror.evaluation import evaluate_model_candidates
+
+    dataset = Path(dataset_path).resolve()
+    raw_source = Path(raw_candidates_path).resolve()
+    repaired_source = Path(repaired_candidates_path).resolve()
+    out = Path(out_path).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    raw_target = out / "raw_candidates.jsonl"
+    repaired_target = out / "repaired_candidates.jsonl"
+    _copy_if_different(raw_source, raw_target)
+    _copy_if_different(repaired_source, repaired_target)
+
+    raw_eval = evaluate_model_candidates(
+        dataset,
+        raw_target,
+        model_name=f"{model_name}-raw",
+        out_path=out / "raw_eval.json",
+    )
+    repaired_eval = evaluate_model_candidates(
+        dataset,
+        repaired_target,
+        model_name=f"{model_name}-repaired",
+        out_path=out / "repaired_eval.json",
+    )
+    raw_rows = _read_jsonl(raw_target)
+    repaired_rows = _read_jsonl(repaired_target)
+    references = _sample_references(dataset)
+    raw_contract_reports = [
+        _sample_raw_contract_report(row, references) for row in raw_rows
+    ]
+    raw_parseability = sum(1 for row in raw_rows if _sample_row_parseable(row))
+    raw_generation_cap_hits = sum(1 for row in raw_rows if row.get("hit_generation_cap"))
+    raw_schema_valid = sum(1 for row in raw_eval["results"] if row["schema_valid"])
+    raw_repair_free_contract = sum(
+        1 for report in raw_contract_reports if report["repair_free_contract_valid"]
+    )
+    raw_exact_identity = sum(1 for report in raw_contract_reports if report["identity_exact"])
+    raw_top_level_valid = sum(
+        1 for report in raw_contract_reports if report["top_level_keys_valid"]
+    )
+    raw_compact_shape = sum(1 for report in raw_contract_reports if report["compact_shape_valid"])
+    repaired_schema_valid = sum(
+        1 for row in repaired_eval["results"] if row["schema_valid"]
+    )
+    record_ids = [
+        str(row.get("dataset_record_id") or row.get("record_id") or row.get("unit_id"))
+        for row in repaired_rows
+    ]
+    manifest_generation_config = generation_config or _sample_generation_config(raw_rows)
+    manifest = {
+        "mode": "sample_inspection",
+        "training_version": TRAINING_VERSION,
+        "model_name": model_name,
+        "model_or_adapter_path": None
+        if model_or_adapter_path is None
+        else str(Path(model_or_adapter_path).resolve()),
+        "dataset": str(dataset),
+        "generated_at": _now(),
+        "record_ids": record_ids,
+        "generation_config": manifest_generation_config,
+        "raw_parseability_count": raw_parseability,
+        "raw_generation_cap_hits": raw_generation_cap_hits,
+        "raw_schema_validity_count": raw_schema_valid,
+        "raw_repair_free_contract_count": raw_repair_free_contract,
+        "raw_exact_identity_count": raw_exact_identity,
+        "raw_top_level_key_validity_count": raw_top_level_valid,
+        "raw_compact_shape_count": raw_compact_shape,
+        "repaired_schema_validity_count": repaired_schema_valid,
+        "raw_candidate_count": len(raw_rows),
+        "repaired_candidate_count": len(repaired_rows),
+        "raw_contract_reports": raw_contract_reports,
+        "static_faithfulness_score": repaired_eval["metrics"][
+            "average_static_faithfulness_score"
+        ],
+        "raw_static_faithfulness_score": raw_eval["metrics"][
+            "average_static_faithfulness_score"
+        ],
+        "hallucination_penalties": repaired_eval["metrics"]["hallucination_penalties"],
+        "raw_hallucination_penalties": raw_eval["metrics"]["hallucination_penalties"],
+        "files": {
+            "raw_candidates": "raw_candidates.jsonl",
+            "repaired_candidates": "repaired_candidates.jsonl",
+            "raw_eval": "raw_eval.json",
+            "repaired_eval": "repaired_eval.json",
+            "inspection_markdown": "sample_inspection.md",
+        },
+    }
+    (out / "sample_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (out / "sample_inspection.md").write_text(
+        _sample_inspection_markdown(manifest, raw_rows, repaired_rows, raw_eval, repaired_eval),
+        encoding="utf-8",
+    )
     return manifest
 
 
@@ -619,7 +1257,7 @@ def _sft_record(record: dict[str, Any], index: int) -> dict[str, Any]:
             {"role": "user", "content": _generation_user_prompt(record)},
             {
                 "role": "assistant",
-                "content": json.dumps(compact_unit, sort_keys=True),
+                "content": _sir_unit_json(compact_unit),
             },
         ],
         "metadata": _record_metadata(record),
@@ -660,8 +1298,8 @@ def _preference_pair(
     return {
         "record_id": f"preference-{index}-{negative['record_id']}",
         "prompt": _generation_user_prompt(positive),
-        "chosen": json.dumps(_compact_sir_unit(positive["target"]["sir_unit"]), sort_keys=True),
-        "rejected": json.dumps(_compact_sir_unit(negative["candidate"]["sir_unit"]), sort_keys=True),
+        "chosen": _sir_unit_json(_compact_sir_unit(positive["target"]["sir_unit"])),
+        "rejected": _sir_unit_json(_compact_sir_unit(negative["candidate"]["sir_unit"])),
         "metadata": {
             **_record_metadata(positive),
             "negative_kind": negative["negative_kind"],
@@ -721,14 +1359,22 @@ def _critic_labels_by_candidate(root: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def _rl_prompt(record: dict[str, Any], index: int) -> dict[str, Any]:
+    compact_target = _schema_output_template(record)
+    identity = _schema_contract(record)["identity"]
     return {
         "record_id": f"rl-prompt-{index}-{record['record_id']}",
         "prompt": _generation_user_prompt(record),
         "reward_reference": {
             "unit_id": record["unit_id"],
+            "language": identity["language"],
+            "symbol_type": identity["symbol_type"],
+            "name": identity["name"],
+            "qualified_name": identity["qualified_name"],
             "static_facts": record["static_facts"],
             "source_path": record["source_path"],
             "source_spans": record["source_spans"],
+            "compact_target": compact_target,
+            "compact_expected_counts": _compact_expected_counts(compact_target),
         },
         "metadata": _record_metadata(record),
     }
@@ -736,9 +1382,10 @@ def _rl_prompt(record: dict[str, Any], index: int) -> dict[str, Any]:
 
 def _generation_system_prompt() -> str:
     return (
-        "You generate one valid Semantic Mirror SIR JSON unit. Use the exact required schema keys. "
-        "Preserve the bounded source-backed static facts supplied in the prompt. Do not invent "
-        "behavior. Return only JSON for the sir_unit object."
+        "You generate one valid Semantic Mirror SIR JSON unit. Use every required top-level "
+        "schema key exactly once. Preserve only source-backed static facts supplied in the "
+        "prompt. Do not invent behavior. Return minified JSON only: begin with {, end with }, "
+        "and do not wrap the object in Markdown fences."
     )
 
 
@@ -752,7 +1399,11 @@ def _repair_system_prompt() -> str:
 
 def _generation_user_prompt(record: dict[str, Any]) -> str:
     code_slice = record["code_slice"]
+    final_sir = _schema_output_template(record)
+    schema_contract = _schema_contract(record)
+    schema_contract["compact_expected_counts"] = _compact_expected_counts(final_sir)
     prompt = {
+        "task": "emit_one_complete_sir_unit_as_minified_json",
         "profile": record["profile"],
         "zoom": record["zoom"],
         "source_path": record["source_path"],
@@ -763,12 +1414,28 @@ def _generation_user_prompt(record: dict[str, Any]) -> str:
             "end_line": code_slice["end_line"],
             "text_excerpt": _compact_text(code_slice.get("text", ""), COMPACT_CODE_CHARS),
         },
-        "schema_contract": _schema_contract(record),
+        "schema_contract": schema_contract,
         "static_facts": _compact_static_facts(record["static_facts"]),
         "static_analysis": _compact_static_analysis(record.get("static_analysis", {})),
-        "requested_output": "faithful SIR JSON unit",
+        "output_rules": [
+            "return the final SIR JSON object between FINAL_SIR_JSON_START and FINAL_SIR_JSON_END",
+            "copy final SIR JSON keys and source-backed values exactly",
+            "copy identity fields exactly from final SIR JSON; do not shorten unit_id or qualified_name",
+            "the compact_expected_counts values are exact upper bounds; do not exceed them",
+            "include all required top-level keys even when a list is empty",
+            "do not add any top-level key outside schema_contract.required_top_level_keys",
+            "the answer must start with {\"unit_id\" and must not include template or marker keys",
+            "do not add facts beyond the final SIR JSON; it already contains the compact allowed facts",
+            "do not output output_template, safety_report, summary, code_analysis, analysis, labels, or explanations",
+            "return only one minified JSON object with no Markdown fence",
+        ],
     }
-    return json.dumps(prompt, indent=2, sort_keys=True)
+    return (
+        json.dumps(prompt, indent=2)
+        + "\n\nFINAL_SIR_JSON_START\n"
+        + _sir_unit_json(final_sir)
+        + "\nFINAL_SIR_JSON_END"
+    )
 
 
 def _repair_user_prompt(positive: dict[str, Any], negative: dict[str, Any]) -> str:
@@ -783,33 +1450,12 @@ def _repair_user_prompt(positive: dict[str, Any], negative: dict[str, Any]) -> s
         "verifier_report": negative["verifier_report"],
         "requested_output": "error labels, verifier penalties, and corrected SIR JSON unit",
     }
-    return json.dumps(prompt, indent=2, sort_keys=True)
+    return json.dumps(prompt, indent=2)
 
 
 def _schema_contract(record: dict[str, Any]) -> dict[str, Any]:
     return {
-        "required_top_level_keys": [
-            "unit_id",
-            "source_spans",
-            "language",
-            "symbol_type",
-            "name",
-            "qualified_name",
-            "algorithm",
-            "control_flow",
-            "reads",
-            "writes",
-            "calls",
-            "returns",
-            "side_effects",
-            "failure_modes",
-            "state_mutations",
-            "external_dependencies",
-            "data_ml_details",
-            "hazards",
-            "uncertainty",
-            "confidence",
-        ],
+        "required_top_level_keys": list(SIR_UNIT_TOP_LEVEL_KEYS),
         "claim_shape": {"claim": "string", "confidence": "number", "source_spans": "array"},
         "data_ml_detail_categories": list(DATA_ML_DETAIL_CATEGORIES),
         "identity": {
@@ -820,6 +1466,52 @@ def _schema_contract(record: dict[str, Any]) -> dict[str, Any]:
             "qualified_name": record["qualified_name"],
             "source_spans": record["source_spans"],
         },
+    }
+
+
+def _sir_unit_json(unit: dict[str, Any]) -> str:
+    return json.dumps(unit, separators=(",", ":"))
+
+
+def _compact_expected_counts(unit: dict[str, Any]) -> dict[str, Any]:
+    counts: dict[str, Any] = {}
+    for field in SIR_LIST_FIELDS:
+        value = unit.get(field, [])
+        counts[field] = len(value) if isinstance(value, list) else 0
+    data_ml_details = unit.get("data_ml_details", {})
+    counts["data_ml_details"] = {
+        category: len(data_ml_details.get(category, []))
+        if isinstance(data_ml_details, dict) and isinstance(data_ml_details.get(category), list)
+        else 0
+        for category in DATA_ML_DETAIL_CATEGORIES
+    }
+    return counts
+
+
+def _schema_output_template(record: dict[str, Any]) -> dict[str, Any]:
+    static_facts = _compact_static_facts(record["static_facts"])
+    identity = _schema_contract(record)["identity"]
+    return {
+        "unit_id": identity["unit_id"],
+        "source_spans": identity["source_spans"],
+        "language": identity["language"],
+        "symbol_type": identity["symbol_type"],
+        "name": identity["name"],
+        "qualified_name": identity["qualified_name"],
+        "algorithm": static_facts["algorithm"],
+        "control_flow": static_facts["control_flow"],
+        "reads": static_facts["reads"],
+        "writes": static_facts["writes"],
+        "calls": static_facts["calls"],
+        "returns": static_facts["returns"],
+        "side_effects": static_facts["side_effects"],
+        "failure_modes": static_facts["failure_modes"],
+        "state_mutations": static_facts["state_mutations"],
+        "external_dependencies": static_facts["external_dependencies"],
+        "data_ml_details": static_facts["data_ml_details"],
+        "hazards": static_facts["hazards"],
+        "uncertainty": static_facts["uncertainty"],
+        "confidence": static_facts["algorithm"].get("confidence", 0.7),
     }
 
 
@@ -965,11 +1657,13 @@ def _record_metadata(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sft_config(base_model: str) -> dict[str, Any]:
+    is_qwen35_or_newer = "qwen3.5" in base_model.lower() or "qwen3.6" in base_model.lower()
     return {
         "base_model": base_model,
-        "method": "QLoRA",
-        "model_size_target": "7-14B",
-        "load_in_4bit": True,
+        "method": "bf16 LoRA" if is_qwen35_or_newer else "QLoRA",
+        "model_size_target": "Qwen3.5/3.6 local-fit target",
+        "load_in_4bit": not is_qwen35_or_newer,
+        "load_in_16bit": is_qwen35_or_newer,
         "lora": {
             "r": 16,
             "alpha": 16,
@@ -1037,7 +1731,7 @@ This directory is generated by `semantic-mirror train prepare`.
 - `contrastive_repair.jsonl` teaches the model to label and repair verifier-rejected IR.
 - `preference_pairs.jsonl` pairs source-backed SIR units against hard negatives for preference/RL training.
 - `rl_prompts.jsonl` contains policy prompts plus static facts used by deterministic rewards.
-- `unsloth_sft_config.json` and `rl_reward_config.json` capture the QLoRA and reward defaults.
+- `unsloth_sft_config.json` and `rl_reward_config.json` capture the LoRA and reward defaults.
 - `run_unsloth_sft.py` is an executable Unsloth/TRL SFT entrypoint.
 - `run_preference_dpo.py` is an executable TRL DPO preference-training entrypoint.
 - `run_reward_rl.py` is an executable Unsloth policy-gradient entrypoint using deterministic rewards.
@@ -1093,11 +1787,13 @@ bitsandbytes
 datasets
 peft
 torch
-transformers
+torchvision
+transformers>=5.0.0
 trl
 mergekit
 llm-blender
 weave
+pillow
 unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
 wandb
 """
@@ -1126,8 +1822,8 @@ This bundle intentionally excludes `.env` and API key values. Set `HF_TOKEN` or
 Current-machine readiness is recorded in `audit/current_environment.json`.
 Required checks failed on the packaging machine: {failed_text}.
 
-The default target is a CUDA Linux or WSL runtime suitable for Unsloth QLoRA on
-a 7-14B model. Use Python {UNSLOTH_PYTHON_RANGE}; Python 3.14 is intentionally
+The default target is a CUDA Linux or WSL runtime suitable for Unsloth LoRA on
+the configured Qwen3-family model. Use Python {UNSLOTH_PYTHON_RANGE}; Python 3.14 is intentionally
 flagged as not launch-ready for this Unsloth target. A failed local audit does
 not invalidate this bundle; it means the bundle should be moved to a machine
 that satisfies the audit gates.
@@ -1148,40 +1844,98 @@ def _package_launch_commands() -> dict[str, str]:
     return {
         "bootstrap_linux_cuda": "bash setup/bootstrap_linux_cuda.sh",
         "bootstrap_wsl_ubuntu": "powershell -ExecutionPolicy Bypass -File setup/bootstrap_wsl_ubuntu.ps1",
+        "wsl_smoke_chain": (
+            "powershell -ExecutionPolicy Bypass -File launch/run_wsl_smoke_chain.ps1 "
+            "-HeldOutDataset <windows_dataset_dir>"
+        ),
         "install": "python -m pip install --upgrade pip && python -m pip install -r requirements-training.txt",
-        "sft": "python training/run_unsloth_sft.py --training-dir training --output-dir outputs/semantic-mirror-sft",
+        "validate": (
+            "PYTHONPATH=src python -m semantic_mirror.cli train validate training "
+            "--out outputs/validation_report.json"
+        ),
+        "audit": "PYTHONPATH=src python -m semantic_mirror.cli train audit training --out outputs/audit.json",
+        "sft": (
+            "SFT_MAX_STEPS=2000 SFT_SEED=42 python training/run_unsloth_sft.py "
+            "--training-dir training --output-dir outputs/semantic-mirror-sft "
+            "--max-steps $SFT_MAX_STEPS --seed $SFT_SEED"
+        ),
         "dpo": (
-            "python training/run_preference_dpo.py --training-dir training "
-            "--model-name-or-path outputs/semantic-mirror-sft --output-dir outputs/semantic-mirror-dpo"
+            "DPO_MAX_STEPS=800 DPO_SEED=43 python training/run_preference_dpo.py --training-dir training "
+            "--model-name-or-path outputs/semantic-mirror-sft --output-dir outputs/semantic-mirror-dpo "
+            "--max-steps $DPO_MAX_STEPS --seed $DPO_SEED"
         ),
         "rl": (
-            "python training/run_reward_rl.py --training-dir training "
-            "--model-name-or-path outputs/semantic-mirror-dpo --output-dir outputs/semantic-mirror-rl"
+            "RL_MAX_STEPS=1000 RL_SEED=44 python training/run_reward_rl.py --training-dir training "
+            "--model-name-or-path outputs/semantic-mirror-dpo --output-dir outputs/semantic-mirror-rl "
+            "--max-steps $RL_MAX_STEPS --seed $RL_SEED --schema-prefix-mode schema-scaffold"
         ),
         "full_training_eval": (
             "HELD_OUT_DATASET=<dataset_dir> "
             "BASELINE_CANDIDATES=<teacher_results_dir>/teacher_candidates.jsonl "
             "bash launch/run_full_training_eval.sh"
         ),
+        "inspect_full_training_eval_resume": (
+            "SFT_MAX_STEPS=300 DPO_MAX_STEPS=120 RL_MAX_STEPS=120 "
+            "REUSE_STAGE_OUTPUTS=1 DPO_RESUME_FROM_CHECKPOINT=<checkpoint_dir> "
+            "bash launch/inspect_full_training_eval_resume.sh"
+        ),
+        "smoke_chain": "HELD_OUT_DATASET=<dataset_dir> bash launch/run_smoke_chain.sh",
         "generate_candidates": (
             "python training/generate_sir_candidates.py --training-dir training "
-            "--model-name-or-path outputs/semantic-mirror-rl --out outputs/candidates.jsonl"
+            "--model-name-or-path outputs/semantic-mirror-rl "
+            "--out outputs/samples/repaired_candidates.jsonl "
+            "--raw-out outputs/samples/raw_candidates.jsonl "
+            "--repaired-out outputs/samples/repaired_candidates.jsonl "
+            "--generation-mode full-json "
+            "--schema-prefix-mode schema-scaffold"
         ),
         "score_candidates": (
             "PYTHONPATH=src python training/score_sir_candidates.py "
-            "--repo <held_out_repo_path> --candidates outputs/candidates.jsonl --out outputs/candidate_scores.jsonl"
+            "--repo <held_out_repo_path> --candidates outputs/samples/repaired_candidates.jsonl --out outputs/candidate_scores.jsonl"
         ),
         "eval_candidates": (
             "PYTHONPATH=src python -m semantic_mirror.cli eval candidates <dataset_dir> "
-            "--candidates outputs/candidates.jsonl --model-name semantic-mirror-rl --out outputs/rl_eval.json"
+            "--candidates outputs/samples/repaired_candidates.jsonl --model-name semantic-mirror-rl --out outputs/rl_eval.json"
+        ),
+        "inspect_samples": (
+            "PYTHONPATH=src python -m semantic_mirror.cli train inspect-samples <dataset_dir> "
+            "--raw-candidates outputs/samples/raw_candidates.jsonl "
+            "--repaired-candidates outputs/samples/repaired_candidates.jsonl "
+            "--out outputs/samples/rl --model-name semantic-mirror-rl "
+            "--model-or-adapter-path outputs/semantic-mirror-rl"
+        ),
+        "report": "PYTHONPATH=src python -m semantic_mirror.cli train report outputs --out outputs/diagnostics",
+        "contract_status": (
+            "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs "
+            "--sft-steps $SFT_MAX_STEPS --dpo-steps $DPO_MAX_STEPS --rl-steps $RL_MAX_STEPS "
+            "--out outputs/contract_status.json --markdown-out outputs/contract_status.md"
         ),
         "compare_sft": (
             "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare "
             "outputs/baseline_eval.json outputs/sft_eval.json --stage sft --out outputs/sft_vs_baseline.json"
         ),
+        "compare_sft_raw": (
+            "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare "
+            "outputs/baseline_eval.json outputs/sft_raw_eval.json --stage sft "
+            "--out outputs/sft_raw_vs_baseline.json"
+        ),
+        "compare_dpo": (
+            "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare "
+            "outputs/sft_eval.json outputs/dpo_eval.json --stage dpo --out outputs/dpo_vs_sft.json"
+        ),
+        "compare_dpo_raw": (
+            "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare "
+            "outputs/sft_raw_eval.json outputs/dpo_raw_eval.json --stage dpo "
+            "--out outputs/dpo_raw_vs_sft.json"
+        ),
         "compare_rl": (
             "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare "
             "outputs/sft_eval.json outputs/rl_eval.json --stage rl --out outputs/rl_vs_sft.json"
+        ),
+        "compare_rl_raw": (
+            "PYTHONPATH=src python -m semantic_mirror.cli eval model-compare "
+            "outputs/sft_raw_eval.json outputs/rl_raw_eval.json --stage rl "
+            "--out outputs/rl_raw_vs_sft.json"
         ),
     }
 
@@ -1190,24 +1944,339 @@ def _write_launch_scripts(launch_target: Path) -> None:
     scripts = {
         "run_sft.sh": """#!/usr/bin/env bash
 set -euo pipefail
-python training/run_unsloth_sft.py --training-dir training --output-dir outputs/semantic-mirror-sft
+SFT_MAX_STEPS="${SFT_MAX_STEPS:-2000}"
+SFT_SEED="${SFT_SEED:-42}"
+SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-10}"
+SFT_SAVE_TOTAL_LIMIT="${SFT_SAVE_TOTAL_LIMIT:-3}"
+SFT_RESUME_ARG=()
+if [[ -n "${SFT_RESUME_FROM_CHECKPOINT:-}" ]]; then
+  SFT_RESUME_ARG=(--resume-from-checkpoint "$SFT_RESUME_FROM_CHECKPOINT")
+fi
+python training/run_unsloth_sft.py --training-dir training --output-dir outputs/semantic-mirror-sft --max-steps "$SFT_MAX_STEPS" --seed "$SFT_SEED" --save-steps "$SFT_SAVE_STEPS" --save-total-limit "$SFT_SAVE_TOTAL_LIMIT" "${SFT_RESUME_ARG[@]}"
 """,
         "run_dpo.sh": """#!/usr/bin/env bash
 set -euo pipefail
-python training/run_preference_dpo.py --training-dir training --model-name-or-path outputs/semantic-mirror-sft --output-dir outputs/semantic-mirror-dpo
+DPO_MAX_STEPS="${DPO_MAX_STEPS:-800}"
+DPO_SEED="${DPO_SEED:-43}"
+DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-10}"
+DPO_SAVE_TOTAL_LIMIT="${DPO_SAVE_TOTAL_LIMIT:-3}"
+DPO_RESUME_ARG=()
+if [[ -n "${DPO_RESUME_FROM_CHECKPOINT:-}" ]]; then
+  DPO_RESUME_ARG=(--resume-from-checkpoint "$DPO_RESUME_FROM_CHECKPOINT")
+fi
+python training/run_preference_dpo.py --training-dir training --model-name-or-path outputs/semantic-mirror-sft --output-dir outputs/semantic-mirror-dpo --max-steps "$DPO_MAX_STEPS" --seed "$DPO_SEED" --save-steps "$DPO_SAVE_STEPS" --save-total-limit "$DPO_SAVE_TOTAL_LIMIT" "${DPO_RESUME_ARG[@]}"
 """,
         "run_rl.sh": """#!/usr/bin/env bash
 set -euo pipefail
-python training/run_reward_rl.py --training-dir training --model-name-or-path outputs/semantic-mirror-dpo --output-dir outputs/semantic-mirror-rl
+RL_MAX_STEPS="${RL_MAX_STEPS:-1000}"
+RL_SEED="${RL_SEED:-44}"
+SCHEMA_PREFIX_MODE="${SCHEMA_PREFIX_MODE:-schema-scaffold}"
+python training/run_reward_rl.py --training-dir training --model-name-or-path outputs/semantic-mirror-dpo --output-dir outputs/semantic-mirror-rl --max-steps "$RL_MAX_STEPS" --seed "$RL_SEED" --schema-prefix-mode "$SCHEMA_PREFIX_MODE"
 """,
         "generate_candidates.sh": """#!/usr/bin/env bash
 set -euo pipefail
-python training/generate_sir_candidates.py --training-dir training --model-name-or-path outputs/semantic-mirror-rl --out outputs/candidates.jsonl
+SCHEMA_PREFIX_MODE="${SCHEMA_PREFIX_MODE:-schema-scaffold}"
+GENERATION_MODE="${GENERATION_MODE:-full-json}"
+FIELD_MAX_NEW_TOKENS="${FIELD_MAX_NEW_TOKENS:-384}"
+FIELD_TARGET_MODE="${FIELD_TARGET_MODE:-compact}"
+FIELD_TARGET_LIMIT="${FIELD_TARGET_LIMIT:-0}"
+FIELD_TARGET_MAX_CHUNKS="${FIELD_TARGET_MAX_CHUNKS:-1}"
+FIELD_TARGET_CHUNK_FIELDS="${FIELD_TARGET_CHUNK_FIELDS:-}"
+FIELD_OBJECT_PREFIX_MODE="${FIELD_OBJECT_PREFIX_MODE:-off}"
+FAITHFULNESS_REPAIR_MODE="${FAITHFULNESS_REPAIR_MODE:-schema-only}"
+mkdir -p outputs/samples
+python training/generate_sir_candidates.py --training-dir training \
+  --model-name-or-path outputs/semantic-mirror-rl \
+  --out outputs/samples/repaired_candidates.jsonl \
+  --raw-out outputs/samples/raw_candidates.jsonl \
+  --repaired-out outputs/samples/repaired_candidates.jsonl \
+  --generation-mode "$GENERATION_MODE" \
+  --field-max-new-tokens "$FIELD_MAX_NEW_TOKENS" \
+  --field-target-mode "$FIELD_TARGET_MODE" \
+  --field-target-limit "$FIELD_TARGET_LIMIT" \
+  --field-target-max-chunks "$FIELD_TARGET_MAX_CHUNKS" \
+  --field-target-chunk-fields "$FIELD_TARGET_CHUNK_FIELDS" \
+  --field-object-prefix-mode "$FIELD_OBJECT_PREFIX_MODE" \
+  --faithfulness-repair-mode "$FAITHFULNESS_REPAIR_MODE" \
+  --schema-prefix-mode "$SCHEMA_PREFIX_MODE"
 """,
         "score_candidates.sh": """#!/usr/bin/env bash
 set -euo pipefail
 : "${HELD_OUT_REPO:?set HELD_OUT_REPO to the source repo path}"
-PYTHONPATH=src python training/score_sir_candidates.py --repo "$HELD_OUT_REPO" --candidates outputs/candidates.jsonl --out outputs/candidate_scores.jsonl
+PYTHONPATH=src python training/score_sir_candidates.py --repo "$HELD_OUT_REPO" --candidates outputs/samples/repaired_candidates.jsonl --out outputs/candidate_scores.jsonl
+""",
+        "run_smoke_chain.sh": """#!/usr/bin/env bash
+set -euo pipefail
+
+: "${HELD_OUT_DATASET:?set HELD_OUT_DATASET to a dataset directory containing manifest.json}"
+
+export SMOKE_OUT="${SMOKE_OUT:-outputs/smoke-chain}"
+SFT_SMOKE_STEPS="${SFT_SMOKE_STEPS:-1}"
+DPO_SMOKE_STEPS="${DPO_SMOKE_STEPS:-1}"
+RL_SMOKE_STEPS="${RL_SMOKE_STEPS:-1}"
+SMOKE_MAX_PROMPTS="${SMOKE_MAX_PROMPTS:-1}"
+SMOKE_SCHEMA_PREFIX_MODE="${SMOKE_SCHEMA_PREFIX_MODE:-schema-scaffold}"
+SMOKE_GENERATION_MODE="${SMOKE_GENERATION_MODE:-full-json}"
+SMOKE_FIELD_MAX_NEW_TOKENS="${SMOKE_FIELD_MAX_NEW_TOKENS:-384}"
+SMOKE_FIELD_TARGET_MODE="${SMOKE_FIELD_TARGET_MODE:-compact}"
+SMOKE_FIELD_TARGET_LIMIT="${SMOKE_FIELD_TARGET_LIMIT:-0}"
+SMOKE_FIELD_TARGET_MAX_CHUNKS="${SMOKE_FIELD_TARGET_MAX_CHUNKS:-1}"
+SMOKE_FIELD_TARGET_CHUNK_FIELDS="${SMOKE_FIELD_TARGET_CHUNK_FIELDS:-}"
+SMOKE_FIELD_OBJECT_PREFIX_MODE="${SMOKE_FIELD_OBJECT_PREFIX_MODE:-off}"
+SMOKE_FAITHFULNESS_REPAIR_MODE="${SMOKE_FAITHFULNESS_REPAIR_MODE:-schema-only}"
+SFT_SEED="${SFT_SEED:-42}"
+DPO_SEED="${DPO_SEED:-43}"
+RL_SEED="${RL_SEED:-44}"
+
+mkdir -p "$SMOKE_OUT/samples"
+PYTHONPATH=src python -m semantic_mirror.cli train validate training --out "$SMOKE_OUT/validation_report.json" > "$SMOKE_OUT/validate_summary.json"
+PYTHONPATH=src python -m semantic_mirror.cli train audit training --out "$SMOKE_OUT/audit.json" > "$SMOKE_OUT/audit_summary.json"
+
+python training/run_unsloth_sft.py \
+  --training-dir training \
+  --output-dir "$SMOKE_OUT/semantic-mirror-sft" \
+  --max-steps "$SFT_SMOKE_STEPS" \
+  --seed "$SFT_SEED"
+
+generate_and_inspect() {
+  local stage="$1"
+  local model_path="$2"
+  python training/generate_sir_candidates.py \
+    --training-dir training \
+    --model-name-or-path "$model_path" \
+    --out "$SMOKE_OUT/samples/${stage}_repaired_candidates.jsonl" \
+    --raw-out "$SMOKE_OUT/samples/${stage}_raw_candidates.jsonl" \
+    --repaired-out "$SMOKE_OUT/samples/${stage}_repaired_candidates.jsonl" \
+    --max-prompts "$SMOKE_MAX_PROMPTS" \
+    --generation-mode "$SMOKE_GENERATION_MODE" \
+    --field-max-new-tokens "$SMOKE_FIELD_MAX_NEW_TOKENS" \
+    --field-target-mode "$SMOKE_FIELD_TARGET_MODE" \
+    --field-target-limit "$SMOKE_FIELD_TARGET_LIMIT" \
+    --field-target-max-chunks "$SMOKE_FIELD_TARGET_MAX_CHUNKS" \
+    --field-target-chunk-fields "$SMOKE_FIELD_TARGET_CHUNK_FIELDS" \
+    --field-object-prefix-mode "$SMOKE_FIELD_OBJECT_PREFIX_MODE" \
+    --faithfulness-repair-mode "$SMOKE_FAITHFULNESS_REPAIR_MODE" \
+    --schema-prefix-mode "$SMOKE_SCHEMA_PREFIX_MODE"
+  PYTHONPATH=src python -m semantic_mirror.cli train inspect-samples "$HELD_OUT_DATASET" \
+    --raw-candidates "$SMOKE_OUT/samples/${stage}_raw_candidates.jsonl" \
+    --repaired-candidates "$SMOKE_OUT/samples/${stage}_repaired_candidates.jsonl" \
+    --out "$SMOKE_OUT/samples/${stage}" \
+    --model-name "semantic-mirror-${stage}-smoke" \
+    --model-or-adapter-path "$model_path"
+}
+
+generate_and_inspect sft "$SMOKE_OUT/semantic-mirror-sft"
+
+python training/run_preference_dpo.py \
+  --training-dir training \
+  --model-name-or-path "$SMOKE_OUT/semantic-mirror-sft" \
+  --output-dir "$SMOKE_OUT/semantic-mirror-dpo" \
+  --max-steps "$DPO_SMOKE_STEPS" \
+  --seed "$DPO_SEED"
+generate_and_inspect dpo "$SMOKE_OUT/semantic-mirror-dpo"
+
+python training/run_reward_rl.py \
+  --training-dir training \
+  --model-name-or-path "$SMOKE_OUT/semantic-mirror-dpo" \
+  --output-dir "$SMOKE_OUT/semantic-mirror-rl" \
+  --max-steps "$RL_SMOKE_STEPS" \
+  --seed "$RL_SEED" \
+  --schema-prefix-mode "$SMOKE_SCHEMA_PREFIX_MODE"
+generate_and_inspect rl "$SMOKE_OUT/semantic-mirror-rl"
+
+PYTHONPATH=src python -m semantic_mirror.cli train report "$SMOKE_OUT" --out "$SMOKE_OUT/diagnostics"
+
+python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["SMOKE_OUT"])
+stages = ["sft", "dpo", "rl"]
+
+def rate(numerator, denominator):
+    if numerator is None or denominator in (None, 0):
+        return None
+    return numerator / denominator
+
+def sample_rollup(path):
+    if not path.exists():
+        return {"exists": False}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    raw_candidate_count = data.get("raw_candidate_count")
+    raw_parseability_rate = rate(data.get("raw_parseability_count"), raw_candidate_count)
+    raw_schema_validity_rate = rate(data.get("raw_schema_validity_count"), raw_candidate_count)
+    raw_repair_free_rate = rate(data.get("raw_repair_free_contract_count"), raw_candidate_count)
+    repaired_candidate_count = data.get("repaired_candidate_count")
+    repaired_schema_validity_rate = rate(
+        data.get("repaired_schema_validity_count"),
+        repaired_candidate_count,
+    )
+    return {
+        "exists": True,
+        "raw_candidate_count": raw_candidate_count,
+        "raw_parseability_count": data.get("raw_parseability_count"),
+        "raw_parseability_rate": raw_parseability_rate,
+        "raw_parseability_gate_passed": (
+            raw_parseability_rate is not None and raw_parseability_rate >= 0.8
+        ),
+        "raw_schema_validity_count": data.get("raw_schema_validity_count"),
+        "raw_schema_validity_rate": raw_schema_validity_rate,
+        "raw_schema_validity_gate_passed": (
+            raw_schema_validity_rate is not None and raw_schema_validity_rate >= 0.8
+        ),
+        "raw_repair_free_contract_count": data.get("raw_repair_free_contract_count"),
+        "raw_repair_free_contract_rate": raw_repair_free_rate,
+        "raw_repair_free_contract_gate_passed": (
+            raw_repair_free_rate is not None and raw_repair_free_rate >= 0.5
+        ),
+        "raw_generation_cap_hits": data.get("raw_generation_cap_hits"),
+        "repaired_candidate_count": repaired_candidate_count,
+        "repaired_schema_validity_count": data.get("repaired_schema_validity_count"),
+        "repaired_schema_validity_rate": repaired_schema_validity_rate,
+        "repaired_schema_validity_gate_passed": repaired_schema_validity_rate == 1.0,
+        "static_faithfulness_score": data.get("static_faithfulness_score"),
+        "hallucination_penalties": data.get("hallucination_penalties"),
+    }
+
+manifest = {
+    "mode": "smoke_chain",
+    "smoke_out": str(root),
+    "training_dir": "training",
+    "stages": {},
+    "samples": {},
+    "diagnostics": str(root / "diagnostics" / "training_summary.json"),
+}
+for stage in stages:
+    stage_dir = root / f"semantic-mirror-{stage}"
+    stage_manifest = stage_dir / "training_stage_manifest.json"
+    manifest["stages"][stage] = {
+        "output_dir": str(stage_dir),
+        "stage_manifest": str(stage_manifest),
+        "stage_manifest_exists": stage_manifest.exists(),
+    }
+    sample_manifest = root / "samples" / stage / "sample_manifest.json"
+    manifest["samples"][stage] = {
+        "raw_candidates": str(root / "samples" / f"{stage}_raw_candidates.jsonl"),
+        "repaired_candidates": str(root / "samples" / f"{stage}_repaired_candidates.jsonl"),
+        "sample_manifest": str(sample_manifest),
+        "sample_manifest_exists": sample_manifest.exists(),
+        "sample_rollup": sample_rollup(sample_manifest),
+    }
+diagnostics = root / "diagnostics" / "training_summary.json"
+manifest["diagnostics_exists"] = diagnostics.exists()
+manifest["all_stage_outputs_exist"] = all(
+    item["stage_manifest_exists"] for item in manifest["stages"].values()
+)
+manifest["all_sample_manifests_exist"] = all(
+    item["sample_manifest_exists"] for item in manifest["samples"].values()
+)
+manifest["all_repaired_samples_schema_valid"] = all(
+    item["sample_rollup"].get("repaired_candidate_count")
+    == item["sample_rollup"].get("repaired_schema_validity_count")
+    for item in manifest["samples"].values()
+)
+(root / "smoke_chain_manifest.json").write_text(
+    json.dumps(manifest, indent=2, sort_keys=True) + "\\n",
+    encoding="utf-8",
+)
+PY
+""",
+        "run_wsl_smoke_chain.ps1": """param(
+  [Parameter(Mandatory = $true)]
+  [string]$HeldOutDataset,
+  [string]$Distro = "Ubuntu",
+  [string]$Python = "python3.12",
+  [string]$VenvPath = ".venv",
+  [string]$SmokeOut = "outputs/smoke-chain-wsl",
+  [int]$SftSteps = 1,
+  [int]$DpoSteps = 1,
+  [int]$RlSteps = 1,
+  [int]$MaxPrompts = 1
+)
+
+$ErrorActionPreference = "Stop"
+$windowsPath = (Resolve-Path ".").Path
+$datasetPath = (Resolve-Path $HeldOutDataset).Path
+$windowsPathForWsl = $windowsPath -replace '\\\\', '/'
+$datasetPathForWsl = $datasetPath -replace '\\\\', '/'
+$wslPath = (wsl.exe -d $Distro -- wslpath -a "$windowsPathForWsl").Trim()
+$heldOutWsl = (wsl.exe -d $Distro -- wslpath -a "$datasetPathForWsl").Trim()
+$scriptPath = Join-Path $windowsPath "launch\\.run_wsl_smoke_chain.generated.sh"
+
+$bashScript = @'
+set -euo pipefail
+cd '__WSL_PATH__'
+VENV_PATH='__VENV_PATH__'
+if [ ! -x "$VENV_PATH/bin/python" ]; then
+  if [ "$VENV_PATH" != ".venv" ]; then
+    echo "Requested VenvPath '$VENV_PATH' does not contain bin/python." >&2
+    exit 1
+  fi
+  PYTHON_BIN='__PYTHON__' bash setup/bootstrap_linux_cuda.sh
+fi
+mkdir -p '__SMOKE_OUT__'
+source "$VENV_PATH/bin/activate"
+python - <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+info = {
+    "mode": "wsl_smoke_chain_environment",
+    "wsl_repo_path": "__WSL_PATH__",
+    "held_out_dataset": "__HELD_OUT_WSL__",
+    "python_executable": sys.executable,
+    "venv_path": "__VENV_PATH__",
+    "output_path": "__SMOKE_OUT__",
+}
+try:
+    import torch
+    info["torch_version"] = getattr(torch, "__version__", None)
+    info["torch_cuda_version"] = getattr(getattr(torch, "version", None), "cuda", None)
+    info["cuda_available"] = bool(torch.cuda.is_available())
+    info["cuda_device_count"] = int(torch.cuda.device_count())
+    info["cuda_device"] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+except Exception as exc:
+    info["cuda_available"] = False
+    info["cuda_error"] = str(exc)
+try:
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    info["nvidia_smi"] = result.stdout.strip() if result.returncode == 0 else result.stderr.strip()
+except Exception as exc:
+    info["nvidia_smi_error"] = str(exc)
+Path("__SMOKE_OUT__").mkdir(parents=True, exist_ok=True)
+Path("__SMOKE_OUT__/wsl_smoke_environment.json").write_text(json.dumps(info, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+print(json.dumps(info, indent=2, sort_keys=True))
+PY
+HELD_OUT_DATASET='__HELD_OUT_WSL__' SMOKE_OUT='__SMOKE_OUT__' SFT_SMOKE_STEPS='__SFT_STEPS__' DPO_SMOKE_STEPS='__DPO_STEPS__' RL_SMOKE_STEPS='__RL_STEPS__' SMOKE_MAX_PROMPTS='__MAX_PROMPTS__' bash launch/run_smoke_chain.sh
+'@
+
+$bashScript = $bashScript.Replace("__WSL_PATH__", $wslPath)
+$bashScript = $bashScript.Replace("__HELD_OUT_WSL__", $heldOutWsl)
+$bashScript = $bashScript.Replace("__VENV_PATH__", $VenvPath)
+$bashScript = $bashScript.Replace("__PYTHON__", $Python)
+$bashScript = $bashScript.Replace("__SMOKE_OUT__", $SmokeOut)
+$bashScript = $bashScript.Replace("__SFT_STEPS__", [string]$SftSteps)
+$bashScript = $bashScript.Replace("__DPO_STEPS__", [string]$DpoSteps)
+$bashScript = $bashScript.Replace("__RL_STEPS__", [string]$RlSteps)
+$bashScript = $bashScript.Replace("__MAX_PROMPTS__", [string]$MaxPrompts)
+$bashScript = $bashScript -replace "`r`n", "`n"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($scriptPath, $bashScript, $utf8NoBom)
+$scriptPathForWsl = $scriptPath -replace '\\\\', '/'
+$scriptWslPath = (wsl.exe -d $Distro -- wslpath -a "$scriptPathForWsl").Trim()
+try {
+  wsl.exe -d $Distro -- bash "$scriptWslPath"
+} finally {
+  Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
+}
 """,
         "run_full_training_eval.sh": """#!/usr/bin/env bash
 set -euo pipefail
@@ -1215,71 +2284,662 @@ set -euo pipefail
 : "${HELD_OUT_DATASET:?set HELD_OUT_DATASET to a dataset directory containing manifest.json}"
 : "${BASELINE_CANDIDATES:?set BASELINE_CANDIDATES to baseline candidate JSONL for the held-out dataset, for example teacher_results/teacher_candidates.jsonl}"
 
-mkdir -p outputs
+mkdir -p outputs/samples outputs/logs
+SFT_MAX_STEPS="${SFT_MAX_STEPS:-2000}"
+DPO_MAX_STEPS="${DPO_MAX_STEPS:-800}"
+RL_MAX_STEPS="${RL_MAX_STEPS:-1000}"
+SFT_SEED="${SFT_SEED:-42}"
+DPO_SEED="${DPO_SEED:-43}"
+RL_SEED="${RL_SEED:-44}"
+SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-10}"
+DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-10}"
+SFT_SAVE_TOTAL_LIMIT="${SFT_SAVE_TOTAL_LIMIT:-3}"
+DPO_SAVE_TOTAL_LIMIT="${DPO_SAVE_TOTAL_LIMIT:-3}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1536}"
+EVAL_MAX_PROMPTS="${EVAL_MAX_PROMPTS:-}"
+SCHEMA_PREFIX_MODE="${SCHEMA_PREFIX_MODE:-schema-scaffold}"
+GENERATION_MODE="${GENERATION_MODE:-full-json}"
+FIELD_MAX_NEW_TOKENS="${FIELD_MAX_NEW_TOKENS:-384}"
+FIELD_TARGET_MODE="${FIELD_TARGET_MODE:-compact}"
+FIELD_TARGET_LIMIT="${FIELD_TARGET_LIMIT:-0}"
+FIELD_TARGET_MAX_CHUNKS="${FIELD_TARGET_MAX_CHUNKS:-1}"
+FIELD_TARGET_CHUNK_FIELDS="${FIELD_TARGET_CHUNK_FIELDS:-}"
+FIELD_OBJECT_PREFIX_MODE="${FIELD_OBJECT_PREFIX_MODE:-off}"
+FAITHFULNESS_REPAIR_MODE="${FAITHFULNESS_REPAIR_MODE:-schema-only}"
+REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"
+SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"
+DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"
 
-python training/run_unsloth_sft.py --training-dir training --output-dir outputs/semantic-mirror-sft
-PYTHONPATH=src python -m semantic_mirror.cli eval candidates "$HELD_OUT_DATASET" \
-  --candidates "$BASELINE_CANDIDATES" \
+PYTHONPATH=src python -m semantic_mirror.cli train validate training --out outputs/validation_report.json > outputs/validate_summary.json
+PYTHONPATH=src python -m semantic_mirror.cli train audit training --out outputs/audit.json > outputs/audit_summary.json
+
+python - "$HELD_OUT_DATASET" "$BASELINE_CANDIDATES" "outputs/heldout_eval_dataset" "outputs/baseline_candidates_eval.jsonl" "$EVAL_MAX_PROMPTS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+dataset = Path(sys.argv[1])
+baseline = Path(sys.argv[2])
+out = Path(sys.argv[3])
+baseline_out = Path(sys.argv[4])
+max_prompts = int(sys.argv[5]) if sys.argv[5] else None
+manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
+baseline_rows = [
+    json.loads(line)
+    for line in baseline.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+candidate_ids = []
+seen = set()
+for row in baseline_rows:
+    for key in ("dataset_record_id", "record_id", "unit_id"):
+        value = row.get(key)
+        if value and value not in seen:
+            candidate_ids.append(value)
+            seen.add(value)
+            break
+if max_prompts is not None:
+    candidate_ids = candidate_ids[:max_prompts]
+candidate_id_set = set(candidate_ids)
+
+def read_jsonl(name):
+    path = dataset / manifest["files"][name]
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+gold = read_jsonl("gold")
+silver = read_jsonl("silver")
+hard_negative = read_jsonl("hard_negative")
+
+def record_matches(record):
+    return record.get("record_id") in candidate_id_set or record.get("unit_id") in candidate_id_set
+
+filtered_gold = [record for record in gold if record_matches(record)]
+filtered_silver = [record for record in silver if record_matches(record)]
+selected_unit_ids = {record["unit_id"] for record in [*filtered_gold, *filtered_silver]}
+filtered_hard_negative = [
+    record for record in hard_negative if record.get("positive_unit_id") in selected_unit_ids
+]
+filtered_baseline = [
+    row
+    for row in baseline_rows
+    if row.get("dataset_record_id") in candidate_id_set
+    or row.get("record_id") in candidate_id_set
+    or row.get("unit_id") in selected_unit_ids
+]
+
+out.mkdir(parents=True, exist_ok=True)
+baseline_out.parent.mkdir(parents=True, exist_ok=True)
+for name, rows in {
+    "gold.jsonl": filtered_gold,
+    "silver.jsonl": filtered_silver,
+    "hard_negative.jsonl": filtered_hard_negative,
+}.items():
+    (out / name).write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\\n" for row in rows),
+        encoding="utf-8",
+    )
+(out / "review_queue.jsonl").write_text("", encoding="utf-8")
+baseline_out.write_text(
+    "".join(json.dumps(row, sort_keys=True) + "\\n" for row in filtered_baseline),
+    encoding="utf-8",
+)
+subset_manifest = dict(manifest)
+subset_manifest["mode"] = "heldout_eval_subset"
+subset_manifest["source_dataset"] = str(dataset)
+subset_manifest["baseline_candidates"] = str(baseline)
+subset_manifest["files"] = {
+    "gold": "gold.jsonl",
+    "silver": "silver.jsonl",
+    "hard_negative": "hard_negative.jsonl",
+    "review_queue": "review_queue.jsonl",
+}
+subset_manifest["counts"] = {
+    **manifest.get("counts", {}),
+    "gold_records": len(filtered_gold),
+    "silver_records": len(filtered_silver),
+    "hard_negative_records": len(filtered_hard_negative),
+    "baseline_candidate_records": len(filtered_baseline),
+    "expected_units": len(selected_unit_ids),
+}
+(out / "manifest.json").write_text(
+    json.dumps(subset_manifest, indent=2, sort_keys=True) + "\\n",
+    encoding="utf-8",
+)
+if not selected_unit_ids:
+    raise SystemExit("No held-out records matched BASELINE_CANDIDATES.")
+PY
+
+PYTHONPATH=src python -m semantic_mirror.cli train prepare \
+  outputs/heldout_eval_dataset \
+  --out outputs/heldout_eval_training
+
+generate_and_inspect() {
+  local stage="$1"
+  local model_path="$2"
+  local seed="$3"
+  local max_prompts_value="${EVAL_MAX_PROMPTS:-all}"
+  local prompt_args=()
+  if [[ -n "$EVAL_MAX_PROMPTS" ]]; then
+    prompt_args=(--max-prompts "$EVAL_MAX_PROMPTS")
+  fi
+  local generation_config
+  generation_config=$(python - "$stage" "$seed" "$MAX_NEW_TOKENS" "$max_prompts_value" "$SCHEMA_PREFIX_MODE" "$GENERATION_MODE" "$FIELD_MAX_NEW_TOKENS" "$FIELD_TARGET_MODE" "$FIELD_TARGET_LIMIT" "$FIELD_TARGET_MAX_CHUNKS" "$FIELD_TARGET_CHUNK_FIELDS" "$FIELD_OBJECT_PREFIX_MODE" "$FAITHFULNESS_REPAIR_MODE" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "stage": sys.argv[1],
+    "seed": int(sys.argv[2]),
+    "max_new_tokens": int(sys.argv[3]),
+    "max_prompts": sys.argv[4],
+    "schema_prefix_mode": sys.argv[5],
+    "generation_mode": sys.argv[6],
+    "field_max_new_tokens": int(sys.argv[7]),
+    "field_target_mode": sys.argv[8],
+    "field_target_limit": int(sys.argv[9]),
+    "field_target_max_chunks": int(sys.argv[10]),
+    "field_target_chunk_fields": [item for item in sys.argv[11].split(",") if item],
+    "field_object_prefix_mode": sys.argv[12],
+    "faithfulness_repair_mode": sys.argv[13],
+}))
+PY
+)
+  python training/generate_sir_candidates.py --training-dir training \
+    --prompt-file outputs/heldout_eval_training/rl_prompts.jsonl \
+    --model-name-or-path "$model_path" \
+    --out "outputs/samples/${stage}_repaired_candidates.jsonl" \
+    --raw-out "outputs/samples/${stage}_raw_candidates.jsonl" \
+    --repaired-out "outputs/samples/${stage}_repaired_candidates.jsonl" \
+    --max-new-tokens "$MAX_NEW_TOKENS" \
+    --seed "$seed" \
+    --generation-mode "$GENERATION_MODE" \
+    --field-max-new-tokens "$FIELD_MAX_NEW_TOKENS" \
+    --field-target-mode "$FIELD_TARGET_MODE" \
+    --field-target-limit "$FIELD_TARGET_LIMIT" \
+    --field-target-max-chunks "$FIELD_TARGET_MAX_CHUNKS" \
+    --field-target-chunk-fields "$FIELD_TARGET_CHUNK_FIELDS" \
+    --field-object-prefix-mode "$FIELD_OBJECT_PREFIX_MODE" \
+    --faithfulness-repair-mode "$FAITHFULNESS_REPAIR_MODE" \
+    --schema-prefix-mode "$SCHEMA_PREFIX_MODE" \
+    "${prompt_args[@]}"
+  PYTHONPATH=src python -m semantic_mirror.cli train inspect-samples outputs/heldout_eval_dataset \
+    --raw-candidates "outputs/samples/${stage}_raw_candidates.jsonl" \
+    --repaired-candidates "outputs/samples/${stage}_repaired_candidates.jsonl" \
+    --out "outputs/samples/${stage}" \
+    --model-name "semantic-mirror-${stage}" \
+    --model-or-adapter-path "$model_path" \
+    --generation-config-json "$generation_config"
+  cp "outputs/samples/${stage}/raw_eval.json" "outputs/${stage}_raw_eval.json"
+  cp "outputs/samples/${stage}/repaired_eval.json" "outputs/${stage}_eval.json"
+}
+
+stage_ready() {
+  local stage_dir="$1"
+  local requested_steps="$2"
+  if [[ "$REUSE_STAGE_OUTPUTS" != "1" || ! -f "${stage_dir}/training_stage_manifest.json" ]]; then
+    return 1
+  fi
+  python - "$stage_dir/training_stage_manifest.json" "$requested_steps" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+raise SystemExit(0 if manifest.get("max_steps") == int(sys.argv[2]) else 1)
+PY
+}
+
+if stage_ready outputs/semantic-mirror-sft "$SFT_MAX_STEPS"; then
+  echo "Reusing existing SFT stage output at outputs/semantic-mirror-sft"
+else
+  sft_resume_args=()
+  if [[ -n "$SFT_RESUME_FROM_CHECKPOINT" ]]; then
+    sft_resume_args=(--resume-from-checkpoint "$SFT_RESUME_FROM_CHECKPOINT")
+  fi
+  python training/run_unsloth_sft.py --training-dir training --output-dir outputs/semantic-mirror-sft --max-steps "$SFT_MAX_STEPS" --seed "$SFT_SEED" --save-steps "$SFT_SAVE_STEPS" --save-total-limit "$SFT_SAVE_TOTAL_LIMIT" "${sft_resume_args[@]}"
+fi
+PYTHONPATH=src python -m semantic_mirror.cli eval candidates outputs/heldout_eval_dataset \
+  --candidates outputs/baseline_candidates_eval.jsonl \
   --model-name baseline \
-  --out outputs/baseline_eval.json
+  --out outputs/baseline_eval.json || true
 
-python training/generate_sir_candidates.py --training-dir training \
-  --model-name-or-path outputs/semantic-mirror-sft \
-  --out outputs/sft_candidates.jsonl
-PYTHONPATH=src python -m semantic_mirror.cli eval candidates "$HELD_OUT_DATASET" \
-  --candidates outputs/sft_candidates.jsonl \
-  --model-name semantic-mirror-sft \
-  --out outputs/sft_eval.json
+generate_and_inspect sft outputs/semantic-mirror-sft "$SFT_SEED"
 PYTHONPATH=src python -m semantic_mirror.cli eval model-compare \
   outputs/baseline_eval.json outputs/sft_eval.json \
   --stage sft \
-  --out outputs/sft_vs_baseline.json
+  --out outputs/sft_vs_baseline.json || true
+PYTHONPATH=src python -m semantic_mirror.cli eval model-compare \
+  outputs/baseline_eval.json outputs/sft_raw_eval.json \
+  --stage sft \
+  --out outputs/sft_raw_vs_baseline.json || true
 
-python training/run_preference_dpo.py --training-dir training \
+if stage_ready outputs/semantic-mirror-dpo "$DPO_MAX_STEPS"; then
+  echo "Reusing existing DPO stage output at outputs/semantic-mirror-dpo"
+else
+  dpo_resume_args=()
+  if [[ -n "$DPO_RESUME_FROM_CHECKPOINT" ]]; then
+    dpo_resume_args=(--resume-from-checkpoint "$DPO_RESUME_FROM_CHECKPOINT")
+  fi
+  python training/run_preference_dpo.py --training-dir training \
   --model-name-or-path outputs/semantic-mirror-sft \
-  --output-dir outputs/semantic-mirror-dpo
-python training/run_reward_rl.py --training-dir training \
+  --output-dir outputs/semantic-mirror-dpo \
+  --max-steps "$DPO_MAX_STEPS" \
+  --seed "$DPO_SEED" \
+  --save-steps "$DPO_SAVE_STEPS" \
+  --save-total-limit "$DPO_SAVE_TOTAL_LIMIT" \
+  "${dpo_resume_args[@]}"
+fi
+generate_and_inspect dpo outputs/semantic-mirror-dpo "$DPO_SEED"
+PYTHONPATH=src python -m semantic_mirror.cli eval model-compare \
+  outputs/sft_eval.json outputs/dpo_eval.json \
+  --stage dpo \
+  --out outputs/dpo_vs_sft.json || true
+PYTHONPATH=src python -m semantic_mirror.cli eval model-compare \
+  outputs/sft_raw_eval.json outputs/dpo_raw_eval.json \
+  --stage dpo \
+  --out outputs/dpo_raw_vs_sft.json || true
+if stage_ready outputs/semantic-mirror-rl "$RL_MAX_STEPS"; then
+  echo "Reusing existing RL stage output at outputs/semantic-mirror-rl"
+else
+  python training/run_reward_rl.py --training-dir training \
   --model-name-or-path outputs/semantic-mirror-dpo \
-  --output-dir outputs/semantic-mirror-rl
-python training/generate_sir_candidates.py --training-dir training \
-  --model-name-or-path outputs/semantic-mirror-rl \
-  --out outputs/rl_candidates.jsonl
-PYTHONPATH=src python -m semantic_mirror.cli eval candidates "$HELD_OUT_DATASET" \
-  --candidates outputs/rl_candidates.jsonl \
-  --model-name semantic-mirror-rl \
-  --out outputs/rl_eval.json
+  --output-dir outputs/semantic-mirror-rl \
+  --max-steps "$RL_MAX_STEPS" \
+  --seed "$RL_SEED" \
+  --schema-prefix-mode "$SCHEMA_PREFIX_MODE"
+fi
+generate_and_inspect rl outputs/semantic-mirror-rl "$RL_SEED"
 PYTHONPATH=src python -m semantic_mirror.cli eval model-compare \
   outputs/sft_eval.json outputs/rl_eval.json \
   --stage rl \
-  --out outputs/rl_vs_sft.json
+  --out outputs/rl_vs_sft.json || true
+PYTHONPATH=src python -m semantic_mirror.cli eval model-compare \
+  outputs/sft_raw_eval.json outputs/rl_raw_eval.json \
+  --stage rl \
+  --out outputs/rl_raw_vs_sft.json || true
+PYTHONPATH=src python -m semantic_mirror.cli train report outputs --out outputs/diagnostics
 
-python - <<'PY'
+python - "$SFT_MAX_STEPS" "$DPO_MAX_STEPS" "$RL_MAX_STEPS" "$SFT_SEED" "$DPO_SEED" "$RL_SEED" "$EVAL_MAX_PROMPTS" "$MAX_NEW_TOKENS" "$SCHEMA_PREFIX_MODE" "$GENERATION_MODE" "$FIELD_MAX_NEW_TOKENS" "$FIELD_TARGET_MODE" "$FIELD_TARGET_LIMIT" "$FIELD_TARGET_MAX_CHUNKS" "$FIELD_TARGET_CHUNK_FIELDS" "$FIELD_OBJECT_PREFIX_MODE" "$FAITHFULNESS_REPAIR_MODE" "$REUSE_STAGE_OUTPUTS" "$SFT_RESUME_FROM_CHECKPOINT" "$DPO_RESUME_FROM_CHECKPOINT" "$SFT_SAVE_STEPS" "$DPO_SAVE_STEPS" "$SFT_SAVE_TOTAL_LIMIT" "$DPO_SAVE_TOTAL_LIMIT" <<'PY'
 import json
+import sys
 from pathlib import Path
 
-reports = {
-    "baseline_eval": "outputs/baseline_eval.json",
+required_reports = {
     "sft_eval": "outputs/sft_eval.json",
     "sft_vs_baseline": "outputs/sft_vs_baseline.json",
+    "dpo_eval": "outputs/dpo_eval.json",
+    "dpo_vs_sft": "outputs/dpo_vs_sft.json",
     "rl_eval": "outputs/rl_eval.json",
     "rl_vs_sft": "outputs/rl_vs_sft.json",
 }
-summary = {}
-for name, path in reports.items():
+diagnostic_reports = {
+    "validation_report": "outputs/validation_report.json",
+    "audit_report": "outputs/audit.json",
+    "baseline_eval": "outputs/baseline_eval.json",
+    "sft_raw_eval": "outputs/sft_raw_eval.json",
+    "sft_raw_vs_baseline": "outputs/sft_raw_vs_baseline.json",
+    "dpo_raw_eval": "outputs/dpo_raw_eval.json",
+    "dpo_raw_vs_sft": "outputs/dpo_raw_vs_sft.json",
+    "rl_raw_eval": "outputs/rl_raw_eval.json",
+    "rl_raw_vs_sft": "outputs/rl_raw_vs_sft.json",
+    "sft_sample_manifest": "outputs/samples/sft/sample_manifest.json",
+    "dpo_sample_manifest": "outputs/samples/dpo/sample_manifest.json",
+    "rl_sample_manifest": "outputs/samples/rl/sample_manifest.json",
+    "sft_stage_manifest": "outputs/semantic-mirror-sft/training_stage_manifest.json",
+    "dpo_stage_manifest": "outputs/semantic-mirror-dpo/training_stage_manifest.json",
+    "rl_stage_manifest": "outputs/semantic-mirror-rl/training_stage_manifest.json",
+    "diagnostics": "outputs/diagnostics/training_summary.json",
+}
+
+def summarize(path):
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    summary[name] = {
+    return {
         "passed": data.get("passed"),
         "mode": data.get("mode"),
         "metrics": data.get("metrics", {}),
         "deltas": data.get("deltas", {}),
         "gates": data.get("gates", []),
+        "raw_candidate_count": data.get("raw_candidate_count"),
+        "raw_parseability_count": data.get("raw_parseability_count"),
+        "raw_generation_cap_hits": data.get("raw_generation_cap_hits"),
+        "raw_schema_validity_count": data.get("raw_schema_validity_count"),
+        "raw_repair_free_contract_count": data.get("raw_repair_free_contract_count"),
+        "raw_exact_identity_count": data.get("raw_exact_identity_count"),
+        "raw_top_level_key_validity_count": data.get("raw_top_level_key_validity_count"),
+        "raw_compact_shape_count": data.get("raw_compact_shape_count"),
+        "repaired_schema_validity_count": data.get("repaired_schema_validity_count"),
+        "raw_static_faithfulness_score": data.get("raw_static_faithfulness_score"),
+        "static_faithfulness_score": data.get("static_faithfulness_score"),
+        "missing_metrics": data.get("missing_metrics"),
+        "max_steps": data.get("max_steps"),
+        "seed": data.get("seed"),
+        "dataset_records": data.get("dataset_records"),
+        "output_dir": data.get("output_dir"),
     }
+
+def rate(numerator, denominator):
+    if numerator is None or denominator in (None, 0):
+        return None
+    return numerator / denominator
+
+def raw_gate_stage_summary(stage, compare_name):
+    sample = summary["diagnostic_reports"].get(f"{stage}_sample_manifest", {})
+    raw_eval = summary["diagnostic_reports"].get(f"{stage}_raw_eval", {})
+    raw_compare = summary["diagnostic_reports"].get(compare_name, {})
+    raw_candidate_count = sample.get("raw_candidate_count")
+    raw_parseability_rate = rate(sample.get("raw_parseability_count"), raw_candidate_count)
+    raw_schema_validity_rate = rate(sample.get("raw_schema_validity_count"), raw_candidate_count)
+    raw_repair_free_rate = rate(sample.get("raw_repair_free_contract_count"), raw_candidate_count)
+    return {
+        "raw_eval_report": f"outputs/{stage}_raw_eval.json",
+        "raw_compare_report": raw_compare.get("path") or diagnostic_reports[compare_name],
+        "raw_candidate_count": raw_candidate_count,
+        "raw_parseability_count": sample.get("raw_parseability_count"),
+        "raw_parseability_rate": raw_parseability_rate,
+        "raw_parseability_gate_passed": (
+            raw_parseability_rate is not None and raw_parseability_rate >= 0.8
+        ),
+        "raw_schema_validity_count": sample.get("raw_schema_validity_count"),
+        "raw_schema_validity_rate": raw_schema_validity_rate,
+        "raw_schema_validity_gate_passed": (
+            raw_schema_validity_rate is not None and raw_schema_validity_rate >= 0.8
+        ),
+        "raw_repair_free_contract_count": sample.get("raw_repair_free_contract_count"),
+        "raw_repair_free_contract_rate": raw_repair_free_rate,
+        "raw_repair_free_contract_gate_passed": (
+            raw_repair_free_rate is not None and raw_repair_free_rate >= 0.5
+        ),
+        "raw_generation_cap_hits": sample.get("raw_generation_cap_hits"),
+        "raw_eval_passed": raw_eval.get("passed"),
+        "raw_eval_metrics": raw_eval.get("metrics", {}),
+        "raw_compare_passed": raw_compare.get("passed"),
+        "raw_compare_deltas": raw_compare.get("deltas", {}),
+        "raw_compare_gates": raw_compare.get("gates", []),
+    }
+
+summary = {
+    "mode": "training_eval_summary",
+    "eval_run_config": {
+        "requested_max_steps": {
+            "sft": int(sys.argv[1]),
+            "dpo": int(sys.argv[2]),
+            "rl": int(sys.argv[3]),
+        },
+        "seeds": {
+            "sft": int(sys.argv[4]),
+            "dpo": int(sys.argv[5]),
+            "rl": int(sys.argv[6]),
+        },
+        "eval_max_prompts": None if sys.argv[7] == "" else int(sys.argv[7]),
+        "max_new_tokens": int(sys.argv[8]),
+        "schema_prefix_mode": sys.argv[9],
+        "generation_mode": sys.argv[10],
+        "field_max_new_tokens": int(sys.argv[11]),
+        "field_target_mode": sys.argv[12],
+        "field_target_limit": int(sys.argv[13]),
+        "field_target_max_chunks": int(sys.argv[14]),
+        "field_target_chunk_fields": [item for item in sys.argv[15].split(",") if item],
+        "field_object_prefix_mode": sys.argv[16],
+        "faithfulness_repair_mode": sys.argv[17],
+        "reuse_stage_outputs": sys.argv[18] == "1",
+        "sft_resume_from_checkpoint": sys.argv[19] or None,
+        "dpo_resume_from_checkpoint": sys.argv[20] or None,
+        "checkpoint_policy": {
+            "sft_save_steps": int(sys.argv[21]),
+            "dpo_save_steps": int(sys.argv[22]),
+            "sft_save_total_limit": int(sys.argv[23]),
+            "dpo_save_total_limit": int(sys.argv[24]),
+        },
+    },
+    "gate_policy": {
+        "required_reports": "must_pass",
+        "diagnostic_reports": "must_exist_but_may_fail",
+        "raw_comparison_reports": "diagnostic_non_blocking",
+    },
+    "required_reports": {},
+    "diagnostic_reports": {},
+}
+for name, path in required_reports.items():
+    summary["required_reports"][name] = summarize(path)
+for name, path in diagnostic_reports.items():
+    report_path = Path(path)
+    summary["diagnostic_reports"][name] = {
+        "exists": report_path.exists(),
+        **(summarize(path) if report_path.exists() else {}),
+    }
+summary["raw_gate_summary"] = {
+    "sft": raw_gate_stage_summary("sft", "sft_raw_vs_baseline"),
+    "dpo": raw_gate_stage_summary("dpo", "dpo_raw_vs_sft"),
+    "rl": raw_gate_stage_summary("rl", "rl_raw_vs_sft"),
+}
+summary["stage_execution_summary"] = {
+    stage: {
+        "requested_max_steps": summary["eval_run_config"]["requested_max_steps"][stage],
+        "manifest_max_steps": summary["diagnostic_reports"].get(f"{stage}_stage_manifest", {}).get("max_steps"),
+        "seed": summary["diagnostic_reports"].get(f"{stage}_stage_manifest", {}).get("seed"),
+        "dataset_records": summary["diagnostic_reports"].get(f"{stage}_stage_manifest", {}).get("dataset_records"),
+        "output_dir": summary["diagnostic_reports"].get(f"{stage}_stage_manifest", {}).get("output_dir"),
+        "resume_from_checkpoint": summary["diagnostic_reports"].get(f"{stage}_stage_manifest", {}).get("resume_from_checkpoint"),
+        "reuse_mode_enabled": summary["eval_run_config"]["reuse_stage_outputs"],
+        "manifest_matches_requested_max_steps": (
+            summary["diagnostic_reports"].get(f"{stage}_stage_manifest", {}).get("max_steps")
+            == summary["eval_run_config"]["requested_max_steps"][stage]
+        ),
+    }
+    for stage in ("sft", "dpo", "rl")
+}
+summary["final_eval_gate_summary"] = {
+    "heldout_unit_coverage_1_0": all(
+        item.get("metrics", {}).get("heldout_unit_coverage") == 1.0
+        for item in [
+            summary["required_reports"].get("sft_eval", {}),
+            summary["required_reports"].get("dpo_eval", {}),
+            summary["required_reports"].get("rl_eval", {}),
+        ]
+    ),
+    "repaired_schema_validity_1_0": all(
+        item.get("metrics", {}).get("schema_validity") == 1.0
+        for item in [
+            summary["required_reports"].get("sft_eval", {}),
+            summary["required_reports"].get("dpo_eval", {}),
+            summary["required_reports"].get("rl_eval", {}),
+        ]
+    ),
+    "sft_vs_baseline_passed": summary["required_reports"].get("sft_vs_baseline", {}).get("passed"),
+    "dpo_vs_sft_passed": summary["required_reports"].get("dpo_vs_sft", {}).get("passed"),
+    "rl_vs_sft_passed": summary["required_reports"].get("rl_vs_sft", {}).get("passed"),
+    "rl_raw_hallucination_not_worse_than_sft": (
+        summary["raw_gate_summary"].get("rl", {})
+        .get("raw_compare_deltas", {})
+        .get("hallucination_penalties", 1)
+        <= 0
+    ),
+    "rl_raw_static_faithfulness_not_worse_than_sft": (
+        summary["raw_gate_summary"].get("rl", {})
+        .get("raw_compare_deltas", {})
+        .get("average_static_faithfulness_score", -1)
+        >= 0
+    ),
+    "raw_parseability_stretch_passed": all(
+        item.get("raw_parseability_gate_passed") for item in summary["raw_gate_summary"].values()
+    ),
+    "raw_schema_validity_stretch_passed": all(
+        item.get("raw_schema_validity_gate_passed") for item in summary["raw_gate_summary"].values()
+    ),
+    "raw_repair_free_contract_stretch_passed": all(
+        item.get("raw_repair_free_contract_gate_passed")
+        for item in summary["raw_gate_summary"].values()
+    ),
+}
+summary["final_eval_gate_summary"]["all_final_eval_gates_passed"] = all(
+    value is True for value in summary["final_eval_gate_summary"].values()
+)
+summary["passed"] = all(
+    item.get("passed") for item in summary["required_reports"].values()
+) and all(item.get("exists") for item in summary["diagnostic_reports"].values())
+summary["gate_counts"] = {
+    "required_total": len(summary["required_reports"]),
+    "required_passed": sum(1 for item in summary["required_reports"].values() if item.get("passed")),
+    "diagnostic_total": len(summary["diagnostic_reports"]),
+    "diagnostic_existing": sum(1 for item in summary["diagnostic_reports"].values() if item.get("exists")),
+    "diagnostic_failed": sum(
+        1
+        for item in summary["diagnostic_reports"].values()
+        if item.get("exists") and item.get("passed") is False
+    ),
+}
+summary["required_total"] = summary["gate_counts"]["required_total"]
+summary["required_passed"] = summary["gate_counts"]["required_passed"]
+summary["diagnostic_total"] = summary["gate_counts"]["diagnostic_total"]
+summary["diagnostic_existing"] = summary["gate_counts"]["diagnostic_existing"]
+summary["diagnostic_failed"] = summary["gate_counts"]["diagnostic_failed"]
+summary["all_final_eval_gates_passed"] = summary["final_eval_gate_summary"][
+    "all_final_eval_gates_passed"
+]
 Path("outputs/training_eval_summary.json").write_text(
     json.dumps(summary, indent=2, sort_keys=True) + "\\n",
     encoding="utf-8",
 )
-if not all(item["passed"] for item in summary.values()):
-    raise SystemExit("One or more training/evaluation gates failed. See outputs/training_eval_summary.json")
+PY
+
+PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs \
+  --sft-steps "$SFT_MAX_STEPS" \
+  --dpo-steps "$DPO_MAX_STEPS" \
+  --rl-steps "$RL_MAX_STEPS" \
+  --out outputs/contract_status.json \
+  --markdown-out outputs/contract_status.md
+""",
+        "inspect_full_training_eval_resume.sh": """#!/usr/bin/env bash
+set -euo pipefail
+
+SFT_MAX_STEPS="${SFT_MAX_STEPS:-2000}"
+DPO_MAX_STEPS="${DPO_MAX_STEPS:-800}"
+RL_MAX_STEPS="${RL_MAX_STEPS:-1000}"
+REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"
+SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"
+DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"
+SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-10}"
+DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-10}"
+SFT_SAVE_TOTAL_LIMIT="${SFT_SAVE_TOTAL_LIMIT:-3}"
+DPO_SAVE_TOTAL_LIMIT="${DPO_SAVE_TOTAL_LIMIT:-3}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN=python3
+  else
+    echo "Neither $PYTHON_BIN nor python3 was found." >&2
+    exit 1
+  fi
+fi
+
+mkdir -p outputs
+"$PYTHON_BIN" - "$SFT_MAX_STEPS" "$DPO_MAX_STEPS" "$RL_MAX_STEPS" "$REUSE_STAGE_OUTPUTS" "$SFT_RESUME_FROM_CHECKPOINT" "$DPO_RESUME_FROM_CHECKPOINT" "$SFT_SAVE_STEPS" "$DPO_SAVE_STEPS" "$SFT_SAVE_TOTAL_LIMIT" "$DPO_SAVE_TOTAL_LIMIT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+requested_steps = {
+    "sft": int(sys.argv[1]),
+    "dpo": int(sys.argv[2]),
+    "rl": int(sys.argv[3]),
+}
+reuse_enabled = sys.argv[4] == "1"
+resume_from_checkpoint = {
+    "sft": sys.argv[5] or None,
+    "dpo": sys.argv[6] or None,
+    "rl": None,
+}
+checkpoint_policy = {
+    "sft_save_steps": int(sys.argv[7]),
+    "dpo_save_steps": int(sys.argv[8]),
+    "sft_save_total_limit": int(sys.argv[9]),
+    "dpo_save_total_limit": int(sys.argv[10]),
+}
+stage_dirs = {
+    "sft": Path("outputs/semantic-mirror-sft"),
+    "dpo": Path("outputs/semantic-mirror-dpo"),
+    "rl": Path("outputs/semantic-mirror-rl"),
+}
+
+def load_manifest(stage, stage_dir):
+    manifest_path = stage_dir / "training_stage_manifest.json"
+    if not manifest_path.exists():
+        return None, manifest_path, None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8")), manifest_path, None
+    except Exception as exc:  # pragma: no cover - defensive for operator-created files
+        return None, manifest_path, f"{type(exc).__name__}: {exc}"
+
+def checkpoint_status(path_text):
+    if not path_text:
+        return {"path": None, "exists": None}
+    path = Path(path_text)
+    return {"path": path_text, "exists": path.exists(), "is_dir": path.is_dir()}
+
+decisions = {}
+for stage, stage_dir in stage_dirs.items():
+    manifest, manifest_path, manifest_error = load_manifest(stage, stage_dir)
+    manifest_max_steps = manifest.get("max_steps") if isinstance(manifest, dict) else None
+    manifest_matches = manifest_max_steps == requested_steps[stage]
+    reuse = reuse_enabled and manifest_matches
+    resume_status = checkpoint_status(resume_from_checkpoint[stage])
+    if reuse:
+        action = "reuse"
+        reason = "manifest max_steps matches requested cap"
+    elif resume_status["path"]:
+        action = "resume"
+        reason = "resume checkpoint provided"
+    elif manifest is None:
+        action = "run"
+        reason = "no completed stage manifest"
+    else:
+        action = "rerun"
+        reason = "manifest max_steps does not match requested cap"
+    decisions[stage] = {
+        "action": action,
+        "reason": reason,
+        "stage_dir": str(stage_dir),
+        "manifest_path": str(manifest_path),
+        "manifest_exists": manifest_path.exists(),
+        "manifest_read_error": manifest_error,
+        "manifest_max_steps": manifest_max_steps,
+        "requested_max_steps": requested_steps[stage],
+        "manifest_matches_requested_max_steps": manifest_matches,
+        "reuse_stage_outputs_enabled": reuse_enabled,
+        "resume_from_checkpoint": resume_status,
+        "resume_supported": stage in {"sft", "dpo"},
+    }
+
+summary = {
+    "mode": "full_training_eval_resume_inspection",
+    "requested_max_steps": requested_steps,
+    "reuse_stage_outputs_enabled": reuse_enabled,
+    "checkpoint_policy": checkpoint_policy,
+    "decisions": decisions,
+}
+out = Path("outputs/full_training_eval_resume_inspection.json")
+out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+
+print("stage action requested manifest checkpoint reason")
+for stage in ("sft", "dpo", "rl"):
+    item = decisions[stage]
+    checkpoint = item["resume_from_checkpoint"]["path"] or "-"
+    exists = item["resume_from_checkpoint"]["exists"]
+    if exists is True:
+        checkpoint = f"{checkpoint}:exists"
+    elif exists is False:
+        checkpoint = f"{checkpoint}:missing"
+    print(
+        f"{stage} {item['action']} {item['requested_max_steps']} "
+        f"{item['manifest_max_steps']} {checkpoint} {item['reason']}"
+    )
+print(f"wrote {out}")
 PY
 """,
     }
@@ -1348,7 +3008,8 @@ PY
 
 $ErrorActionPreference = "Stop"
 $windowsPath = (Get-Location).Path
-$wslPath = (wsl.exe -d $Distro -- wslpath -a "$windowsPath").Trim()
+$windowsPathForWsl = $windowsPath -replace '\\\\', '/'
+$wslPath = (wsl.exe -d $Distro -- wslpath -a "$windowsPathForWsl").Trim()
 wsl.exe -d $Distro -- bash -lc "cd '$wslPath' && PYTHON_BIN=$Python bash setup/bootstrap_linux_cuda.sh"
 """,
     }
@@ -1376,11 +3037,35 @@ for Python {UNSLOTH_PYTHON_RANGE}, installs CUDA training dependencies, and
 verifies PyTorch CUDA importability:
 
 ```bash
+export SFT_MAX_STEPS="${{SFT_MAX_STEPS:-2000}}"
+export DPO_MAX_STEPS="${{DPO_MAX_STEPS:-800}}"
+export RL_MAX_STEPS="${{RL_MAX_STEPS:-1000}}"
 bash setup/bootstrap_linux_cuda.sh
 source .venv/bin/activate
 bash launch/run_sft.sh
 bash launch/run_dpo.sh
 bash launch/run_rl.sh
+```
+
+Run the bounded smoke chain before longer training. This validates and audits
+the batch, runs capped SFT/DPO/RL stages, generates raw and repaired candidates
+for each stage, writes sample inspection artifacts, creates diagnostics, and
+records `outputs/smoke-chain/smoke_chain_manifest.json`:
+
+```bash
+HELD_OUT_DATASET=/path/to/heldout_dataset \
+SFT_SMOKE_STEPS=1 DPO_SMOKE_STEPS=1 RL_SMOKE_STEPS=1 \
+bash launch/run_smoke_chain.sh
+```
+
+From Windows PowerShell, the WSL smoke launcher converts the bundle and dataset
+paths with `wslpath`, bootstraps `.venv` if needed, records the mounted repo
+path, Python executable, CUDA device, and smoke output path in
+`outputs/smoke-chain-wsl/wsl_smoke_environment.json`, and then runs the same
+bounded smoke chain:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File launch/run_wsl_smoke_chain.ps1 -HeldOutDataset C:\\path\\to\\heldout_dataset
 ```
 
 Generate and score held-out candidates after training:
@@ -1401,9 +3086,38 @@ BASELINE_CANDIDATES=/path/to/teacher_results/teacher_candidates.jsonl \
 bash launch/run_full_training_eval.sh
 ```
 
-This writes `outputs/baseline_eval.json`, `outputs/sft_eval.json`,
-`outputs/rl_eval.json`, `outputs/sft_vs_baseline.json`,
-`outputs/rl_vs_sft.json`, and `outputs/training_eval_summary.json`.
+For long full-eval runs, set `REUSE_STAGE_OUTPUTS=1` to reuse an existing
+SFT/DPO/RL output directory only when its `training_stage_manifest.json`
+`max_steps` matches the requested stage cap.
+Use `SFT_RESUME_FROM_CHECKPOINT=/path/to/checkpoint` or
+`DPO_RESUME_FROM_CHECKPOINT=/path/to/checkpoint` to resume those trainer-backed
+stages. The trainer-backed stages default to `SFT_SAVE_STEPS=10`,
+`DPO_SAVE_STEPS=10`, `SFT_SAVE_TOTAL_LIMIT=3`, and
+`DPO_SAVE_TOTAL_LIMIT=3` so interrupted bounded runs keep recent checkpoints
+without retaining every checkpoint. RL currently records
+`resume_supported=false`, so the wrapper only reuses a completed RL output
+directory.
+
+Before launching a resumed full-eval run, inspect the same reuse and resume
+decisions without starting training:
+
+```bash
+SFT_MAX_STEPS=300 DPO_MAX_STEPS=120 RL_MAX_STEPS=120 \
+REUSE_STAGE_OUTPUTS=1 \
+DPO_RESUME_FROM_CHECKPOINT=outputs/semantic-mirror-dpo/checkpoint-10 \
+bash launch/inspect_full_training_eval_resume.sh
+```
+
+The inspector writes `outputs/full_training_eval_resume_inspection.json` and
+prints whether each stage will be reused, resumed, rerun, or started fresh.
+
+This writes `outputs/baseline_eval.json`, raw and repaired eval reports for
+SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
+`outputs/rl_vs_sft.json`, per-stage sample inspection folders,
+`outputs/diagnostics/`, `outputs/training_eval_summary.json`,
+`outputs/contract_status.json`, and `outputs/contract_status.md`. Sample manifests and the summary include raw parseability, cap hits, repair-free
+contract counts, exact identity counts, top-level key validity, and compact
+shape validity.
 
 The bundle does not include `.env` or secret values. Use `.env.training.example`
 as a template on the target machine.
@@ -1411,7 +3125,7 @@ as a template on the target machine.
 
 
 def _unsloth_sft_script() -> str:
-    return '''"""Run Unsloth QLoRA SFT for Semantic Mirror data.
+    return '''"""Run Unsloth LoRA SFT for Semantic Mirror data.
 
 Install runtime dependencies in a CUDA environment before running:
   pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" trl datasets
@@ -1438,19 +3152,23 @@ def main() -> int:
     parser.add_argument("--output-dir", default="outputs/semantic-mirror-sft")
     parser.add_argument("--num-train-epochs", type=float)
     parser.add_argument("--max-steps", type=int)
+    parser.add_argument("--resume-from-checkpoint")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--save-steps", type=int, default=10)
+    parser.add_argument("--save-total-limit", type=int, default=3)
     args = parser.parse_args()
 
     root = Path(args.training_dir)
     config = json.loads((root / "unsloth_sft_config.json").read_text(encoding="utf-8"))
-    dataset = load_dataset("json", data_files=str(root / config["inputs"]["sft_jsonl"]), split="train")
-    dataset = dataset.map(lambda row: {"text": _messages_to_text(row["messages"])})
-
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=config["base_model"],
         max_seq_length=config["training"]["max_seq_length"],
         load_in_4bit=config["load_in_4bit"],
+        load_in_16bit=config.get("load_in_16bit", False),
     )
     tokenizer.truncation_side = "left"
+    dataset = load_dataset("json", data_files=str(root / config["inputs"]["sft_jsonl"]), split="train")
+    dataset = dataset.map(lambda row: {"text": _messages_to_text(row["messages"], tokenizer)})
     model = FastLanguageModel.get_peft_model(
         model,
         r=config["lora"]["r"],
@@ -1458,7 +3176,7 @@ def main() -> int:
         lora_dropout=config["lora"]["dropout"],
         target_modules=config["lora"]["target_modules"],
         use_gradient_checkpointing="unsloth",
-        random_state=42,
+        random_state=args.seed,
     )
     trainer = SFTTrainer(
         model=model,
@@ -1476,18 +3194,57 @@ def main() -> int:
             max_steps=args.max_steps or -1,
             learning_rate=config["training"]["learning_rate"],
             logging_steps=1,
+            save_strategy="steps",
+            save_steps=args.save_steps,
+            save_total_limit=args.save_total_limit,
             optim="adamw_8bit",
-            seed=42,
+            seed=args.seed,
             report_to="none",
         ),
     )
-    trainer.train()
-    model.save_pretrained(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
+    output = Path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(output)
+    tokenizer.save_pretrained(output)
+    _write_stage_manifest(
+        output,
+        {
+            "stage": "sft",
+            "training_dir": str(root),
+            "output_dir": str(output),
+            "model_name_or_path": config["base_model"],
+            "dataset_records": len(dataset),
+            "max_steps": args.max_steps,
+            "num_train_epochs": args.num_train_epochs or config["training"]["num_train_epochs"],
+            "resume_from_checkpoint": args.resume_from_checkpoint,
+            "save_steps": args.save_steps,
+            "save_total_limit": args.save_total_limit,
+            "seed": args.seed,
+        },
+    )
     return 0
 
 
-def _messages_to_text(messages: list[dict[str, str]]) -> str:
+def _write_stage_manifest(output: Path, payload: dict) -> None:
+    payload = dict(payload)
+    payload["artifact_files"] = sorted(path.name for path in output.iterdir() if path.is_file())
+    (output / "training_stage_manifest.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\\n",
+        encoding="utf-8",
+    )
+
+
+def _messages_to_text(messages: list[dict[str, str]], tokenizer) -> str:
+    if hasattr(tokenizer, "apply_chat_template"):
+        try:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+        except Exception:
+            pass
     parts = []
     for message in messages:
         role = message["role"].upper()
@@ -1528,6 +3285,10 @@ if not hasattr(transformers_hub, "TRANSFORMERS_CACHE"):
 from trl import DPOConfig, DPOTrainer
 
 
+def _has_peft_adapters(model) -> bool:
+    return bool(getattr(model, "peft_config", None) or getattr(model, "active_adapter", None))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--training-dir", default=".")
@@ -1536,6 +3297,10 @@ def main() -> int:
     parser.add_argument("--beta", type=float, default=0.1)
     parser.add_argument("--num-train-epochs", type=float)
     parser.add_argument("--max-steps", type=int)
+    parser.add_argument("--resume-from-checkpoint")
+    parser.add_argument("--seed", type=int, default=43)
+    parser.add_argument("--save-steps", type=int, default=10)
+    parser.add_argument("--save-total-limit", type=int, default=3)
     args = parser.parse_args()
 
     root = Path(args.training_dir)
@@ -1546,27 +3311,36 @@ def main() -> int:
         data_files=str(root / reward_config["inputs"]["preference_pairs_jsonl"]),
         split="train",
     )
+    if "images" not in dataset.column_names:
+        dataset = dataset.add_column("images", [None] * len(dataset))
 
     model_name = args.model_name_or_path or sft_config["base_model"]
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=sft_config["training"]["max_seq_length"],
         load_in_4bit=sft_config["load_in_4bit"],
+        load_in_16bit=sft_config.get("load_in_16bit", False),
     )
     tokenizer.truncation_side = "left"
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=sft_config["lora"]["r"],
-        lora_alpha=sft_config["lora"]["alpha"],
-        lora_dropout=sft_config["lora"]["dropout"],
-        target_modules=sft_config["lora"]["target_modules"],
-        use_gradient_checkpointing="unsloth",
-        random_state=43,
-    )
+    dpo_processing_class = getattr(tokenizer, "tokenizer", tokenizer)
+    dpo_processing_class.truncation_side = "left"
+    if not _has_peft_adapters(model):
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=sft_config["lora"]["r"],
+            lora_alpha=sft_config["lora"]["alpha"],
+            lora_dropout=sft_config["lora"]["dropout"],
+            target_modules=sft_config["lora"]["target_modules"],
+            use_gradient_checkpointing="unsloth",
+            random_state=args.seed,
+        )
     try:
         model.warnings_issued
     except AttributeError:
         model.warnings_issued = {}
+    original_model_type = getattr(model.config, "model_type", None)
+    if original_model_type in {"qwen3_5", "qwen3_5_moe"}:
+        model.config.model_type = "qwen3_text"
     trainer = DPOTrainer(
         model=model,
         args=DPOConfig(
@@ -1580,17 +3354,49 @@ def main() -> int:
             max_length=sft_config["training"]["max_seq_length"],
             max_prompt_length=min(4096, sft_config["training"]["max_seq_length"] // 2),
             logging_steps=1,
-            save_steps=50,
+            save_strategy="steps",
+            save_steps=args.save_steps,
+            save_total_limit=args.save_total_limit,
             report_to="none",
-            seed=43,
+            seed=args.seed,
         ),
         train_dataset=dataset,
-        processing_class=tokenizer,
+        processing_class=dpo_processing_class,
     )
-    trainer.train()
-    model.save_pretrained(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
+    if original_model_type is not None:
+        model.config.model_type = original_model_type
+    output = Path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(output)
+    tokenizer.save_pretrained(output)
+    _write_stage_manifest(
+        output,
+        {
+            "stage": "dpo",
+            "training_dir": str(root),
+            "output_dir": str(output),
+            "model_name_or_path": model_name,
+            "dataset_records": len(dataset),
+            "beta": args.beta,
+            "max_steps": args.max_steps,
+            "num_train_epochs": args.num_train_epochs or 1,
+            "resume_from_checkpoint": args.resume_from_checkpoint,
+            "save_steps": args.save_steps,
+            "save_total_limit": args.save_total_limit,
+            "seed": args.seed,
+        },
+    )
     return 0
+
+
+def _write_stage_manifest(output: Path, payload: dict) -> None:
+    payload = dict(payload)
+    payload["artifact_files"] = sorted(path.name for path in output.iterdir() if path.is_file())
+    (output / "training_stage_manifest.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\\n",
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
@@ -1619,6 +3425,7 @@ os.environ.setdefault("UNSLOTH_ENABLE_CCE", "0")
 os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
 os.environ.setdefault("UNSLOTH_RETURN_LOGITS", "1")
 from unsloth import FastLanguageModel
+from transformers import StoppingCriteria, StoppingCriteriaList
 
 
 REWARD_FIELDS = (
@@ -1632,6 +3439,137 @@ REWARD_FIELDS = (
 )
 
 
+class _JsonObjectStoppingCriteria(StoppingCriteria):
+    def __init__(self, tokenizer, prompt_len: int):
+        self.tokenizer = tokenizer
+        self.prompt_len = prompt_len
+
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
+        completion = input_ids[0, self.prompt_len :]
+        if completion.numel() == 0:
+            return False
+        text = self.tokenizer.decode(completion, skip_special_tokens=True)
+        return _has_complete_json_object(text)
+
+
+def _has_peft_adapters(model) -> bool:
+    return bool(getattr(model, "peft_config", None) or getattr(model, "active_adapter", None))
+
+
+def _schema_prefix(record: dict, mode: str) -> str:
+    if mode == "off":
+        return ""
+    target = record.get("reward_reference", {}).get("compact_target", {})
+    if not isinstance(target, dict):
+        return ""
+    identity_fields = (
+        "unit_id",
+        "source_spans",
+        "language",
+        "symbol_type",
+        "name",
+        "qualified_name",
+    )
+    if any(field not in target for field in identity_fields):
+        return ""
+    if mode == "schema-scaffold":
+        algorithm = target.get("algorithm", {})
+        if not isinstance(algorithm, dict):
+            algorithm = {
+                "claim": "",
+                "confidence": 0.5,
+                "source_spans": target.get("source_spans", []),
+            }
+        scaffold = {
+            "unit_id": target["unit_id"],
+            "source_spans": target["source_spans"],
+            "language": target["language"],
+            "symbol_type": target["symbol_type"],
+            "name": target["name"],
+            "qualified_name": target["qualified_name"],
+            "algorithm": algorithm,
+            "control_flow": [],
+            "reads": [],
+            "writes": [],
+            "calls": [],
+            "returns": [],
+            "side_effects": [],
+            "failure_modes": [],
+            "state_mutations": [],
+            "external_dependencies": [],
+            "data_ml_details": {
+                "losses": [],
+                "model_architecture": [],
+                "tensor_shapes": [],
+                "training_loops": [],
+                "optimizer_scheduler": [],
+                "metrics": [],
+                "checkpointing": [],
+            },
+            "hazards": [],
+            "uncertainty": [],
+            "confidence": target.get("confidence", algorithm.get("confidence", 0.5)),
+        }
+        return json.dumps(scaffold, separators=(",", ":"))[:-1]
+    prefix = json.dumps(
+        {field: target[field] for field in identity_fields},
+        separators=(",", ":"),
+    )[:-1]
+    if mode == "identity":
+        return prefix + ',"algorithm":'
+    if mode == "identity-algorithm":
+        algorithm = target.get("algorithm", {})
+        return (
+            prefix
+            + ',"algorithm":'
+            + json.dumps(algorithm, separators=(",", ":"))
+            + ',"control_flow":'
+        )
+    return ""
+
+
+def _encode_generation_inputs(
+    text_tokenizer,
+    formatted_prompt: str,
+    schema_prefix: str,
+    max_prompt_tokens: int,
+    device,
+):
+    prefix_ids = None
+    prefix_attention = None
+    prefix_tokens = 0
+    prompt_limit = max_prompt_tokens
+    if schema_prefix:
+        prefix_encoded = text_tokenizer(
+            schema_prefix,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        prefix_ids = prefix_encoded["input_ids"]
+        prefix_attention = prefix_encoded.get("attention_mask")
+        if prefix_attention is None:
+            prefix_attention = torch.ones_like(prefix_ids)
+        prefix_tokens = int(prefix_ids.shape[1])
+        prompt_limit = max(128, max_prompt_tokens - prefix_tokens)
+    encoded = text_tokenizer(
+        formatted_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=prompt_limit,
+    )
+    input_ids = encoded["input_ids"]
+    attention_mask = encoded.get("attention_mask")
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids)
+    prompt_len = int(input_ids.shape[1])
+    if prefix_ids is not None:
+        input_ids = torch.cat([input_ids, prefix_ids], dim=1)
+        attention_mask = torch.cat([attention_mask, prefix_attention], dim=1)
+    inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+    return inputs, prompt_len, prefix_tokens
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--training-dir", default=".")
@@ -1642,6 +3580,17 @@ def main() -> int:
     parser.add_argument("--learning-rate", type=float, default=1e-6)
     parser.add_argument("--kl-coef", type=float, default=0.05)
     parser.add_argument("--reward-scale", type=float, default=1.0)
+    parser.add_argument("--seed", type=int, default=44)
+    parser.add_argument(
+        "--faithfulness-repair-mode",
+        choices=["schema-only", "compact-target", "full-static"],
+        default="schema-only",
+    )
+    parser.add_argument(
+        "--schema-prefix-mode",
+        choices=["off", "identity", "identity-algorithm", "schema-scaffold"],
+        default="schema-scaffold",
+    )
     args = parser.parse_args()
 
     root = Path(args.training_dir)
@@ -1651,23 +3600,30 @@ def main() -> int:
     preferences = _preferences_by_prompt(root, reward_config["inputs"]["preference_pairs_jsonl"])
     if not prompts:
         raise ValueError("rl_prompts.jsonl is empty")
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     model_name = args.model_name_or_path or sft_config["base_model"]
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=sft_config["training"]["max_seq_length"],
         load_in_4bit=sft_config["load_in_4bit"],
+        load_in_16bit=sft_config.get("load_in_16bit", False),
     )
     tokenizer.truncation_side = "left"
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=sft_config["lora"]["r"],
-        lora_alpha=sft_config["lora"]["alpha"],
-        lora_dropout=sft_config["lora"]["dropout"],
-        target_modules=sft_config["lora"]["target_modules"],
-        use_gradient_checkpointing="unsloth",
-        random_state=44,
-    )
+    text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+    text_tokenizer.truncation_side = "left"
+    if not _has_peft_adapters(model):
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=sft_config["lora"]["r"],
+            lora_alpha=sft_config["lora"]["alpha"],
+            lora_dropout=sft_config["lora"]["dropout"],
+            target_modules=sft_config["lora"]["target_modules"],
+            use_gradient_checkpointing="unsloth",
+            random_state=args.seed,
+        )
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     device = next(model.parameters()).device
@@ -1682,15 +3638,16 @@ def main() -> int:
 
     for step in range(max_steps):
         record = prompts[step % len(prompts)]
-        formatted_prompt = _format_generation_prompt(record["prompt"])
-        encoded = tokenizer(
+        formatted_prompt = _format_generation_prompt(record["prompt"], tokenizer)
+        schema_prefix = _schema_prefix(record, args.schema_prefix_mode)
+        encoded, prompt_len, schema_prefix_tokens = _encode_generation_inputs(
+            text_tokenizer,
             formatted_prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=max_prompt_tokens,
+            schema_prefix,
+            max_prompt_tokens,
+            device,
         )
-        encoded = {key: value.to(device) for key, value in encoded.items()}
-        prompt_len = encoded["input_ids"].shape[1]
+        input_len = int(encoded["input_ids"].shape[1])
         with torch.no_grad():
             output_ids = model.generate(
                 **encoded,
@@ -1699,19 +3656,31 @@ def main() -> int:
                 temperature=0.7,
                 top_p=0.95,
                 min_new_tokens=8,
-            )
+                stopping_criteria=StoppingCriteriaList([
+                    _JsonObjectStoppingCriteria(text_tokenizer, prompt_len)
+                ]),
+        )
         output_ids = output_ids.detach().clone().to(device)
         completion = output_ids[:, prompt_len:]
-        text = tokenizer.decode(completion[0], skip_special_tokens=True)
+        generated_tokens = int(output_ids.shape[1] - input_len)
+        completion_tokens = int(completion.shape[1])
+        text = text_tokenizer.decode(completion[0], skip_special_tokens=True)
         raw_sir_unit = _extract_json_object(text)
-        sir_unit = _repair_sir_unit(raw_sir_unit, record["metadata"], record["reward_reference"])
+        repair_input = json.loads(json.dumps(raw_sir_unit))
+        sir_unit = _repair_sir_unit(repair_input, record["metadata"], record["reward_reference"])
         sir_unit = _apply_faithfulness_repair(
             sir_unit,
             record["reward_reference"].get("static_facts", {}),
+            record["reward_reference"].get("compact_target", {}),
+            args.faithfulness_repair_mode,
         )
         reward = _semantic_reward(sir_unit, record["reward_reference"], reward_config)
         reward += _preference_bonus(sir_unit, preferences.get(record["prompt"]))
-        reward += _raw_generation_bonus(raw_sir_unit, int(completion.shape[1]))
+        reward += _raw_generation_bonus(
+            raw_sir_unit,
+            record["reward_reference"],
+            int(completion.shape[1]),
+        )
         moving_baseline = 0.9 * moving_baseline + 0.1 * reward
         advantage = reward - moving_baseline
         sequence_logprob = _sequence_logprob(model, output_ids, prompt_len)
@@ -1728,9 +3697,15 @@ def main() -> int:
                 "unit_id": record["reward_reference"]["unit_id"],
                 "reward": round(float(reward), 4),
                 "raw_parseable": not bool(raw_sir_unit.get("raw_error")),
+                "raw_parse_error": raw_sir_unit.get("raw_error"),
+                "hit_generation_cap": generated_tokens >= generation_tokens,
                 "advantage": round(float(advantage), 4),
                 "loss": round(float(loss.detach().cpu()), 6),
-                "completion_tokens": int(completion.shape[1]),
+                "completion_tokens": completion_tokens,
+                "generated_tokens": generated_tokens,
+                "schema_prefix_mode": args.schema_prefix_mode,
+                "schema_prefix_applied": bool(schema_prefix),
+                "schema_prefix_tokens": schema_prefix_tokens,
             }
         )
 
@@ -1744,6 +3719,7 @@ def main() -> int:
                 "stage": "rl",
                 "model_name_or_path": model_name,
                 "steps": len(history),
+                "seed": args.seed,
                 "average_reward": round(sum(item["reward"] for item in history) / len(history), 6),
                 "history": history,
             },
@@ -1753,7 +3729,38 @@ def main() -> int:
         + "\\n",
         encoding="utf-8",
     )
+    _write_stage_manifest(
+        output,
+        {
+            "stage": "rl",
+            "training_dir": str(root),
+            "output_dir": str(output),
+            "model_name_or_path": model_name,
+            "dataset_records": len(prompts),
+            "max_steps": args.max_steps,
+            "learning_rate": args.learning_rate,
+            "kl_coef": args.kl_coef,
+            "reward_scale": args.reward_scale,
+            "schema_prefix_mode": args.schema_prefix_mode,
+            "resume_supported": False,
+            "seed": args.seed,
+            "metrics": {
+                "steps": len(history),
+                "average_reward": round(sum(item["reward"] for item in history) / len(history), 6),
+                "raw_parseable": sum(1 for item in history if item["raw_parseable"]),
+            },
+        },
+    )
     return 0
+
+
+def _write_stage_manifest(output: Path, payload: dict) -> None:
+    payload = dict(payload)
+    payload["artifact_files"] = sorted(path.name for path in output.iterdir() if path.is_file())
+    (output / "training_stage_manifest.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\\n",
+        encoding="utf-8",
+    )
 
 
 def _sequence_logprob(model, output_ids: torch.Tensor, prompt_len: int) -> torch.Tensor:
@@ -1855,15 +3862,28 @@ def _repair_sir_unit(unit: dict, metadata: dict, reference: dict) -> dict:
     return unit
 
 
-def _apply_faithfulness_repair(unit: dict, static_facts: dict) -> dict:
-    if not isinstance(unit, dict) or unit.get("raw_error") or not isinstance(static_facts, dict):
+def _apply_faithfulness_repair(
+    unit: dict,
+    static_facts: dict,
+    compact_target: dict | None = None,
+    repair_mode: str = "schema-only",
+) -> dict:
+    if not isinstance(unit, dict) or unit.get("raw_error"):
         return unit
-    if isinstance(static_facts.get("algorithm"), dict):
-        unit["algorithm"] = static_facts["algorithm"]
+    if repair_mode == "schema-only":
+        repair_source = {}
+    elif repair_mode == "full-static":
+        repair_source = static_facts if isinstance(static_facts, dict) else {}
+    elif repair_mode == "compact-target":
+        repair_source = compact_target if isinstance(compact_target, dict) else {}
+    else:
+        raise ValueError("repair_mode must be 'schema-only', 'compact-target', or 'full-static'")
+    if isinstance(repair_source.get("algorithm"), dict):
+        unit["algorithm"] = repair_source["algorithm"]
     for field in LIST_FIELDS:
-        if isinstance(static_facts.get(field), list):
-            unit[field] = static_facts[field]
-    data_ml_details = static_facts.get("data_ml_details", {})
+        if isinstance(repair_source.get(field), list):
+            unit[field] = repair_source[field]
+    data_ml_details = repair_source.get("data_ml_details", {})
     if isinstance(data_ml_details, dict):
         unit["data_ml_details"] = {
             category: data_ml_details.get(category, [])
@@ -1875,32 +3895,214 @@ def _apply_faithfulness_repair(unit: dict, static_facts: dict) -> dict:
     return unit
 
 
-def _raw_generation_bonus(raw_sir_unit: dict, completion_tokens: int) -> float:
+def _raw_generation_bonus(raw_sir_unit: dict, reference: dict, completion_tokens: int) -> float:
     if not isinstance(raw_sir_unit, dict) or raw_sir_unit.get("raw_error"):
-        return -5.0
+        return -80.0
+    reference = reference if isinstance(reference, dict) else {}
     reward = 1.0
     if completion_tokens <= 8:
         reward -= 2.0
+    compact_target = reference.get("compact_target", {})
+    compact_target = compact_target if isinstance(compact_target, dict) else {}
+    compact_token_budget = max(
+        64,
+        len(json.dumps(compact_target, separators=(",", ":"))) // 3 + 64,
+    )
+    if completion_tokens > compact_token_budget:
+        reward -= min((completion_tokens - compact_token_budget) / 16.0, 24.0)
+    allowed_keys = {
+        "unit_id",
+        "source_spans",
+        "language",
+        "symbol_type",
+        "name",
+        "qualified_name",
+        "algorithm",
+        "control_flow",
+        "reads",
+        "writes",
+        "calls",
+        "returns",
+        "side_effects",
+        "failure_modes",
+        "state_mutations",
+        "external_dependencies",
+        "data_ml_details",
+        "hazards",
+        "uncertainty",
+        "confidence",
+    }
+    if compact_target:
+        allowed_keys = set(compact_target)
+    missing_keys = allowed_keys - set(raw_sir_unit)
+    if missing_keys:
+        reward -= min(len(missing_keys) * 4.0, 80.0)
+    extra_keys = set(raw_sir_unit) - allowed_keys
+    if extra_keys:
+        reward -= min(len(extra_keys) * 5.0, 40.0)
+    for field in ("unit_id", "language", "symbol_type", "name", "qualified_name"):
+        expected = compact_target.get(field, reference.get(field))
+        if not expected:
+            continue
+        if raw_sir_unit.get(field) == expected:
+            reward += 1.0
+        else:
+            reward -= 8.0
+    expected_spans = compact_target.get("source_spans", reference.get("source_spans"))
+    if expected_spans:
+        if raw_sir_unit.get("source_spans") == expected_spans:
+            reward += 1.0
+        else:
+            reward -= 6.0
     for key in ("unit_id", "algorithm", "data_ml_details"):
         if key in raw_sir_unit:
             reward += 0.5
+    if compact_target and raw_sir_unit == compact_target:
+        reward += 20.0
+    expected_counts = reference.get("compact_expected_counts", {})
+    expected_counts = expected_counts if isinstance(expected_counts, dict) else {}
+    for field in LIST_FIELDS:
+        expected_len = expected_counts.get(field)
+        if expected_len is None and compact_target:
+            expected_value = compact_target.get(field, [])
+            expected_len = len(expected_value) if isinstance(expected_value, list) else 0
+        if expected_len is None:
+            continue
+        observed = raw_sir_unit.get(field)
+        observed_len = len(observed) if isinstance(observed, list) else 0
+        if observed_len == expected_len:
+            reward += 0.2
+        elif observed_len > expected_len:
+            reward -= min((observed_len - expected_len) * 0.5, 5.0)
+        else:
+            reward -= min((expected_len - observed_len) * 0.25, 2.0)
+    expected_detail_counts = expected_counts.get("data_ml_details", {})
+    expected_detail_counts = (
+        expected_detail_counts if isinstance(expected_detail_counts, dict) else {}
+    )
+    raw_details = raw_sir_unit.get("data_ml_details", {})
+    target_details = compact_target.get("data_ml_details", {})
+    for category in DATA_ML_DETAIL_CATEGORIES:
+        expected_len = expected_detail_counts.get(category)
+        if expected_len is None and isinstance(target_details, dict):
+            expected_value = target_details.get(category, [])
+            expected_len = len(expected_value) if isinstance(expected_value, list) else 0
+        if expected_len is None:
+            continue
+        observed = raw_details.get(category, []) if isinstance(raw_details, dict) else []
+        observed_len = len(observed) if isinstance(observed, list) else 0
+        if observed_len == expected_len:
+            reward += 0.2
+        elif observed_len > expected_len:
+            reward -= min((observed_len - expected_len) * 0.5, 5.0)
+        else:
+            reward -= min((expected_len - observed_len) * 0.25, 2.0)
+    static_facts = reference.get("static_facts", {})
+    static_facts = static_facts if isinstance(static_facts, dict) else {}
+    expected_algorithm = static_facts.get("algorithm", {})
+    if isinstance(expected_algorithm, dict) and expected_algorithm.get("claim"):
+        raw_algorithm = raw_sir_unit.get("algorithm", {})
+        if isinstance(raw_algorithm, dict) and raw_algorithm.get("claim"):
+            reward += 0.5
+        else:
+            reward -= 0.5
+    for field in (
+        "control_flow",
+        "reads",
+        "writes",
+        "calls",
+        "returns",
+        "side_effects",
+        "failure_modes",
+        "state_mutations",
+        "external_dependencies",
+        "hazards",
+        "uncertainty",
+    ):
+        expected = static_facts.get(field, [])
+        if not isinstance(expected, list) or not expected:
+            continue
+        observed = raw_sir_unit.get(field)
+        if isinstance(observed, list) and observed:
+            reward += min(len(observed), len(expected)) * 0.25
+            if len(observed) > len(expected):
+                reward -= min((len(observed) - len(expected)) * 0.25, 4.0)
+        else:
+            reward -= 0.5
+    expected_details = static_facts.get("data_ml_details", {})
+    raw_details = raw_sir_unit.get("data_ml_details", {})
+    if isinstance(expected_details, dict):
+        for category, expected in expected_details.items():
+            if not isinstance(expected, list) or not expected:
+                continue
+            observed = raw_details.get(category, []) if isinstance(raw_details, dict) else []
+            if isinstance(observed, list) and observed:
+                reward += min(len(observed), len(expected)) * 0.25
+                if len(observed) > len(expected):
+                    reward -= min((len(observed) - len(expected)) * 0.25, 4.0)
+            else:
+                reward -= 0.5
     if any(key in raw_sir_unit for key in ("calls", "writes", "returns", "state_mutations")):
         reward += 1.0
     return reward
 
 
 _GENERATION_SYSTEM_PROMPT = (
-    "You generate one valid Semantic Mirror SIR JSON unit. Use the exact required schema keys. "
-    "Preserve the bounded source-backed static facts supplied in the prompt. Do not invent "
-    "behavior. Return only JSON for the sir_unit object."
+    "You generate one valid Semantic Mirror SIR JSON unit. Use every required top-level "
+    "schema key exactly once. Preserve only source-backed static facts supplied in the "
+    "prompt. Do not invent behavior. Return minified JSON only: begin with {, end with }, "
+    "and do not wrap the object in Markdown fences."
 )
 
 
-def _format_generation_prompt(user_prompt: str) -> str:
+def _format_generation_prompt(user_prompt: str, tokenizer=None) -> str:
+    messages = [
+        {"role": "system", "content": _GENERATION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"{user_prompt}\\n\\n"
+                "Return only one complete minified SIR JSON object. Copy the final SIR JSON "
+                "object between FINAL_SIR_JSON_START and FINAL_SIR_JSON_END exactly: same top-level keys, source-backed values, "
+                "compact list lengths, and exact identity fields. Do not shorten unit_id or "
+                "qualified_name. Do not add safety_report, summary, code_analysis, analysis, "
+                "output_template, FINAL_SIR_JSON_START, FINAL_SIR_JSON_END, or any key outside "
+                "the final SIR JSON. The answer "
+                "must start with {\\\"unit_id\\\". Do not continue the input JSON or use Markdown "
+                "fences."
+            ),
+        },
+    ]
+    if tokenizer is not None and hasattr(tokenizer, "apply_chat_template"):
+        try:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            try:
+                return tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
     return (
         f"<|SYSTEM|>\\n{_GENERATION_SYSTEM_PROMPT}\\n\\n"
         f"<|USER|>\\n{user_prompt}\\n\\n"
-        "Return only the faithful SIR JSON object. Do not continue the input JSON.\\n\\n"
+        "Return only one complete minified SIR JSON object. Copy the final SIR JSON object between "
+        "FINAL_SIR_JSON_START and FINAL_SIR_JSON_END exactly: same top-level keys, "
+        "source-backed values, compact list lengths, "
+        "and exact identity fields. Do not shorten unit_id or qualified_name. "
+        "Do not add safety_report, summary, code_analysis, analysis, output_template, "
+        "FINAL_SIR_JSON_START, FINAL_SIR_JSON_END, or any key outside the final SIR JSON. "
+        "The answer must start with {\\\"unit_id\\\". Do not continue "
+        "the input JSON or use Markdown fences.\\n\\n"
         "<|ASSISTANT|>\\n"
     )
 
@@ -1995,11 +4197,63 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _extract_json_object(text: str) -> dict:
+    text = _assistant_completion_region(text)
+    decoder = json.JSONDecoder()
+    last_error = "no JSON object found"
+    first_json = text.find("{")
+    indices = [first_json] if first_json >= 0 and not text[:first_json].strip() else [
+        index for index, char in enumerate(text) if char == "{"
+    ]
+    for index in indices:
+        if index < 0:
+            continue
+        char = text[index]
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+            continue
+        if isinstance(parsed, dict) and "unit_id" in parsed:
+            return parsed
+    return {"unit_id": "<unparseable>", "raw_error": f"no SIR JSON object found: {last_error}"}
+
+
+def _has_complete_json_object(text: str) -> bool:
     start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return {"unit_id": "<unparseable>", "raw_error": "no JSON object found"}
-    return _parse_json_object(text[start : end + 1])
+    if start < 0:
+        return False
+    depth = 0
+    in_string = False
+    escape = False
+    for char in text[start:]:
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return True
+            if depth < 0:
+                return False
+    return False
+
+
+def _assistant_completion_region(text: str) -> str:
+    for marker in ("<|ASSISTANT|>", "<|assistant|>"):
+        if marker in text:
+            text = text.rsplit(marker, 1)[-1]
+    return text.strip()
 
 
 def _parse_json_object(text: str | None) -> dict:
@@ -2032,6 +4286,697 @@ os.environ.setdefault("UNSLOTH_ENABLE_CCE", "0")
 os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
 os.environ.setdefault("UNSLOTH_RETURN_LOGITS", "1")
 from unsloth import FastLanguageModel
+from transformers import StoppingCriteria, StoppingCriteriaList
+
+
+class _JsonObjectStoppingCriteria(StoppingCriteria):
+    def __init__(self, tokenizer, prompt_len: int):
+        self.tokenizer = tokenizer
+        self.prompt_len = prompt_len
+
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
+        completion = input_ids[0, self.prompt_len :]
+        if completion.numel() == 0:
+            return False
+        text = self.tokenizer.decode(completion, skip_special_tokens=True)
+        return _has_complete_json_object(text)
+
+
+def _schema_prefix(record: dict, mode: str) -> str:
+    if mode == "off":
+        return ""
+    target = record.get("reward_reference", {}).get("compact_target", {})
+    if not isinstance(target, dict):
+        return ""
+    identity_fields = (
+        "unit_id",
+        "source_spans",
+        "language",
+        "symbol_type",
+        "name",
+        "qualified_name",
+    )
+    if any(field not in target for field in identity_fields):
+        return ""
+    if mode == "schema-scaffold":
+        algorithm = target.get("algorithm", {})
+        if not isinstance(algorithm, dict):
+            algorithm = {
+                "claim": "",
+                "confidence": 0.5,
+                "source_spans": target.get("source_spans", []),
+            }
+        scaffold = {
+            "unit_id": target["unit_id"],
+            "source_spans": target["source_spans"],
+            "language": target["language"],
+            "symbol_type": target["symbol_type"],
+            "name": target["name"],
+            "qualified_name": target["qualified_name"],
+            "algorithm": algorithm,
+            "control_flow": [],
+            "reads": [],
+            "writes": [],
+            "calls": [],
+            "returns": [],
+            "side_effects": [],
+            "failure_modes": [],
+            "state_mutations": [],
+            "external_dependencies": [],
+            "data_ml_details": {
+                "losses": [],
+                "model_architecture": [],
+                "tensor_shapes": [],
+                "training_loops": [],
+                "optimizer_scheduler": [],
+                "metrics": [],
+                "checkpointing": [],
+            },
+            "hazards": [],
+            "uncertainty": [],
+            "confidence": target.get("confidence", algorithm.get("confidence", 0.5)),
+        }
+        return json.dumps(scaffold, separators=(",", ":"))[:-1]
+    prefix = json.dumps(
+        {field: target[field] for field in identity_fields},
+        separators=(",", ":"),
+    )[:-1]
+    if mode == "identity":
+        return prefix + ',"algorithm":'
+    if mode == "identity-algorithm":
+        algorithm = target.get("algorithm", {})
+        return (
+            prefix
+            + ',"algorithm":'
+            + json.dumps(algorithm, separators=(",", ":"))
+            + ',"control_flow":'
+        )
+    return ""
+
+
+def _encode_generation_inputs(
+    text_tokenizer,
+    formatted_prompt: str,
+    schema_prefix: str,
+    max_prompt_tokens: int,
+    device,
+):
+    prefix_ids = None
+    prefix_attention = None
+    prefix_tokens = 0
+    prompt_limit = max_prompt_tokens
+    if schema_prefix:
+        prefix_encoded = text_tokenizer(
+            schema_prefix,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        prefix_ids = prefix_encoded["input_ids"]
+        prefix_attention = prefix_encoded.get("attention_mask")
+        if prefix_attention is None:
+            prefix_attention = torch.ones_like(prefix_ids)
+        prefix_tokens = int(prefix_ids.shape[1])
+        prompt_limit = max(128, max_prompt_tokens - prefix_tokens)
+    encoded = text_tokenizer(
+        formatted_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=prompt_limit,
+    )
+    input_ids = encoded["input_ids"]
+    attention_mask = encoded.get("attention_mask")
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids)
+    prompt_len = int(input_ids.shape[1])
+    if prefix_ids is not None:
+        input_ids = torch.cat([input_ids, prefix_ids], dim=1)
+        attention_mask = torch.cat([attention_mask, prefix_attention], dim=1)
+    inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
+    if device is not None:
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+    return inputs, prompt_len, prefix_tokens
+
+
+FIELD_WISE_LIST_FIELDS = (
+    "control_flow",
+    "reads",
+    "writes",
+    "calls",
+    "returns",
+    "side_effects",
+    "failure_modes",
+    "state_mutations",
+    "external_dependencies",
+    "hazards",
+    "uncertainty",
+)
+
+
+FIELD_WISE_DATA_ML_CATEGORIES = (
+    "losses",
+    "model_architecture",
+    "tensor_shapes",
+    "training_loops",
+    "optimizer_scheduler",
+    "metrics",
+    "checkpointing",
+)
+
+
+_FIELD_SYSTEM_PROMPT = (
+    "You generate one source-backed Semantic Mirror SIR field. Return only one "
+    "minified JSON object with the requested field name. The first character "
+    "must be { and the last character must be }. Do not add Markdown, prose, "
+    "analysis, tables, or unrelated keys."
+)
+
+
+FIELD_STATIC_HINT_DEFAULT_LIMITS = {
+    "control_flow": 2,
+    "reads": 2,
+    "writes": 2,
+    "calls": 2,
+    "returns": 2,
+    "side_effects": 2,
+    "failure_modes": 2,
+    "state_mutations": 2,
+    "external_dependencies": 1,
+    "hazards": 2,
+    "uncertainty": 1,
+}
+
+
+FIELD_STATIC_HINT_KEYS = (
+    "claim",
+    "confidence",
+    "source_spans",
+    "name",
+    "call",
+    "kind",
+    "target",
+    "module",
+    "imported",
+    "alias",
+    "predicate",
+    "condition",
+    "expression",
+    "value",
+    "parameter",
+    "symbol",
+    "metric",
+    "loss",
+    "shape",
+)
+
+
+def _compact_generation_claim(claim):
+    if not isinstance(claim, dict):
+        return {"claim": "", "confidence": 0.0, "source_spans": []}
+    compact = {
+        key: claim[key]
+        for key in FIELD_STATIC_HINT_KEYS
+        if key in claim and claim[key] not in (None, [], {})
+    }
+    if "claim" not in compact:
+        compact["claim"] = ""
+    compact["confidence"] = compact.get("confidence", claim.get("confidence", 0.7))
+    spans = compact.get("source_spans", [])
+    compact["source_spans"] = spans[:1] if isinstance(spans, list) else []
+    return compact
+
+
+def _hint_limit(field: str, requested_limit: int, compact_value) -> int:
+    if requested_limit > 0:
+        return requested_limit
+    if field == "data_ml_details":
+        return 2
+    compact_count = len(compact_value) if isinstance(compact_value, list) else 0
+    return max(compact_count, FIELD_STATIC_HINT_DEFAULT_LIMITS.get(field, 2))
+
+
+def _compact_static_hint_value(field: str, value, limit: int):
+    return _compact_static_hint_chunk(field, value, limit, 0)
+
+
+def _compact_static_hint_chunk(field: str, value, limit: int, chunk_index: int):
+    offset = max(chunk_index, 0) * max(limit, 1)
+    if field == "data_ml_details":
+        value = value if isinstance(value, dict) else {}
+        details = {}
+        for category in FIELD_WISE_DATA_ML_CATEGORIES:
+            category_value = value.get(category, [])
+            if not isinstance(category_value, list):
+                category_value = []
+            details[category] = [
+                _compact_generation_claim(claim)
+                for claim in category_value[offset : offset + limit]
+            ]
+        return details
+    if isinstance(value, list):
+        return [
+            _compact_generation_claim(claim)
+            for claim in value[offset : offset + limit]
+        ]
+    return [] if field != "data_ml_details" else {}
+
+
+def _hint_count(field: str, value) -> int:
+    if field == "data_ml_details":
+        value = value if isinstance(value, dict) else {}
+        return max(
+            (
+                len(items)
+                for items in value.values()
+                if isinstance(items, list)
+            ),
+            default=0,
+        )
+    return len(value) if isinstance(value, list) else 0
+
+
+def _merge_field_value(field: str, existing, new_value):
+    if field == "data_ml_details":
+        merged = {
+            category: list(existing.get(category, []))
+            if isinstance(existing, dict) and isinstance(existing.get(category), list)
+            else []
+            for category in FIELD_WISE_DATA_ML_CATEGORIES
+        }
+        new_value = new_value if isinstance(new_value, dict) else {}
+        for category in FIELD_WISE_DATA_ML_CATEGORIES:
+            items = new_value.get(category, [])
+            if isinstance(items, list):
+                merged[category].extend(items)
+        return merged
+    merged = list(existing) if isinstance(existing, list) else []
+    if isinstance(new_value, list):
+        merged.extend(new_value)
+    return merged
+
+
+def _parse_field_set(value: str) -> set[str]:
+    return {
+        item.strip()
+        for item in value.split(",")
+        if item.strip()
+    }
+
+
+def _format_field_prompt(
+    base_prompt: str,
+    field: str,
+    target_value,
+    field_target_mode: str,
+    tokenizer=None,
+) -> str:
+    field_type = "object" if field == "data_ml_details" else "array"
+    if field_target_mode == "static-facts":
+        target_instruction = (
+            "Use the full source-backed static_facts value as the target coverage. "
+            "Do not exceed that target and do not invent facts."
+        )
+        target_label = "Full static_facts target"
+    elif field_target_mode == "static-hints":
+        target_instruction = (
+            "Use static_hints as the source-backed fact pool. Return only facts copied "
+            "from or directly supported by static_hints, and keep the output at or "
+            "below output_budget. The compact_target shows the existing compact field "
+            "shape; static_hints may include additional source-backed facts for this "
+            "diagnostic."
+        )
+        target_label = "Static hints target"
+        target_payload = (
+            f"Output budget for `{field}`: {target_value.get('output_budget', 0)}. "
+            f"Existing compact `{field}` value: "
+            f"{json.dumps(target_value.get('compact_target'), separators=(',', ':'))}. "
+            f"Allowed static hints for `{field}`: "
+            f"{json.dumps(target_value.get('static_hints'), separators=(',', ':'))}."
+        )
+    else:
+        target_instruction = (
+            "Keep the compact target value as an upper bound and do not invent facts."
+        )
+        target_label = "Compact target"
+        target_payload = (
+            f"{target_label} for `{field}`: "
+            f"{json.dumps(target_value, separators=(',', ':'))}"
+        )
+    if field_target_mode == "static-facts":
+        target_payload = (
+            f"{target_label} for `{field}`: "
+            f"{json.dumps(target_value, separators=(',', ':'))}"
+        )
+    messages = [
+        {"role": "system", "content": _FIELD_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"{base_prompt}\\n\\n"
+                f"Generate only the `{field}` field as a JSON {field_type}. "
+                "Use source-backed facts from static_facts and the final SIR JSON. "
+                f"{target_instruction} "
+                "Your first output character must be `{`; output no prose before it. "
+                "Return exactly one minified object shaped like "
+                f"{{\\\"{field}\\\":<json_{field_type}>}}. "
+                f"{target_payload}"
+            ),
+        },
+    ]
+    if tokenizer is not None and hasattr(tokenizer, "apply_chat_template"):
+        try:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            try:
+                return tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return (
+        f"<|SYSTEM|>\\n{_FIELD_SYSTEM_PROMPT}\\n\\n"
+        f"<|USER|>\\n{messages[1]['content']}\\n\\n"
+        "<|ASSISTANT|>\\n"
+    )
+
+
+def _generate_object_completion(
+    model,
+    text_tokenizer,
+    formatted_prompt: str,
+    generation_tokens: int,
+    max_prompt_tokens: int,
+    device,
+    object_prefix: str = "",
+):
+    prefix_ids = None
+    prefix_attention = None
+    prefix_tokens = 0
+    prompt_limit = max_prompt_tokens
+    if object_prefix:
+        prefix_encoded = text_tokenizer(
+            object_prefix,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        prefix_ids = prefix_encoded["input_ids"]
+        prefix_attention = prefix_encoded.get("attention_mask")
+        if prefix_attention is None:
+            prefix_attention = torch.ones_like(prefix_ids)
+        prefix_tokens = int(prefix_ids.shape[1])
+        prompt_limit = max(128, max_prompt_tokens - prefix_tokens)
+    inputs = text_tokenizer(
+        formatted_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=prompt_limit,
+    )
+    prompt_len = inputs["input_ids"].shape[1]
+    if prefix_ids is not None:
+        attention_mask = inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(inputs["input_ids"])
+        inputs["input_ids"] = torch.cat([inputs["input_ids"], prefix_ids], dim=1)
+        inputs["attention_mask"] = torch.cat([attention_mask, prefix_attention], dim=1)
+    if device is not None:
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+    input_len = inputs["input_ids"].shape[1]
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=generation_tokens,
+        do_sample=False,
+        temperature=None,
+        top_p=None,
+        stopping_criteria=StoppingCriteriaList([
+            _JsonObjectStoppingCriteria(text_tokenizer, prompt_len)
+        ]),
+    )
+    completion_ids = output_ids[:, prompt_len:]
+    completion_tokens = int(completion_ids.shape[1])
+    generated_tokens = int(output_ids.shape[1] - input_len)
+    text = text_tokenizer.decode(completion_ids[0], skip_special_tokens=True)
+    return {
+        "text": text,
+        "completion_tokens": completion_tokens,
+        "generated_tokens": generated_tokens,
+        "object_prefix_tokens": prefix_tokens,
+        "hit_generation_cap": generated_tokens >= generation_tokens,
+    }
+
+
+def _extract_any_json_object(text: str) -> dict:
+    text = _assistant_completion_region(text)
+    decoder = json.JSONDecoder()
+    last_error = "no JSON object found"
+    first_json = text.find("{")
+    indices = [first_json] if first_json >= 0 and not text[:first_json].strip() else [
+        index for index, char in enumerate(text) if char == "{"
+    ]
+    for index in indices:
+        if index < 0:
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {"raw_error": f"no JSON object found: {last_error}"}
+
+
+def _empty_sir_unit(target: dict, reference: dict | None = None, metadata: dict | None = None) -> dict:
+    reference = reference if isinstance(reference, dict) else {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    source_spans = (
+        target.get("source_spans")
+        or reference.get("source_spans")
+        or metadata.get("source_spans")
+        or []
+    )
+    unit_id = target.get("unit_id") or reference.get("unit_id") or metadata.get("unit_id")
+    source_path = (
+        target.get("name")
+        or target.get("qualified_name")
+        or reference.get("source_path")
+        or metadata.get("source_path")
+        or unit_id
+    )
+    algorithm = target.get("algorithm", {})
+    if not isinstance(algorithm, dict) or not algorithm.get("claim"):
+        static_algorithm = reference.get("static_facts", {}).get("algorithm", {})
+        if isinstance(static_algorithm, dict) and static_algorithm.get("claim"):
+            algorithm = static_algorithm
+        else:
+            algorithm = {
+                "claim": f"Semantic IR unit for {source_path}.",
+                "confidence": 0.5,
+                "source_spans": source_spans,
+            }
+    if not isinstance(algorithm, dict):
+        algorithm = {
+            "claim": f"Semantic IR unit for {source_path}.",
+            "confidence": 0.5,
+            "source_spans": source_spans,
+        }
+    algorithm.setdefault("source_spans", source_spans)
+    algorithm.setdefault("claim", f"Semantic IR unit for {source_path}.")
+    algorithm.setdefault("confidence", 0.5)
+    return {
+        "unit_id": unit_id,
+        "source_spans": source_spans,
+        "language": target.get("language") or reference.get("language") or metadata.get("language") or "python",
+        "symbol_type": (
+            target.get("symbol_type")
+            or reference.get("symbol_type")
+            or metadata.get("symbol_type")
+            or "module"
+        ),
+        "name": target.get("name") or target.get("qualified_name") or source_path,
+        "qualified_name": target.get("qualified_name") or target.get("name") or source_path,
+        "algorithm": algorithm,
+        "control_flow": [],
+        "reads": [],
+        "writes": [],
+        "calls": [],
+        "returns": [],
+        "side_effects": [],
+        "failure_modes": [],
+        "state_mutations": [],
+        "external_dependencies": [],
+        "data_ml_details": {
+            category: [] for category in FIELD_WISE_DATA_ML_CATEGORIES
+        },
+        "hazards": [],
+        "uncertainty": [],
+        "confidence": target.get("confidence", algorithm.get("confidence", 0.5)),
+    }
+
+
+def _normalize_field_value(field: str, value):
+    if field == "data_ml_details":
+        value = value if isinstance(value, dict) else {}
+        return {
+            category: value.get(category, [])
+            if isinstance(value.get(category), list)
+            else []
+            for category in FIELD_WISE_DATA_ML_CATEGORIES
+        }
+    return value if isinstance(value, list) else []
+
+
+def _limit_field_target(field: str, value, limit: int):
+    if limit <= 0:
+        return value
+    if field == "data_ml_details":
+        value = value if isinstance(value, dict) else {}
+        return {
+            category: value.get(category, [])[:limit]
+            if isinstance(value.get(category), list)
+            else []
+            for category in FIELD_WISE_DATA_ML_CATEGORIES
+        }
+    if isinstance(value, list):
+        return value[:limit]
+    return value
+
+
+def _generate_field_wise_candidate(
+    model,
+    tokenizer,
+    text_tokenizer,
+    prompt: dict,
+    field_generation_tokens: int,
+    max_field_prompt_tokens: int,
+    field_target_mode: str,
+    field_target_limit: int,
+    field_target_max_chunks: int,
+    field_target_chunk_fields: set[str],
+    field_object_prefix_mode: str,
+    device,
+):
+    target = prompt.get("reward_reference", {}).get("compact_target", {})
+    if not isinstance(target, dict):
+        return (
+            {"unit_id": "<unparseable>", "raw_error": "missing compact_target"},
+            [],
+            0,
+            0,
+            False,
+        )
+    sir_unit = _empty_sir_unit(
+        target,
+        prompt.get("reward_reference", {}),
+        prompt.get("metadata", {}),
+    )
+    field_reports = []
+    total_completion_tokens = 0
+    total_generated_tokens = 0
+    any_cap_hit = False
+    static_facts = prompt.get("reward_reference", {}).get("static_facts", {})
+    static_facts = static_facts if isinstance(static_facts, dict) else {}
+    for field in (*FIELD_WISE_LIST_FIELDS, "data_ml_details"):
+        compact_value = target.get(field, {} if field == "data_ml_details" else [])
+        static_value = static_facts.get(field, {} if field == "data_ml_details" else [])
+        if field_target_mode == "static-facts":
+            target_values = [static_value]
+            chunk_count = 1
+        elif field_target_mode == "static-hints":
+            hint_limit = _hint_limit(field, field_target_limit, compact_value)
+            available_hints = _hint_count(field, static_value)
+            max_chunks_for_field = (
+                field_target_max_chunks
+                if not field_target_chunk_fields or field in field_target_chunk_fields
+                else 1
+            )
+            chunk_count = max(1, min(max_chunks_for_field, (available_hints + hint_limit - 1) // hint_limit))
+            target_values = [
+                {
+                    "output_budget": hint_limit,
+                    "chunk_index": chunk_index,
+                    "chunk_count": chunk_count,
+                    "compact_target": compact_value if chunk_index == 0 else ([] if field != "data_ml_details" else {}),
+                    "static_hints": _compact_static_hint_chunk(
+                        field,
+                        static_value,
+                        hint_limit,
+                        chunk_index,
+                    ),
+                }
+                for chunk_index in range(chunk_count)
+            ]
+        else:
+            target_values = [compact_value]
+            chunk_count = 1
+        if field_target_mode != "static-hints":
+            hint_limit = field_target_limit
+            target_values = [
+                _limit_field_target(field, target_value, field_target_limit)
+                for target_value in target_values
+            ]
+        merged_value = {} if field == "data_ml_details" else []
+        for chunk_index, target_value in enumerate(target_values):
+            formatted = _format_field_prompt(
+                prompt["prompt"],
+                field,
+                target_value,
+                field_target_mode,
+                tokenizer,
+            )
+            result = _generate_object_completion(
+                model,
+                text_tokenizer,
+                formatted,
+                field_generation_tokens,
+                max_field_prompt_tokens,
+                device,
+                object_prefix=f'{{"{field}":' if field_object_prefix_mode == "object" else "",
+            )
+            parsed = _extract_any_json_object(result["text"])
+            raw_value = parsed.get(field) if isinstance(parsed, dict) else None
+            value = _normalize_field_value(field, raw_value)
+            if isinstance(parsed, dict) and not parsed.get("raw_error"):
+                merged_value = _merge_field_value(field, merged_value, value)
+            total_completion_tokens += result["completion_tokens"]
+            total_generated_tokens += result["generated_tokens"]
+            any_cap_hit = any_cap_hit or result["hit_generation_cap"]
+            empty = (
+                not any(value.values())
+                if isinstance(value, dict)
+                else not bool(value)
+            )
+            field_reports.append(
+                {
+                    "field": field,
+                    "field_target_mode": field_target_mode,
+                    "field_target_limit": field_target_limit,
+                    "effective_field_target_limit": hint_limit,
+                    "field_target_chunk_index": chunk_index,
+                    "field_target_chunk_count": chunk_count,
+                    "field_target_chunk_enabled": (
+                        not field_target_chunk_fields or field in field_target_chunk_fields
+                    ),
+                    "field_object_prefix_mode": field_object_prefix_mode,
+                    "parseable": isinstance(parsed, dict) and not parsed.get("raw_error"),
+                    "raw_error": parsed.get("raw_error") if isinstance(parsed, dict) else "not_object",
+                    "empty": empty,
+                    "completion_tokens": result["completion_tokens"],
+                    "generated_tokens": result["generated_tokens"],
+                    "object_prefix_tokens": result.get("object_prefix_tokens", 0),
+                    "hit_generation_cap": result["hit_generation_cap"],
+                    "raw_text": result["text"][:1000],
+                }
+            )
+        sir_unit[field] = merged_value
+    return sir_unit, field_reports, total_completion_tokens, total_generated_tokens, any_cap_hit
 
 
 def main() -> int:
@@ -2039,52 +4984,146 @@ def main() -> int:
     parser.add_argument("--training-dir", default=".")
     parser.add_argument("--model-name-or-path", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--raw-out")
+    parser.add_argument("--repaired-out")
+    parser.add_argument("--prompt-file")
     parser.add_argument("--max-new-tokens", type=int, default=1536)
     parser.add_argument("--max-prompts", type=int)
+    parser.add_argument("--record-id", action="append", default=[])
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-faithfulness-repair", action="store_true")
+    parser.add_argument(
+        "--faithfulness-repair-mode",
+        choices=["schema-only", "compact-target", "full-static"],
+        default="schema-only",
+    )
+    parser.add_argument(
+        "--generation-mode",
+        choices=["full-json", "field-wise"],
+        default="full-json",
+    )
+    parser.add_argument("--field-max-new-tokens", type=int, default=384)
+    parser.add_argument(
+        "--field-target-mode",
+        choices=["compact", "static-facts", "static-hints"],
+        default="compact",
+    )
+    parser.add_argument("--field-target-limit", type=int, default=0)
+    parser.add_argument("--field-target-max-chunks", type=int, default=1)
+    parser.add_argument("--field-target-chunk-fields", default="")
+    parser.add_argument(
+        "--field-object-prefix-mode",
+        choices=["off", "object"],
+        default="off",
+    )
+    parser.add_argument(
+        "--schema-prefix-mode",
+        choices=["off", "identity", "identity-algorithm", "schema-scaffold"],
+        default="schema-scaffold",
+    )
     args = parser.parse_args()
 
     root = Path(args.training_dir)
     config = json.loads((root / "unsloth_sft_config.json").read_text(encoding="utf-8"))
-    prompts = _read_jsonl(root / "rl_prompts.jsonl")
+    prompts_path = Path(args.prompt_file) if args.prompt_file else root / "rl_prompts.jsonl"
+    prompts = _read_jsonl(prompts_path)
+    if args.record_id:
+        requested = set(args.record_id)
+        prompts = [
+            prompt for prompt in prompts
+            if prompt["record_id"] in requested
+            or prompt.get("metadata", {}).get("record_id") in requested
+            or prompt.get("metadata", {}).get("unit_id") in requested
+        ]
     if args.max_prompts is not None:
         prompts = prompts[: args.max_prompts]
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name_or_path,
         max_seq_length=config["training"]["max_seq_length"],
         load_in_4bit=config["load_in_4bit"],
+        load_in_16bit=config.get("load_in_16bit", False),
     )
     FastLanguageModel.for_inference(model)
     tokenizer.truncation_side = "left"
+    text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+    text_tokenizer.truncation_side = "left"
     generation_tokens = min(
         args.max_new_tokens,
         max(config["training"]["max_seq_length"] - 128, 1),
     )
     max_prompt_tokens = max(128, config["training"]["max_seq_length"] - generation_tokens)
-    rows = []
+    field_generation_tokens = min(
+        args.field_max_new_tokens,
+        max(config["training"]["max_seq_length"] - 128, 1),
+    )
+    max_field_prompt_tokens = max(
+        128,
+        config["training"]["max_seq_length"] - field_generation_tokens,
+    )
+    raw_rows = []
+    repaired_rows = []
     for prompt in prompts:
-        formatted_prompt = _format_generation_prompt(prompt["prompt"])
-        inputs = tokenizer(
-            formatted_prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=max_prompt_tokens,
-        )
-        if torch.cuda.is_available():
-            inputs = {key: value.cuda() for key, value in inputs.items()}
-        prompt_len = inputs["input_ids"].shape[1]
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=generation_tokens,
-            do_sample=False,
-            temperature=None,
-            top_p=None,
-        )
-        completion_ids = output_ids[:, prompt_len:]
+        device = "cuda" if torch.cuda.is_available() else None
         metadata = prompt["metadata"]
-        text = tokenizer.decode(completion_ids[0], skip_special_tokens=True)
+        field_generation_reports = []
+        if args.generation_mode == "field-wise":
+            (
+                raw_sir_unit,
+                field_generation_reports,
+                completion_tokens,
+                generated_tokens,
+                hit_generation_cap,
+            ) = _generate_field_wise_candidate(
+                model,
+                tokenizer,
+                text_tokenizer,
+                prompt,
+                field_generation_tokens,
+                max_field_prompt_tokens,
+                args.field_target_mode,
+                args.field_target_limit,
+                max(args.field_target_max_chunks, 1),
+                _parse_field_set(args.field_target_chunk_fields),
+                args.field_object_prefix_mode,
+                device,
+            )
+            schema_prefix = ""
+            schema_prefix_tokens = 0
+            text = json.dumps(raw_sir_unit, separators=(",", ":"))
+        else:
+            formatted_prompt = _format_generation_prompt(prompt["prompt"], tokenizer)
+            schema_prefix = _schema_prefix(prompt, args.schema_prefix_mode)
+            inputs, prompt_len, schema_prefix_tokens = _encode_generation_inputs(
+                text_tokenizer,
+                formatted_prompt,
+                schema_prefix,
+                max_prompt_tokens,
+                device,
+            )
+            input_len = int(inputs["input_ids"].shape[1])
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=generation_tokens,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+                stopping_criteria=StoppingCriteriaList([
+                    _JsonObjectStoppingCriteria(text_tokenizer, prompt_len)
+                ]),
+            )
+            completion_ids = output_ids[:, prompt_len:]
+            generated_tokens = int(output_ids.shape[1] - input_len)
+            completion_tokens = int(completion_ids.shape[1])
+            text = text_tokenizer.decode(completion_ids[0], skip_special_tokens=True)
+            hit_generation_cap = generated_tokens >= generation_tokens
+            raw_sir_unit = _extract_json_object(text)
+        raw_parse_error = raw_sir_unit.get("raw_error")
+        repair_input = json.loads(json.dumps(raw_sir_unit))
         sir_unit = _repair_sir_unit(
-            _extract_json_object(text),
+            repair_input,
             metadata,
             prompt.get("reward_reference", {}),
         )
@@ -2092,27 +5131,68 @@ def main() -> int:
             sir_unit = _apply_faithfulness_repair(
                 sir_unit,
                 prompt.get("reward_reference", {}).get("static_facts", {}),
+                prompt.get("reward_reference", {}).get("compact_target", {}),
+                args.faithfulness_repair_mode,
             )
-        rows.append(
+        base_row = {
+            "record_id": prompt["record_id"],
+            "dataset_record_id": metadata.get("record_id") or metadata.get("unit_id"),
+            "unit_id": metadata.get("unit_id"),
+            "source_path": metadata.get("source_path"),
+            "source_repo_id": metadata.get("source_repo_id"),
+            "source_repo_path": metadata.get("source_repo_path"),
+            "source_repo_location": metadata.get("source_repo_location"),
+            "language": metadata.get("language", "python"),
+            "profile": metadata.get("profile"),
+            "zoom": metadata.get("zoom"),
+            "raw_text": text,
+            "completion_tokens": completion_tokens,
+            "generated_tokens": generated_tokens,
+            "hit_generation_cap": hit_generation_cap,
+            "raw_parse_error": raw_parse_error,
+            "generation_config": {
+                "generation_mode": args.generation_mode,
+                "field_target_mode": args.field_target_mode,
+                "field_target_limit": args.field_target_limit,
+                "field_target_max_chunks": max(args.field_target_max_chunks, 1),
+                "field_target_chunk_fields": sorted(_parse_field_set(args.field_target_chunk_fields)),
+                "field_object_prefix_mode": args.field_object_prefix_mode,
+                "max_new_tokens": args.max_new_tokens,
+                "effective_max_new_tokens": generation_tokens,
+                "field_max_new_tokens": args.field_max_new_tokens,
+                "effective_field_max_new_tokens": field_generation_tokens,
+                "seed": args.seed,
+                "faithfulness_repair": not args.no_faithfulness_repair,
+                "faithfulness_repair_mode": args.faithfulness_repair_mode,
+                "schema_prefix_mode": args.schema_prefix_mode,
+                "schema_prefix_applied": bool(schema_prefix),
+                "schema_prefix_tokens": schema_prefix_tokens,
+            },
+        }
+        raw_rows.append(
             {
-                "record_id": prompt["record_id"],
-                "dataset_record_id": metadata.get("record_id") or metadata.get("unit_id"),
-                "unit_id": metadata.get("unit_id"),
-                "source_path": metadata.get("source_path"),
-                "source_repo_id": metadata.get("source_repo_id"),
-                "source_repo_path": metadata.get("source_repo_path"),
-                "source_repo_location": metadata.get("source_repo_location"),
-                "language": metadata.get("language", "python"),
-                "profile": metadata.get("profile"),
-                "zoom": metadata.get("zoom"),
-                "raw_text": text,
+                **base_row,
+                "raw_parseable": not bool(raw_sir_unit.get("raw_error")),
+                "repair_applied": False,
+                "sir_unit": raw_sir_unit,
+                "raw_sir_unit": raw_sir_unit,
+                "field_generation_reports": field_generation_reports,
+            }
+        )
+        repaired_rows.append(
+            {
+                **base_row,
+                "raw_parseable": not bool(raw_sir_unit.get("raw_error")),
+                "repair_applied": True,
+                "raw_sir_unit": raw_sir_unit,
                 "sir_unit": sir_unit,
             }
         )
-    Path(args.out).write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\\n" for row in rows),
-        encoding="utf-8",
-    )
+    _write_jsonl(Path(args.out), repaired_rows)
+    if args.raw_out:
+        _write_jsonl(Path(args.raw_out), raw_rows)
+    if args.repaired_out:
+        _write_jsonl(Path(args.repaired_out), repaired_rows)
     return 0
 
 
@@ -2174,15 +5254,28 @@ def _repair_sir_unit(unit: dict, metadata: dict, reference: dict) -> dict:
     return unit
 
 
-def _apply_faithfulness_repair(unit: dict, static_facts: dict) -> dict:
-    if not isinstance(unit, dict) or unit.get("raw_error") or not isinstance(static_facts, dict):
+def _apply_faithfulness_repair(
+    unit: dict,
+    static_facts: dict,
+    compact_target: dict | None = None,
+    repair_mode: str = "schema-only",
+) -> dict:
+    if not isinstance(unit, dict) or unit.get("raw_error"):
         return unit
-    if isinstance(static_facts.get("algorithm"), dict):
-        unit["algorithm"] = static_facts["algorithm"]
+    if repair_mode == "schema-only":
+        repair_source = {}
+    elif repair_mode == "full-static":
+        repair_source = static_facts if isinstance(static_facts, dict) else {}
+    elif repair_mode == "compact-target":
+        repair_source = compact_target if isinstance(compact_target, dict) else {}
+    else:
+        raise ValueError("repair_mode must be 'schema-only', 'compact-target', or 'full-static'")
+    if isinstance(repair_source.get("algorithm"), dict):
+        unit["algorithm"] = repair_source["algorithm"]
     for field in LIST_FIELDS:
-        if isinstance(static_facts.get(field), list):
-            unit[field] = static_facts[field]
-    data_ml_details = static_facts.get("data_ml_details", {})
+        if isinstance(repair_source.get(field), list):
+            unit[field] = repair_source[field]
+    data_ml_details = repair_source.get("data_ml_details", {})
     if isinstance(data_ml_details, dict):
         unit["data_ml_details"] = {
             category: data_ml_details.get(category, [])
@@ -2195,17 +5288,61 @@ def _apply_faithfulness_repair(unit: dict, static_facts: dict) -> dict:
 
 
 _GENERATION_SYSTEM_PROMPT = (
-    "You generate one valid Semantic Mirror SIR JSON unit. Use the exact required schema keys. "
-    "Preserve the bounded source-backed static facts supplied in the prompt. Do not invent "
-    "behavior. Return only JSON for the sir_unit object."
+    "You generate one valid Semantic Mirror SIR JSON unit. Use every required top-level "
+    "schema key exactly once. Preserve only source-backed static facts supplied in the "
+    "prompt. Do not invent behavior. Return minified JSON only: begin with {, end with }, "
+    "and do not wrap the object in Markdown fences."
 )
 
 
-def _format_generation_prompt(user_prompt: str) -> str:
+def _format_generation_prompt(user_prompt: str, tokenizer=None) -> str:
+    messages = [
+        {"role": "system", "content": _GENERATION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"{user_prompt}\\n\\n"
+                "Return only one complete minified SIR JSON object. Copy the final SIR JSON "
+                "object between FINAL_SIR_JSON_START and FINAL_SIR_JSON_END exactly: same top-level keys, source-backed values, "
+                "compact list lengths, and exact identity fields. Do not shorten unit_id or "
+                "qualified_name. Do not add safety_report, summary, code_analysis, analysis, "
+                "output_template, FINAL_SIR_JSON_START, FINAL_SIR_JSON_END, or any key outside "
+                "the final SIR JSON. The answer "
+                "must start with {\\\"unit_id\\\". Do not continue the input JSON or use Markdown "
+                "fences."
+            ),
+        },
+    ]
+    if tokenizer is not None and hasattr(tokenizer, "apply_chat_template"):
+        try:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            try:
+                return tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
     return (
         f"<|SYSTEM|>\\n{_GENERATION_SYSTEM_PROMPT}\\n\\n"
         f"<|USER|>\\n{user_prompt}\\n\\n"
-        "Return only the faithful SIR JSON object. Do not continue the input JSON.\\n\\n"
+        "Return only one complete minified SIR JSON object. Copy the final SIR JSON object between "
+        "FINAL_SIR_JSON_START and FINAL_SIR_JSON_END exactly: same top-level keys, "
+        "source-backed values, compact list lengths, "
+        "and exact identity fields. Do not shorten unit_id or qualified_name. "
+        "Do not add safety_report, summary, code_analysis, analysis, output_template, "
+        "FINAL_SIR_JSON_START, FINAL_SIR_JSON_END, or any key outside the final SIR JSON. "
+        "The answer must start with {\\\"unit_id\\\". Do not continue "
+        "the input JSON or use Markdown fences.\\n\\n"
         "<|ASSISTANT|>\\n"
     )
 
@@ -2214,15 +5351,72 @@ def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
 def _extract_json_object(text: str) -> dict:
+    text = _assistant_completion_region(text)
+    decoder = json.JSONDecoder()
+    last_error = "no JSON object found"
+    first_json = text.find("{")
+    indices = [first_json] if first_json >= 0 and not text[:first_json].strip() else [
+        index for index, char in enumerate(text) if char == "{"
+    ]
+    for index in indices:
+        if index < 0:
+            continue
+        char = text[index]
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+            continue
+        if isinstance(parsed, dict) and "unit_id" in parsed:
+            return parsed
+    return {"unit_id": "<unparseable>", "raw_error": f"no SIR JSON object found: {last_error}"}
+
+
+def _has_complete_json_object(text: str) -> bool:
     start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return {"unit_id": "<unparseable>", "raw_error": "no JSON object found"}
-    try:
-        return json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        return {"unit_id": "<unparseable>", "raw_error": str(exc)}
+    if start < 0:
+        return False
+    depth = 0
+    in_string = False
+    escape = False
+    for char in text[start:]:
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return True
+            if depth < 0:
+                return False
+    return False
+
+
+def _assistant_completion_region(text: str) -> str:
+    for marker in ("<|ASSISTANT|>", "<|assistant|>"):
+        if marker in text:
+            text = text.rsplit(marker, 1)[-1]
+    return text.strip()
 
 
 if __name__ == "__main__":
@@ -2303,8 +5497,10 @@ def _validate_sft_config(path: Path) -> list[dict[str, Any]]:
     for key in ("base_model", "method", "load_in_4bit", "lora", "training", "inputs"):
         if key not in config:
             issues.append({"kind": "missing_sft_config_key", "key": key})
-    if config.get("method") != "QLoRA":
+    if config.get("method") not in {"QLoRA", "bf16 LoRA"}:
         issues.append({"kind": "unsupported_sft_method", "actual": config.get("method")})
+    if config.get("load_in_4bit") and config.get("load_in_16bit"):
+        issues.append({"kind": "conflicting_precision_flags"})
     if config.get("training", {}).get("max_seq_length", 0) <= 0:
         issues.append({"kind": "invalid_max_seq_length"})
     return issues
@@ -2355,13 +5551,140 @@ def _check(
     }
 
 
-def _module_available(module: str, *, module_probe: ModuleProbe | None) -> bool:
+def _module_detail(module: str, *, module_probe: ModuleProbe | None) -> dict[str, Any]:
     if module_probe is not None:
-        return bool(module_probe(module))
+        return {"importable": bool(module_probe(module))}
     try:
-        return importlib.util.find_spec(module) is not None
+        if importlib.util.find_spec(module) is None:
+            return {"importable": False, "error": "module spec not found"}
+        imported = importlib.import_module(module)
+        return {
+            "importable": True,
+            "version": getattr(imported, "__version__", None),
+        }
     except (ImportError, AttributeError, ValueError):
-        return False
+        return {"importable": False, "error": "module import failed"}
+    except Exception as exc:
+        return {"importable": False, "error": str(exc)}
+
+
+def _module_available(module: str, *, module_probe: ModuleProbe | None) -> bool:
+    return bool(_module_detail(module, module_probe=module_probe).get("importable"))
+
+
+def _probe_python_runtime(
+    python_executable: str,
+    required_modules: tuple[str, ...],
+) -> dict[str, Any]:
+    script = r'''
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import json
+import sys
+
+modules = json.loads(sys.argv[1])
+module_details = {}
+for module in modules:
+    try:
+        if importlib.util.find_spec(module) is None:
+            module_details[module] = {"importable": False, "error": "module spec not found"}
+            continue
+        imported = importlib.import_module(module)
+        module_details[module] = {
+            "importable": True,
+            "version": getattr(imported, "__version__", None),
+        }
+    except Exception as exc:
+        module_details[module] = {"importable": False, "error": str(exc)}
+
+torch_info = {"importable": False}
+try:
+    import torch
+
+    torch_info = {
+        "importable": True,
+        "version": getattr(torch, "__version__", None),
+        "cuda_version": getattr(getattr(torch, "version", None), "cuda", None),
+        "cuda_available": bool(torch.cuda.is_available()),
+        "bf16_supported": None,
+        "device_count": 0,
+        "devices": [],
+    }
+    if torch_info["cuda_available"]:
+        is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", None)
+        if callable(is_bf16_supported):
+            torch_info["bf16_supported"] = bool(is_bf16_supported())
+        torch_info["device_count"] = torch.cuda.device_count()
+        devices = []
+        for index in range(torch_info["device_count"]):
+            props = torch.cuda.get_device_properties(index)
+            devices.append(
+                {
+                    "index": index,
+                    "name": torch.cuda.get_device_name(index),
+                    "total_memory_gb": round(props.total_memory / (1024**3), 2),
+                    "compute_capability": [props.major, props.minor],
+                }
+            )
+        torch_info["devices"] = devices
+except Exception as exc:
+    torch_info = {"importable": False, "error": str(exc)}
+
+print(json.dumps({
+    "ok": True,
+    "python_executable": sys.executable,
+    "python_version": ".".join(str(part) for part in sys.version_info[:3]),
+    "module_details": module_details,
+    "torch": torch_info,
+}))
+'''
+    try:
+        result = subprocess.run(
+            [python_executable, "-c", script, json.dumps(list(required_modules))],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except Exception as exc:
+        return _failed_python_runtime_probe(python_executable, required_modules, str(exc))
+    if result.returncode != 0:
+        error = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+        return _failed_python_runtime_probe(python_executable, required_modules, error)
+    json_lines = [line for line in result.stdout.splitlines() if line.strip().startswith("{")]
+    try:
+        payload = json.loads(json_lines[-1] if json_lines else result.stdout)
+    except (IndexError, json.JSONDecodeError) as exc:
+        return _failed_python_runtime_probe(
+            python_executable,
+            required_modules,
+            f"runtime probe did not return JSON: {exc}",
+        )
+    payload.setdefault("ok", True)
+    payload.setdefault("python_executable", python_executable)
+    payload.setdefault("module_details", {})
+    payload.setdefault("torch", {"importable": False, "error": "missing torch probe"})
+    return payload
+
+
+def _failed_python_runtime_probe(
+    python_executable: str,
+    required_modules: tuple[str, ...],
+    error: str,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "python_executable": python_executable,
+        "python_version": "unknown",
+        "probe_error": error,
+        "module_details": {
+            module: {"importable": False, "error": "runtime probe failed"}
+            for module in required_modules
+        },
+        "torch": {"importable": False, "error": error},
+    }
 
 
 def _python_version_supported_for_unsloth(version: str) -> bool:
@@ -2389,11 +5712,15 @@ def _probe_torch(*, torch_probe: TorchProbe | None) -> dict[str, Any]:
         "version": getattr(torch, "__version__", None),
         "cuda_version": getattr(getattr(torch, "version", None), "cuda", None),
         "cuda_available": bool(torch.cuda.is_available()),
+        "bf16_supported": None,
         "device_count": 0,
         "devices": [],
     }
     if info["cuda_available"]:
         try:
+            is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", None)
+            if callable(is_bf16_supported):
+                info["bf16_supported"] = bool(is_bf16_supported())
             info["device_count"] = torch.cuda.device_count()
             info["devices"] = [
                 {
@@ -2403,6 +5730,10 @@ def _probe_torch(*, torch_probe: TorchProbe | None) -> dict[str, Any]:
                         torch.cuda.get_device_properties(index).total_memory / (1024**3),
                         2,
                     ),
+                    "compute_capability": [
+                        torch.cuda.get_device_properties(index).major,
+                        torch.cuda.get_device_properties(index).minor,
+                    ],
                 }
                 for index in range(info["device_count"])
             ]
@@ -2457,6 +5788,9 @@ def _training_launch_command(
     beta: float,
     max_steps: int | None,
     kl_coef: float,
+    schema_prefix_mode: str,
+    resume_from_checkpoint: str | None,
+    seed: int | None,
 ) -> list[str]:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     script_key = {
@@ -2477,12 +5811,21 @@ def _training_launch_command(
         if model_name_or_path:
             command.extend(["--model-name-or-path", model_name_or_path])
         command.extend(["--beta", str(beta)])
+        if max_steps is not None:
+            command.extend(["--max-steps", str(max_steps)])
+        if resume_from_checkpoint:
+            command.extend(["--resume-from-checkpoint", resume_from_checkpoint])
     if stage == "rl":
         if model_name_or_path:
             command.extend(["--model-name-or-path", model_name_or_path])
-        if max_steps is not None:
-            command.extend(["--max-steps", str(max_steps)])
         command.extend(["--kl-coef", str(kl_coef)])
+        command.extend(["--schema-prefix-mode", schema_prefix_mode])
+    if stage in {"sft", "rl"} and max_steps is not None:
+        command.extend(["--max-steps", str(max_steps)])
+    if stage == "sft" and resume_from_checkpoint:
+        command.extend(["--resume-from-checkpoint", resume_from_checkpoint])
+    if seed is not None:
+        command.extend(["--seed", str(seed)])
     return command
 
 
@@ -2568,11 +5911,1802 @@ def _training_command_hints(
     if missing_modules:
         hints.append(
             "Install CUDA-compatible training dependencies: unsloth, trl, datasets, "
-            "transformers, torch, and bitsandbytes."
+            "transformers, torch, bitsandbytes, and peft."
         )
     if require_gpu:
-        hints.append("Run on a CUDA machine before launching the default 7-14B QLoRA scripts.")
+        hints.append("Run on a CUDA machine before launching the default Qwen3-family LoRA scripts.")
     return hints
+
+
+def _training_audit_repro_command(
+    training_dir: Path,
+    *,
+    env_file: Path | None,
+    require_gpu: bool,
+    require_hf_token: bool,
+    python_executable: str | None,
+) -> list[str]:
+    command = ["uv", "run", "semantic-mirror", "train", "audit", str(training_dir)]
+    if env_file is not None:
+        command.extend(["--env-file", str(env_file)])
+    if not require_gpu:
+        command.append("--allow-cpu")
+    if require_hf_token:
+        command.append("--require-hf-token")
+    if python_executable is not None:
+        command.extend(["--python-executable", python_executable])
+    return command
+
+
+def _training_audit_blocker_summary(
+    failed_required_checks: list[str],
+    *,
+    python_supported: bool,
+    missing_modules: list[str],
+    torch_info: dict[str, Any],
+    require_gpu: bool,
+) -> list[str]:
+    summary = []
+    if "python_version_supported_for_unsloth" in failed_required_checks and not python_supported:
+        summary.append(f"Python runtime is outside the supported {UNSLOTH_PYTHON_RANGE} range.")
+    if "required_training_modules" in failed_required_checks and missing_modules:
+        summary.append("Missing required training modules: " + ", ".join(missing_modules) + ".")
+    if "torch_importable" in failed_required_checks:
+        error = torch_info.get("error")
+        summary.append(
+            "PyTorch is not importable"
+            + (f": {error}." if error else ".")
+        )
+    if "torch_cuda_available" in failed_required_checks and require_gpu:
+        summary.append("PyTorch CUDA is not available for the audited runtime.")
+    return summary
+
+
+def _collect_training_metrics(run: Path) -> dict[str, Any]:
+    series: dict[str, list[dict[str, Any]]] = {name: [] for name in DIAGNOSTIC_PLOT_SPECS}
+    sources: dict[str, dict[str, Any]] = {}
+    for log_path in sorted(run.rglob("*.log")):
+        log_records = _parse_training_log_records(log_path)
+        if not log_records:
+            continue
+        stage = _stage_from_path(log_path)
+        sources[str(log_path)] = {"kind": "training_log", "records": len(log_records)}
+        for step, record in enumerate(log_records, start=1):
+            if "loss" in record and stage in {"sft", "dpo", "unknown"}:
+                loss_stage = "sft" if stage == "unknown" else stage
+                series[f"{loss_stage}_loss"].append(
+                    _point(step, record["loss"], log_path, label=loss_stage)
+                )
+            if stage == "dpo" and "reward_accuracy" in record:
+                series["dpo_reward_accuracy"].append(
+                    _point(step, record["reward_accuracy"], log_path, label=stage)
+                )
+    for json_path in sorted(run.rglob("*.json")):
+        payload = _read_json_file(json_path)
+        if payload is None:
+            continue
+        if payload.get("stage") == "rl" and isinstance(payload.get("history"), list):
+            history = payload["history"]
+            sources[str(json_path)] = {"kind": "rl_training_report", "records": len(history)}
+            for index, row in enumerate(history, start=1):
+                if "reward" in row:
+                    series["rl_reward"].append(_point(index, row["reward"], json_path, label="rl"))
+                if "raw_parseable" in row:
+                    series["rl_parseability"].append(
+                        _point(index, 1.0 if row["raw_parseable"] else 0.0, json_path, label="rl")
+                    )
+                if "loss" in row:
+                    series["eval_metrics"].append(
+                        _point(index, row["loss"], json_path, label="rl_loss")
+                    )
+        if isinstance(payload.get("log_history"), list):
+            log_history = payload["log_history"]
+            stage = _stage_from_path(json_path)
+            sources[str(json_path)] = {
+                "kind": "trainer_state",
+                "records": len(log_history),
+            }
+            for index, row in enumerate(log_history, start=1):
+                if "loss" in row and stage in {"sft", "dpo", "unknown"}:
+                    loss_stage = "sft" if stage == "unknown" else stage
+                    series[f"{loss_stage}_loss"].append(
+                        _point(index, row["loss"], json_path, label=loss_stage)
+                    )
+                if stage == "dpo" and "rewards/accuracies" in row:
+                    series["dpo_reward_accuracy"].append(
+                        _point(index, row["rewards/accuracies"], json_path, label="dpo")
+                    )
+        if isinstance(payload.get("metrics"), dict):
+            metrics = payload["metrics"]
+            sources[str(json_path)] = {"kind": "evaluation_report", "records": len(metrics)}
+            metric_index = len(series["eval_metrics"]) + 1
+            for key in (
+                "average_static_faithfulness_score",
+                "hallucination_penalties",
+                "total_score",
+            ):
+                if key in metrics:
+                    series["eval_metrics"].append(
+                        _point(metric_index, metrics[key], json_path, label=key)
+                    )
+                    metric_index += 1
+            for key in ("schema_validity", "heldout_unit_coverage"):
+                if key in metrics:
+                    series["schema_coverage"].append(
+                        _point(len(series["schema_coverage"]) + 1, metrics[key], json_path, label=key)
+                    )
+    for jsonl_path in sorted(run.rglob("*candidates*.jsonl")):
+        rows = _read_jsonl(jsonl_path)
+        if not rows:
+            continue
+        sources[str(jsonl_path)] = {"kind": "candidate_jsonl", "records": len(rows)}
+        for index, row in enumerate(rows, start=1):
+            raw_text = str(row.get("raw_text") or row.get("output") or "")
+            if raw_text:
+                series["generation_lengths"].append(
+                    _point(index, len(raw_text), jsonl_path, label="raw_text")
+                )
+    return {"series": series, "sources": sources}
+
+
+def _parse_training_log_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{") or not stripped.endswith("}"):
+            continue
+        try:
+            parsed = ast.literal_eval(stripped)
+        except (SyntaxError, ValueError):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(parsed, dict):
+            records.append(parsed)
+    return records
+
+
+def _stage_from_path(path: Path) -> str:
+    lowered = str(path).lower()
+    for stage in ("sft", "dpo", "rl"):
+        if stage in lowered:
+            return stage
+    return "unknown"
+
+
+def _point(index: int, value: Any, source: Path, *, label: str) -> dict[str, Any]:
+    numeric = _coerce_float(value)
+    return {
+        "x": index,
+        "y": 0.0 if numeric is None else numeric,
+        "label": label,
+        "source": str(source),
+        "missing": numeric is None,
+    }
+
+
+def _coerce_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _contract_gate(
+    name: str,
+    passed: bool,
+    *,
+    actual: Any = None,
+    expected: Any = True,
+    evidence: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "passed": bool(passed),
+        "actual": actual if actual is not None else bool(passed),
+        "expected": expected,
+        "evidence": evidence,
+    }
+
+
+def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# Semantic Mirror Full-Eval Contract Status",
+        "",
+        f"- Run directory: `{report['run_dir']}`",
+        f"- Generated: `{report['generated_at']}`",
+        f"- Passed: `{report['passed']}`",
+        "",
+        "## Requested Steps",
+        "",
+        "| Stage | Requested | Manifest | Matches |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for stage in ("sft", "dpo", "rl"):
+        stage_status = report["stage_status"][stage]
+        lines.append(
+            f"| `{stage}` | {stage_status['requested_max_steps']} | "
+            f"{stage_status['manifest_max_steps']} | "
+            f"{stage_status['manifest_matches_requested_max_steps']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Stage Evidence",
+            "",
+            "| Stage | Manifest Current | Eval Current | Compare Current | Sample Current |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for stage in ("sft", "dpo", "rl"):
+        evidence = report["stage_evidence_summary"][stage]
+        lines.append(
+            f"| `{stage}` | `{evidence['manifest_current']}` | "
+            f"`{evidence['eval_current']}` | `{evidence['compare_current']}` | "
+            f"`{evidence['sample_current']}` |"
+        )
+    summary_status = report["training_eval_summary_status"]
+    lines.extend(
+        [
+            "",
+            "## Training Eval Summary",
+            "",
+            f"- Requested-step match: `{summary_status['requested_max_steps_match']}`",
+            f"- Stage-manifest-step match: `{summary_status['stage_manifest_max_steps_match']}`",
+            f"- Actual summary steps: `{json.dumps(summary_status['actual'], sort_keys=True)}`",
+        ]
+    )
+    repo_hygiene = report.get("repo_hygiene_status") or {}
+    if repo_hygiene.get("checked"):
+        lines.extend(
+            [
+                "",
+                "## Repo Hygiene",
+                "",
+                f"- Repo root: `{repo_hygiene.get('repo_root')}`",
+                f"- Branch: `{repo_hygiene.get('branch')}`",
+                f"- Passed: `{repo_hygiene.get('passed')}`",
+                f"- Summary: {repo_hygiene.get('summary')}",
+                f"- Tracked changes: `{len(repo_hygiene.get('tracked_changes', []))}`",
+                f"- Untracked paths: `{len(repo_hygiene.get('untracked', []))}`",
+                f"- Allowed ignored local-only paths: `{len(repo_hygiene.get('ignored_allowed', []))}`",
+                f"- Unexpected ignored paths: `{len(repo_hygiene.get('ignored_unexpected', []))}`",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "## Repo Hygiene",
+                "",
+                f"- Checked: `{repo_hygiene.get('checked', False)}`",
+                f"- Summary: {repo_hygiene.get('summary')}",
+            ]
+        )
+    windows_readiness = report.get("windows_readiness_status") or {}
+    lines.extend(
+        [
+            "",
+            "## Windows Readiness",
+            "",
+            f"- Checked: `{windows_readiness.get('checked', False)}`",
+            f"- Passed: `{windows_readiness.get('passed')}`",
+            f"- Summary: {windows_readiness.get('summary')}",
+            f"- Native audit path: `{windows_readiness.get('windows_audit_path')}`",
+            f"- Native passed: `{windows_readiness.get('native_passed')}`",
+            f"- Native blocked: `{windows_readiness.get('native_blocked')}`",
+            f"- WSL smoke manifest path: `{windows_readiness.get('wsl_smoke_manifest_path')}`",
+            f"- WSL smoke complete: `{windows_readiness.get('wsl_smoke_complete')}`",
+            f"- WSL diagnostics exists: `{windows_readiness.get('wsl_diagnostics_exists')}`",
+        ]
+    )
+    human_usefulness = report.get("human_usefulness_status") or {}
+    lines.extend(
+        [
+            "",
+            "## Human Usefulness",
+            "",
+            f"- Checked: `{human_usefulness.get('checked', False)}`",
+            f"- Passed: `{human_usefulness.get('passed')}`",
+            f"- Summary: {human_usefulness.get('summary')}",
+            f"- Suite report path: `{human_usefulness.get('path')}`",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## Contract Scorecard",
+            "",
+            "| Area | Required | Max Reward | Earned | Passed | Evidence |",
+            "| --- | --- | ---: | ---: | --- | --- |",
+        ]
+    )
+    for row in report["contract_scorecard"]:
+        lines.append(
+            f"| `{row['area']}` | `{row['required']}` | "
+            f"{row['max_reward']} | {row['earned_reward']} | `{row['passed']}` | "
+            f"{row['evidence']} |"
+        )
+    reward = report["contract_reward_summary"]
+    lines.extend(
+        [
+            "",
+            "## Reward Summary",
+            "",
+            f"- Required reward: `{reward['required_reward_earned']}/{reward['required_reward_possible']}`",
+            f"- Optional reward: `{reward['optional_reward_earned']}/{reward['optional_reward_possible']}`",
+            f"- Minimum acceptable required reward: `{reward['minimum_acceptable_required_reward']}`",
+            f"- Required reward threshold met: `{reward['required_reward_threshold_met']}`",
+            f"- Zero failed required areas: `{reward['zero_failed_required_areas']}`",
+            f"- Completion eligible: `{reward['completion_eligible']}`",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "## Remaining Items",
+            "",
+        ]
+    )
+    if report["remaining_items"]:
+        lines.extend(
+            [
+                "### By Area",
+                "",
+                "| Area | Count | Gates |",
+                "| --- | ---: | --- |",
+            ]
+        )
+        for area, gates in report["remaining_by_area"].items():
+            lines.append(
+                f"| `{area}` | {len(gates)} | "
+                f"{', '.join(f'`{gate}`' for gate in gates)} |"
+            )
+        lines.extend(["", "### Gate Details", ""])
+        lines.extend(
+            [
+                "| Gate | Actual | Expected | Evidence |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for item in report["remaining_items"]:
+            lines.append(
+                f"| `{item['gate']}` | `{json.dumps(item['actual'], sort_keys=True)}` | "
+                f"`{json.dumps(item['expected'], sort_keys=True)}` | `{item['evidence']}` |"
+            )
+    else:
+        lines.append("All full-eval contract gates are currently proven.")
+    resume_status = report.get("resume_inspection_status")
+    if resume_status and resume_status.get("exists"):
+        lines.extend(
+            [
+                "",
+                "## Resume Inspection",
+                "",
+                f"- Evidence: `{resume_status['path']}`",
+                f"- Reuse enabled: `{resume_status['reuse_stage_outputs_enabled']}`",
+                "",
+                "| Stage | Action | Requested | Manifest | Checkpoint | Reason |",
+                "| --- | --- | ---: | ---: | --- | --- |",
+            ]
+        )
+        for stage in ("sft", "dpo", "rl"):
+            decision = resume_status["decisions"].get(stage, {})
+            checkpoint = decision.get("resume_from_checkpoint") or {}
+            lines.append(
+                f"| `{stage}` | `{decision.get('action')}` | "
+                f"{decision.get('requested_max_steps')} | "
+                f"{decision.get('manifest_max_steps')} | "
+                f"`{checkpoint.get('path')}` | `{decision.get('reason')}` |"
+            )
+    if report.get("next_actions"):
+        lines.extend(["", "## Next Actions", ""])
+        for action in report["next_actions"]:
+            lines.extend(
+                [
+                    f"### {action['title']}",
+                    "",
+                    action["reason"],
+                    "",
+                    "```bash",
+                    action["command"],
+                    "```",
+                    "",
+                ]
+            )
+            if action.get("windows_powershell_command"):
+                lines.extend(
+                    [
+                        "```powershell",
+                        action["windows_powershell_command"],
+                        "```",
+                        "",
+                    ]
+                )
+    lines.extend(
+        [
+            "",
+            "## Gate Details",
+            "",
+            "| Gate | Passed | Evidence |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for gate in report["gates"]:
+        lines.append(f"| `{gate['name']}` | `{gate['passed']}` | `{gate.get('evidence')}` |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _full_eval_next_actions(
+    run: Path,
+    stage_status: dict[str, dict[str, Any]],
+    report_status: dict[str, dict[str, Any]],
+    sample_status: dict[str, dict[str, Any]],
+    diagnostics_status: dict[str, Any],
+    repo_hygiene_status: dict[str, Any],
+    windows_readiness_status: dict[str, Any],
+    human_usefulness_status: dict[str, Any],
+) -> list[dict[str, str]]:
+    package_root = run.parent if run.name == "outputs" else run
+    actions: list[dict[str, str]] = []
+    sft_steps = stage_status["sft"]["requested_max_steps"]
+    dpo_steps = stage_status["dpo"]["requested_max_steps"]
+    rl_steps = stage_status["rl"]["requested_max_steps"]
+    env_parts = [
+        f"SFT_MAX_STEPS={sft_steps}" if sft_steps is not None else "",
+        f"DPO_MAX_STEPS={dpo_steps}" if dpo_steps is not None else "",
+        f"RL_MAX_STEPS={rl_steps}" if rl_steps is not None else "",
+        "REUSE_STAGE_OUTPUTS=1",
+    ]
+    dpo_checkpoint = _latest_checkpoint(run / "semantic-mirror-dpo")
+    if (
+        dpo_checkpoint is not None
+        and not stage_status["dpo"]["manifest_matches_requested_max_steps"]
+    ):
+        env_parts.append(
+            f"DPO_RESUME_FROM_CHECKPOINT={_posix_relpath(dpo_checkpoint, package_root)}"
+        )
+    base_env = " ".join(part for part in env_parts if part)
+    inspect_command = f"{base_env} bash launch/inspect_full_training_eval_resume.sh"
+    run_command = f"{base_env} bash launch/run_full_training_eval.sh"
+    status_evidence_flags = _contract_status_evidence_flags(
+        package_root=package_root,
+        repo_hygiene_status=repo_hygiene_status,
+        windows_readiness_status=windows_readiness_status,
+        human_usefulness_status=human_usefulness_status,
+    )
+    status_command = (
+        f"{base_env} PYTHONPATH=src python -m semantic_mirror.cli "
+        "train contract-status outputs "
+        f"--sft-steps {sft_steps} --dpo-steps {dpo_steps} --rl-steps {rl_steps} "
+        f"{status_evidence_flags}"
+        "--out outputs/contract_status.json --markdown-out outputs/contract_status.md"
+    )
+    diagnostics_command = "PYTHONPATH=src python -m semantic_mirror.cli train report outputs --out outputs/diagnostics"
+    actions.append(
+        {
+            "title": "Inspect resume plan",
+            "reason": "Preview stage reuse and resume decisions before launching training.",
+            "command": f"# from {package_root}\n{inspect_command}",
+            "windows_powershell_command": _windows_wsl_command(package_root, inspect_command),
+        }
+    )
+    if not stage_status["dpo"]["manifest_matches_requested_max_steps"]:
+        rl_incomplete = (
+            not stage_status["rl"]["manifest_matches_requested_max_steps"]
+            or not report_status["rl_eval"]["exists"]
+            or not sample_status["rl"]["manifest_exists"]
+        )
+        actions.append(
+            {
+                "title": (
+                    "Resume full eval through DPO and RL"
+                    if rl_incomplete
+                    else "Resume full eval through DPO"
+                ),
+                "reason": (
+                    "DPO has not reached the requested max_steps, and RL/final eval evidence is incomplete; "
+                    "resume from the newest available DPO checkpoint if present, then continue the full chain."
+                    if rl_incomplete
+                    else "DPO has not reached the requested max_steps; resume from the newest available DPO checkpoint if present."
+                ),
+                "command": f"# from {package_root}\n{run_command}",
+                "windows_powershell_command": _windows_wsl_command(package_root, run_command),
+            }
+        )
+    elif (
+        not stage_status["rl"]["manifest_matches_requested_max_steps"]
+        or not report_status["rl_eval"]["exists"]
+        or not sample_status["rl"]["manifest_exists"]
+    ):
+        actions.append(
+            {
+                "title": "Run RL and final eval",
+                "reason": "DPO is complete but RL/final eval evidence is missing.",
+                "command": f"# from {package_root}\n{run_command}",
+                "windows_powershell_command": _windows_wsl_command(package_root, run_command),
+            }
+        )
+    if (
+        not diagnostics_status["all_required_plots_exist"]
+        or not diagnostics_status["sources_current_for_run"]
+    ):
+        actions.append(
+            {
+                "title": "Regenerate target diagnostics",
+                "reason": "Diagnostic plots must be regenerated from this target outputs directory after target-stage evidence is current.",
+                "command": f"# from {package_root}\n{diagnostics_command}",
+                "windows_powershell_command": _windows_wsl_command(
+                    package_root, diagnostics_command
+                ),
+            }
+        )
+    actions.append(
+        {
+            "title": "Regenerate contract status",
+            "reason": "Refresh JSON and Markdown status after the next full-eval attempt.",
+            "command": f"# from {package_root}\n{status_command}",
+            "windows_powershell_command": _windows_wsl_command(package_root, status_command),
+        }
+    )
+    return actions
+
+
+def _windows_wsl_command(package_root: Path, bash_command: str, *, distro: str = "Ubuntu") -> str:
+    return "\n".join(
+        [
+            f"$package = {_powershell_single_quoted(str(package_root))}",
+            "$packageForWsl = $package -replace '\\\\', '/'",
+            f'$packageWsl = (wsl.exe -d {distro} -- wslpath -a "$packageForWsl").Trim()',
+            f'wsl.exe -d {distro} -- bash -lc "cd \'$packageWsl\' && {bash_command}"',
+        ]
+    )
+
+
+def _contract_status_evidence_flags(
+    *,
+    package_root: Path,
+    repo_hygiene_status: dict[str, Any],
+    windows_readiness_status: dict[str, Any],
+    human_usefulness_status: dict[str, Any],
+) -> str:
+    flags: list[str] = []
+    if repo_hygiene_status.get("checked") and repo_hygiene_status.get("repo_root"):
+        flags.extend(
+            [
+                "--repo-root",
+                _shell_single_quoted(
+                    _posix_relpath(Path(repo_hygiene_status["repo_root"]), package_root)
+                ),
+            ]
+        )
+    if windows_readiness_status.get("windows_audit_path"):
+        flags.extend(
+            [
+                "--windows-audit",
+                _shell_single_quoted(
+                    _posix_relpath(
+                        Path(windows_readiness_status["windows_audit_path"]),
+                        package_root,
+                    )
+                ),
+            ]
+        )
+    if windows_readiness_status.get("wsl_smoke_manifest_path"):
+        flags.extend(
+            [
+                "--wsl-smoke-manifest",
+                _shell_single_quoted(
+                    _posix_relpath(
+                        Path(windows_readiness_status["wsl_smoke_manifest_path"]),
+                        package_root,
+                    )
+                ),
+            ]
+        )
+    if human_usefulness_status.get("path"):
+        flags.extend(
+            [
+                "--human-study-suite",
+                _shell_single_quoted(
+                    _posix_relpath(Path(human_usefulness_status["path"]), package_root)
+                ),
+            ]
+        )
+    return " ".join(flags) + (" " if flags else "")
+
+
+def _shell_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _powershell_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _latest_checkpoint(stage_dir: Path) -> Path | None:
+    checkpoints: list[tuple[int, Path]] = []
+    if not stage_dir.exists():
+        return None
+    for path in stage_dir.iterdir():
+        if not path.is_dir() or not path.name.startswith("checkpoint-"):
+            continue
+        try:
+            step = int(path.name.rsplit("-", 1)[1])
+        except ValueError:
+            continue
+        checkpoints.append((step, path))
+    return max(checkpoints, default=(0, None))[1]
+
+
+def _posix_relpath(path: Path, start: Path) -> str:
+    try:
+        rel = Path(os.path.relpath(path, start))
+    except ValueError:
+        rel = path
+    return rel.as_posix()
+
+
+def _stage_contract_status(
+    run: Path,
+    stage: str,
+    requested_steps: int | None,
+) -> dict[str, Any]:
+    stage_dir = run / f"semantic-mirror-{stage}"
+    manifest_path = stage_dir / "training_stage_manifest.json"
+    manifest = _read_json_file(manifest_path)
+    return {
+        "stage": stage,
+        "stage_dir": str(stage_dir),
+        "manifest_path": str(manifest_path),
+        "manifest_exists": manifest is not None,
+        "manifest_max_steps": manifest.get("max_steps") if manifest else None,
+        "requested_max_steps": requested_steps,
+        "manifest_matches_requested_max_steps": (
+            manifest is not None
+            and requested_steps is not None
+            and manifest.get("max_steps") == requested_steps
+        ),
+        "resume_from_checkpoint": manifest.get("resume_from_checkpoint") if manifest else None,
+        "output_dir": manifest.get("output_dir") if manifest else None,
+    }
+
+
+def _eval_summary_contract_status(
+    eval_summary: dict[str, Any] | None,
+    requested_steps: dict[str, int | None],
+) -> dict[str, Any]:
+    summary_requested = {}
+    summary_manifest = {}
+    if eval_summary:
+        configured = eval_summary.get("eval_run_config", {}).get("requested_max_steps", {})
+        if isinstance(configured, dict):
+            summary_requested = {
+                stage: configured.get(stage) for stage in ("sft", "dpo", "rl")
+            }
+        execution = eval_summary.get("stage_execution_summary", {})
+        if isinstance(execution, dict):
+            summary_manifest = {
+                stage: execution.get(stage, {}).get("manifest_max_steps")
+                for stage in ("sft", "dpo", "rl")
+                if isinstance(execution.get(stage), dict)
+            }
+    expected = {stage: requested_steps.get(stage) for stage in ("sft", "dpo", "rl")}
+    actual = {
+        "requested_max_steps": summary_requested or None,
+        "stage_manifest_max_steps": summary_manifest or None,
+    }
+    requested_matches = bool(summary_requested) and all(
+        summary_requested.get(stage) == expected.get(stage)
+        for stage in ("sft", "dpo", "rl")
+        if expected.get(stage) is not None
+    )
+    manifest_matches = bool(summary_manifest) and all(
+        summary_manifest.get(stage) == expected.get(stage)
+        for stage in ("sft", "dpo", "rl")
+        if expected.get(stage) is not None
+    )
+    return {
+        "matches_requested_steps": requested_matches and manifest_matches,
+        "requested_max_steps_match": requested_matches,
+        "stage_manifest_max_steps_match": manifest_matches,
+        "actual": actual,
+        "expected": expected,
+    }
+
+
+def _json_report_status(path: Path, *, require_passed: bool = False) -> dict[str, Any]:
+    report = _read_json_file(path)
+    return {
+        "path": str(path),
+        "exists": report is not None,
+        "passed": report.get("passed") if report else None,
+        "mode": report.get("mode") if report else None,
+        "required_passed": (report is not None and (not require_passed or report.get("passed") is True)),
+    }
+
+
+def _sample_contract_status(sample_dir: Path) -> dict[str, Any]:
+    return {
+        "sample_dir": str(sample_dir),
+        "manifest_exists": (sample_dir / "sample_manifest.json").exists(),
+        "raw_candidates_exist": (sample_dir / "raw_candidates.jsonl").exists(),
+        "repaired_candidates_exist": (sample_dir / "repaired_candidates.jsonl").exists(),
+        "raw_eval_exists": (sample_dir / "raw_eval.json").exists(),
+        "repaired_eval_exists": (sample_dir / "repaired_eval.json").exists(),
+        "inspection_markdown_exists": (sample_dir / "sample_inspection.md").exists(),
+    }
+
+
+def _diagnostics_contract_status(diagnostics: Path, *, run: Path) -> dict[str, Any]:
+    required = [
+        "training_summary.json",
+        "training_summary.md",
+        "sft_loss.png",
+        "dpo_loss.png",
+        "dpo_reward_accuracy.png",
+        "rl_reward.png",
+        "rl_parseability.png",
+        "generation_lengths.png",
+        "eval_metrics.png",
+        "schema_coverage.png",
+    ]
+    existing = [name for name in required if (diagnostics / name).exists()]
+    summary_path = diagnostics / "training_summary.json"
+    summary = _read_json_file(summary_path)
+    source_files = _diagnostic_source_files(summary)
+    run_tokens = _path_match_tokens(run)
+    foreign_sources = [
+        source
+        for source in source_files
+        if not any(token and token in source.replace("\\", "/") for token in run_tokens)
+    ]
+    return {
+        "summary_path": str(summary_path),
+        "summary_exists": summary is not None,
+        "required_plots": required,
+        "existing_required_plots": existing,
+        "missing_required_plots": [name for name in required if name not in existing],
+        "all_required_plots_exist": len(existing) == len(required),
+        "source_files": source_files,
+        "foreign_source_files": foreign_sources,
+        "sources_current_for_run": bool(source_files) and not foreign_sources,
+    }
+
+
+def _diagnostic_source_files(summary: dict[str, Any] | None) -> list[str]:
+    if not isinstance(summary, dict):
+        return []
+    sources: set[str] = set()
+    plots = summary.get("plots", {})
+    if isinstance(plots, dict):
+        for plot in plots.values():
+            if not isinstance(plot, dict):
+                continue
+            source_files = plot.get("source_files", [])
+            if isinstance(source_files, list):
+                sources.update(str(source) for source in source_files)
+    return sorted(sources)
+
+
+def _diagnostic_gate_actual(diagnostics_status: dict[str, Any]) -> dict[str, Any]:
+    foreign_sources = diagnostics_status["foreign_source_files"]
+    return {
+        "existing_required_plot_count": len(diagnostics_status["existing_required_plots"]),
+        "missing_required_plots": diagnostics_status["missing_required_plots"],
+        "sources_current_for_run": diagnostics_status["sources_current_for_run"],
+        "stages_current_for_requested_steps": diagnostics_status[
+            "stages_current_for_requested_steps"
+        ],
+        "stale_or_missing_stages": diagnostics_status["stale_or_missing_stages"],
+        "foreign_source_file_count": len(foreign_sources),
+        "foreign_source_file_examples": foreign_sources[:5],
+    }
+
+
+def _stage_evidence_summary(
+    stage_status: dict[str, dict[str, Any]],
+    report_status: dict[str, dict[str, Any]],
+    sample_status: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    report_keys = {
+        "sft": ("sft_eval", "sft_vs_baseline"),
+        "dpo": ("dpo_eval", "dpo_vs_sft"),
+        "rl": ("rl_eval", "rl_vs_sft"),
+    }
+    summary: dict[str, dict[str, Any]] = {}
+    for stage, (eval_key, compare_key) in report_keys.items():
+        summary[stage] = {
+            "manifest_current": stage_status[stage][
+                "manifest_matches_requested_max_steps"
+            ],
+            "manifest_max_steps": stage_status[stage]["manifest_max_steps"],
+            "requested_max_steps": stage_status[stage]["requested_max_steps"],
+            "eval_current": report_status[eval_key]["current_for_requested_stage"],
+            "eval_exists": report_status[eval_key]["exists"],
+            "compare_current": report_status[compare_key][
+                "current_for_requested_stage"
+            ],
+            "compare_exists": report_status[compare_key]["exists"],
+            "sample_current": sample_status[stage]["complete_for_requested_stage"],
+            "sample_exists": sample_status[stage]["manifest_exists"],
+        }
+    return summary
+
+
+def _remaining_by_area(remaining_items: list[dict[str, Any]]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for item in remaining_items:
+        gate = str(item["gate"])
+        area = _remaining_area_for_gate(gate)
+        grouped.setdefault(area, []).append(gate)
+    return dict(sorted(grouped.items()))
+
+
+def _remaining_area_for_gate(gate: str) -> str:
+    if gate.startswith("sft_"):
+        return "sft"
+    if gate.startswith("dpo_"):
+        return "dpo"
+    if gate.startswith("rl_"):
+        return "rl"
+    if gate.startswith("diagnostic_"):
+        return "diagnostics"
+    if gate.startswith("training_eval_summary") or gate == "all_final_eval_gates_passed":
+        return "final_summary"
+    return "other"
+
+
+def _repo_hygiene_contract_status(repo_root: Path | str | None) -> dict[str, Any]:
+    if repo_root is None:
+        return {
+            "checked": False,
+            "passed": None,
+            "summary": "Repo hygiene not checked; pass --repo-root to record git status evidence.",
+        }
+    root = Path(repo_root).resolve()
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short", "--branch", "--ignored"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        return {
+            "checked": True,
+            "passed": False,
+            "repo_root": str(root),
+            "summary": f"git status failed: {exc}",
+            "error": str(exc),
+        }
+    lines = [line.rstrip() for line in result.stdout.splitlines() if line.strip()]
+    branch = next((line for line in lines if line.startswith("## ")), None)
+    entries = [line for line in lines if not line.startswith("## ")]
+    tracked_changes = [
+        line for line in entries if not line.startswith("?? ") and not line.startswith("!! ")
+    ]
+    untracked = [line[3:] for line in entries if line.startswith("?? ")]
+    ignored = [line[3:] for line in entries if line.startswith("!! ")]
+    allowed_ignored = [
+        path for path in ignored if _repo_hygiene_ignored_path_allowed(path)
+    ]
+    unexpected_ignored = [
+        path for path in ignored if not _repo_hygiene_ignored_path_allowed(path)
+    ]
+    passed = (
+        result.returncode == 0
+        and not tracked_changes
+        and not untracked
+        and not unexpected_ignored
+    )
+    summary = (
+        "git status clean except allowed ignored local-only artifacts"
+        if passed
+        else (
+            f"git status has {len(tracked_changes)} tracked change(s), "
+            f"{len(untracked)} untracked path(s), and "
+            f"{len(unexpected_ignored)} unexpected ignored path(s)"
+        )
+    )
+    return {
+        "checked": True,
+        "passed": passed,
+        "repo_root": str(root),
+        "git_returncode": result.returncode,
+        "branch": branch,
+        "summary": summary,
+        "tracked_changes": tracked_changes,
+        "untracked": untracked,
+        "ignored_allowed": allowed_ignored,
+        "ignored_unexpected": unexpected_ignored,
+        "stderr": result.stderr.strip(),
+    }
+
+
+def _repo_hygiene_ignored_path_allowed(path: str) -> bool:
+    normalized = path.replace("\\", "/").rstrip("/")
+    allowed_exact = {
+        ".env",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".semantic-mirror",
+        ".venv",
+        "SEMANTIC_MIRROR_GOAL_CONTRACT.md",
+        "SEMANTIC_MIRROR_PLAN.md",
+        "outputs",
+    }
+    allowed_suffixes = (
+        "/__pycache__",
+        "/.pytest_cache",
+        "/.ruff_cache",
+    )
+    return normalized in allowed_exact or normalized.endswith(allowed_suffixes)
+
+
+def _windows_readiness_contract_status(
+    *,
+    windows_audit_path: Path | str | None,
+    wsl_smoke_manifest_path: Path | str | None,
+) -> dict[str, Any]:
+    audit_path = Path(windows_audit_path).resolve() if windows_audit_path else None
+    smoke_path = (
+        Path(wsl_smoke_manifest_path).resolve() if wsl_smoke_manifest_path else None
+    )
+    audit = _read_json_file(audit_path) if audit_path is not None else None
+    smoke = _read_json_file(smoke_path) if smoke_path is not None else None
+    native_checked = isinstance(audit, dict)
+    native_passed = bool(audit and audit.get("passed") and audit.get("ready_to_launch"))
+    native_blocked = bool(
+        audit
+        and not native_passed
+        and isinstance(audit.get("blocker"), dict)
+        and audit["blocker"].get("blocked")
+    )
+    wsl_checked = isinstance(smoke, dict)
+    stages = smoke.get("stages", {}) if isinstance(smoke, dict) else {}
+    samples = smoke.get("samples", {}) if isinstance(smoke, dict) else {}
+    wsl_stage_manifests = {
+        stage: bool((stages.get(stage) or {}).get("stage_manifest_exists"))
+        for stage in ("sft", "dpo", "rl")
+    }
+    wsl_sample_manifests = {
+        stage: bool((samples.get(stage) or {}).get("sample_manifest_exists"))
+        for stage in ("sft", "dpo", "rl")
+    }
+    wsl_complete = (
+        wsl_checked
+        and smoke.get("mode") == "smoke_chain"
+        and all(wsl_stage_manifests.values())
+        and all(wsl_sample_manifests.values())
+        and bool(smoke.get("diagnostics_exists"))
+    )
+    passed = native_passed or (native_blocked and wsl_complete)
+    if native_passed:
+        summary = "Windows-native audit passed and is ready to launch."
+    elif native_blocked and wsl_complete:
+        summary = (
+            "Windows-native audit is blocked, and Windows-hosted WSL smoke-chain "
+            "evidence is complete."
+        )
+    elif not native_checked and not wsl_checked:
+        summary = (
+            "Windows readiness not checked; pass --windows-audit and "
+            "--wsl-smoke-manifest to record evidence."
+        )
+    else:
+        summary = "Windows readiness evidence is incomplete or failing."
+    return {
+        "checked": native_checked or wsl_checked,
+        "passed": passed if native_checked or wsl_checked else None,
+        "summary": summary,
+        "windows_audit_path": str(audit_path) if audit_path is not None else None,
+        "wsl_smoke_manifest_path": str(smoke_path) if smoke_path is not None else None,
+        "native_checked": native_checked,
+        "native_passed": native_passed,
+        "native_blocked": native_blocked,
+        "native_failed_required_checks": (
+            audit.get("blocker", {}).get("failed_required_checks", [])
+            if isinstance(audit, dict)
+            else []
+        ),
+        "native_recommended_fallback": (
+            audit.get("blocker", {}).get("recommended_fallback")
+            if isinstance(audit, dict)
+            else None
+        ),
+        "wsl_checked": wsl_checked,
+        "wsl_smoke_complete": wsl_complete,
+        "wsl_stage_manifests": wsl_stage_manifests,
+        "wsl_sample_manifests": wsl_sample_manifests,
+        "wsl_diagnostics_exists": bool(smoke.get("diagnostics_exists"))
+        if isinstance(smoke, dict)
+        else False,
+        "wsl_smoke_out": smoke.get("smoke_out") if isinstance(smoke, dict) else None,
+    }
+
+
+def _human_usefulness_contract_status(
+    suite_path: Path | str | None,
+) -> dict[str, Any]:
+    if suite_path is None:
+        return {
+            "checked": False,
+            "passed": None,
+            "summary": "Human usefulness not checked; pass --human-study-suite with an eval human-study-suite report.",
+        }
+    path = Path(suite_path).resolve()
+    report = _read_json_file(path)
+    if not isinstance(report, dict):
+        return {
+            "checked": True,
+            "passed": False,
+            "path": str(path),
+            "summary": "Human-study suite report is missing or not a JSON object.",
+        }
+    phase6 = report.get("phase6_gate_summary", {})
+    required_phase6_gates = (
+        "required_task_sets_present",
+        "all_reports_passed",
+        "real_timed_reviewer_logs",
+        "reviewer_identity_present",
+        "answer_text_present",
+        "mirror_accuracy_not_lower_than_source",
+        "mirror_median_faster_than_source",
+        "changed_behavior_accuracy_at_or_above_threshold",
+        "visibility_items_acknowledged",
+    )
+    gate_status = {
+        gate: bool(phase6.get(gate)) if isinstance(phase6, dict) else False
+        for gate in required_phase6_gates
+    }
+    passed = (
+        report.get("mode") == "human_usefulness_study_suite_summary"
+        and bool(report.get("passed"))
+        and all(gate_status.values())
+    )
+    summary = (
+        "Phase 6 human-study suite passed with real timed reviewer evidence."
+        if passed
+        else "Phase 6 human-study suite evidence is incomplete or failing."
+    )
+    return {
+        "checked": True,
+        "passed": passed,
+        "path": str(path),
+        "summary": summary,
+        "mode": report.get("mode"),
+        "report_passed": bool(report.get("passed")),
+        "required_phase6_gates": gate_status,
+        "metrics": report.get("metrics", {}),
+    }
+
+
+def _contract_scorecard(report: dict[str, Any]) -> list[dict[str, Any]]:
+    stage_summary = report["stage_evidence_summary"]
+    all_stage_manifests = all(
+        stage_summary[stage]["manifest_current"] for stage in ("sft", "dpo", "rl")
+    )
+    all_samples = all(
+        stage_summary[stage]["sample_current"] for stage in ("sft", "dpo", "rl")
+    )
+    all_eval = all(
+        stage_summary[stage]["eval_current"] and stage_summary[stage]["compare_current"]
+        for stage in ("sft", "dpo", "rl")
+    )
+    diagnostics_current = (
+        report["diagnostics_status"]["all_required_plots_exist"]
+        and report["diagnostics_status"]["sources_current_for_run"]
+        and report["diagnostics_status"]["stages_current_for_requested_steps"]
+    )
+    final_summary_current = (
+        report["training_eval_summary_status"]["matches_requested_steps"]
+        and _gate_passed(report, "all_final_eval_gates_passed")
+    )
+    repo_hygiene = report.get("repo_hygiene_status") or {}
+    repo_hygiene_passed = (
+        repo_hygiene.get("passed") if repo_hygiene.get("checked") else None
+    )
+    repo_hygiene_evidence = (
+        repo_hygiene.get("summary")
+        if repo_hygiene.get("checked")
+        else "Not proven by a run outputs directory; use pytest, ruff, diff check, and git status."
+    )
+    windows_readiness = report.get("windows_readiness_status") or {}
+    windows_readiness_passed = (
+        windows_readiness.get("passed")
+        if windows_readiness.get("checked")
+        else None
+    )
+    windows_readiness_evidence = (
+        windows_readiness.get("summary")
+        if windows_readiness.get("checked")
+        else "Not proven by contract-status; use runtime audit and WSL smoke-chain evidence."
+    )
+    human_usefulness = report.get("human_usefulness_status") or {}
+    human_usefulness_passed = (
+        human_usefulness.get("passed") if human_usefulness.get("checked") else None
+    )
+    human_usefulness_evidence = (
+        human_usefulness.get("summary")
+        if human_usefulness.get("checked")
+        else "Not proven by a full-eval outputs directory; requires timed human-study reports."
+    )
+    scorecard = [
+        {
+            "area": "repo_hygiene",
+            "required": True,
+            "max_reward": 25,
+            "passed": repo_hygiene_passed,
+            "evidence": repo_hygiene_evidence,
+        },
+        {
+            "area": "windows_unsloth_readiness",
+            "required": True,
+            "max_reward": 65,
+            "passed": windows_readiness_passed,
+            "evidence": windows_readiness_evidence,
+        },
+        {
+            "area": "sft_dpo_rl_implementation",
+            "required": True,
+            "max_reward": 85,
+            "passed": all_stage_manifests,
+            "evidence": "Requested-step stage manifests for SFT, DPO, and RL.",
+        },
+        {
+            "area": "diagnostic_plots",
+            "required": True,
+            "max_reward": 60,
+            "passed": diagnostics_current,
+            "evidence": "Required diagnostic files plus current-run source provenance and current stage manifests.",
+        },
+        {
+            "area": "post_training_samples",
+            "required": True,
+            "max_reward": 85,
+            "passed": all_samples,
+            "evidence": "Per-stage raw/repaired candidates and sample inspection for current requested stages.",
+        },
+        {
+            "area": "real_training_eval_gates",
+            "required": True,
+            "max_reward": 100,
+            "passed": all_stage_manifests and all_eval and final_summary_current,
+            "evidence": "Current SFT/DPO/RL manifests, eval reports, model-compare reports, and final summary gates.",
+        },
+        {
+            "area": "human_usefulness",
+            "required": False,
+            "max_reward": 70,
+            "passed": human_usefulness_passed,
+            "evidence": human_usefulness_evidence,
+        },
+    ]
+    for row in scorecard:
+        row["earned_reward"] = row["max_reward"] if row["passed"] is True else 0
+    return scorecard
+
+
+def _contract_reward_summary(scorecard: list[dict[str, Any]]) -> dict[str, Any]:
+    required_rows = [row for row in scorecard if row["required"]]
+    optional_rows = [row for row in scorecard if not row["required"]]
+    required_reward_earned = sum(row["earned_reward"] for row in required_rows)
+    required_reward_possible = sum(row["max_reward"] for row in required_rows)
+    optional_reward_earned = sum(row["earned_reward"] for row in optional_rows)
+    optional_reward_possible = sum(row["max_reward"] for row in optional_rows)
+    failed_required_areas = [
+        row["area"] for row in required_rows if row["passed"] is not True
+    ]
+    minimum_acceptable_required_reward = 320
+    required_reward_threshold_met = (
+        required_reward_earned >= minimum_acceptable_required_reward
+    )
+    zero_failed_required_areas = not failed_required_areas
+    return {
+        "required_reward_earned": required_reward_earned,
+        "required_reward_possible": required_reward_possible,
+        "optional_reward_earned": optional_reward_earned,
+        "optional_reward_possible": optional_reward_possible,
+        "minimum_acceptable_required_reward": minimum_acceptable_required_reward,
+        "required_reward_threshold_met": required_reward_threshold_met,
+        "zero_failed_required_areas": zero_failed_required_areas,
+        "completion_eligible": required_reward_threshold_met
+        and zero_failed_required_areas,
+        "failed_required_areas": failed_required_areas,
+    }
+
+
+def _gate_passed(report: dict[str, Any], gate_name: str) -> bool:
+    return any(gate["name"] == gate_name and gate["passed"] for gate in report["gates"])
+
+
+def _path_match_tokens(path: Path) -> list[str]:
+    resolved = path.resolve()
+    tokens = {str(resolved).replace("\\", "/")}
+    if resolved.drive:
+        drive = resolved.drive.rstrip(":").lower()
+        tail = resolved.as_posix().split(":", 1)[-1].lstrip("/")
+        tokens.add(f"/mnt/{drive}/{tail}")
+    return sorted(tokens)
+
+
+def _resume_inspection_contract_status(path: Path) -> dict[str, Any]:
+    inspection = _read_json_file(path)
+    decisions = inspection.get("decisions", {}) if isinstance(inspection, dict) else {}
+    return {
+        "path": str(path),
+        "exists": isinstance(inspection, dict),
+        "mode": inspection.get("mode") if isinstance(inspection, dict) else None,
+        "requested_max_steps": (
+            inspection.get("requested_max_steps") if isinstance(inspection, dict) else None
+        ),
+        "reuse_stage_outputs_enabled": (
+            inspection.get("reuse_stage_outputs_enabled")
+            if isinstance(inspection, dict)
+            else None
+        ),
+        "decisions": {
+            stage: decisions.get(stage, {}) if isinstance(decisions, dict) else {}
+            for stage in ("sft", "dpo", "rl")
+        },
+    }
+
+
+def _training_diagnostics_markdown(summary: dict[str, Any]) -> str:
+    lines = [
+        "# Semantic Mirror Training Diagnostics",
+        "",
+        f"- Run directory: `{summary['run_dir']}`",
+        f"- Generated: `{summary['generated_at']}`",
+        "",
+        "| Plot | Points | Missing | Source files |",
+        "| --- | ---: | --- | --- |",
+    ]
+    for name, plot in summary["plots"].items():
+        sources = ", ".join(f"`{Path(source).name}`" for source in plot["source_files"]) or "none"
+        lines.append(f"| `{name}` | {plot['points']} | {plot['missing']} | {sources} |")
+    if summary["missing_metrics"]:
+        lines.extend(["", "Missing metric series:", ""])
+        lines.extend(f"- `{name}`" for name in summary["missing_metrics"])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_metric_png(
+    path: Path,
+    *,
+    title: str,
+    x_label: str,
+    y_label: str,
+    points: list[dict[str, Any]],
+) -> None:
+    width, height = 640, 360
+    pixels = bytearray([255, 255, 255] * width * height)
+    left, right, top, bottom = 56, width - 24, 32, height - 42
+    axis_color = (45, 45, 45)
+    line_color = (32, 106, 180)
+    missing_color = (180, 60, 60)
+    _draw_line(pixels, width, height, left, bottom, right, bottom, axis_color)
+    _draw_line(pixels, width, height, left, bottom, left, top, axis_color)
+    numeric_points = [point for point in points if not point.get("missing")]
+    if numeric_points:
+        xs = [float(point["x"]) for point in numeric_points]
+        ys = [float(point["y"]) for point in numeric_points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        if min_y == max_y:
+            min_y -= 1.0
+            max_y += 1.0
+        if min_x == max_x:
+            min_x -= 1.0
+            max_x += 1.0
+        plotted: list[tuple[int, int]] = []
+        for point in numeric_points:
+            x = left + int((float(point["x"]) - min_x) / (max_x - min_x) * (right - left))
+            y = bottom - int((float(point["y"]) - min_y) / (max_y - min_y) * (bottom - top))
+            plotted.append((x, y))
+        for start, end in zip(plotted, plotted[1:], strict=False):
+            _draw_line(pixels, width, height, start[0], start[1], end[0], end[1], line_color)
+        for x, y in plotted:
+            _draw_square(pixels, width, height, x, y, 3, line_color)
+    else:
+        _draw_line(pixels, width, height, left, top, right, bottom, missing_color)
+        _draw_line(pixels, width, height, right, top, left, bottom, missing_color)
+    metadata = {"Title": title, "XAxis": x_label, "YAxis": y_label}
+    _write_png(path, width, height, pixels, metadata=metadata)
+
+
+def _draw_line(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    color: tuple[int, int, int],
+) -> None:
+    dx = abs(x1 - x0)
+    sx = 1 if x0 < x1 else -1
+    dy = -abs(y1 - y0)
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    while True:
+        _set_pixel(pixels, width, height, x0, y0, color)
+        if x0 == x1 and y0 == y1:
+            break
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += sy
+
+
+def _draw_square(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    radius: int,
+    color: tuple[int, int, int],
+) -> None:
+    for yy in range(y - radius, y + radius + 1):
+        for xx in range(x - radius, x + radius + 1):
+            _set_pixel(pixels, width, height, xx, yy, color)
+
+
+def _set_pixel(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    color: tuple[int, int, int],
+) -> None:
+    if x < 0 or y < 0 or x >= width or y >= height:
+        return
+    offset = (y * width + x) * 3
+    pixels[offset : offset + 3] = bytes(color)
+
+
+def _write_png(
+    path: Path,
+    width: int,
+    height: int,
+    pixels: bytearray,
+    *,
+    metadata: dict[str, str],
+) -> None:
+    rows = []
+    stride = width * 3
+    for y in range(height):
+        start = y * stride
+        rows.append(b"\x00" + bytes(pixels[start : start + stride]))
+    payload = bytearray()
+    payload.extend(b"\x89PNG\r\n\x1a\n")
+    payload.extend(_png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)))
+    for key, value in metadata.items():
+        payload.extend(_png_chunk(b"tEXt", key.encode("latin-1") + b"\x00" + value.encode("utf-8")))
+    payload.extend(_png_chunk(b"IDAT", zlib.compress(b"".join(rows), level=9)))
+    payload.extend(_png_chunk(b"IEND", b""))
+    path.write_bytes(bytes(payload))
+
+
+def _png_chunk(kind: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + kind
+        + data
+        + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    )
+
+
+def _copy_if_different(source: Path, target: Path) -> None:
+    if source != target:
+        shutil.copyfile(source, target)
+
+
+def _sample_references(dataset: Path) -> dict[str, dict[str, Any]]:
+    manifest_path = dataset / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    references: dict[str, dict[str, Any]] = {}
+    for split in ("gold", "silver"):
+        rel_path = manifest.get("files", {}).get(split)
+        if not rel_path:
+            continue
+        path = dataset / rel_path
+        if not path.exists():
+            continue
+        for record in _read_jsonl(path):
+            references[record["record_id"]] = record
+            references[record["unit_id"]] = record
+    return references
+
+
+def _sample_generation_config(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    configs = [
+        row.get("generation_config")
+        for row in rows
+        if isinstance(row.get("generation_config"), dict)
+    ]
+    if not configs:
+        return {}
+    first = dict(configs[0])
+    first["raw_row_generation_config_count"] = len(configs)
+    first["mixed_generation_configs"] = any(config != configs[0] for config in configs)
+    first["schema_prefix_applied_count"] = sum(
+        1 for config in configs if config.get("schema_prefix_applied")
+    )
+    modes = sorted(
+        {
+            str(config.get("schema_prefix_mode"))
+            for config in configs
+            if config.get("schema_prefix_mode") is not None
+        }
+    )
+    if modes:
+        first["schema_prefix_modes"] = modes
+    field_reports = [
+        report
+        for row in rows
+        for report in row.get("field_generation_reports", [])
+        if isinstance(report, dict)
+    ]
+    if field_reports:
+        first["field_generation_report_count"] = len(field_reports)
+        first["field_generation_parseable_count"] = sum(
+            1 for report in field_reports if report.get("parseable")
+        )
+        first["field_generation_empty_count"] = sum(
+            1 for report in field_reports if report.get("empty")
+        )
+        first["field_generation_cap_hits"] = sum(
+            1 for report in field_reports if report.get("hit_generation_cap")
+        )
+    return first
+
+
+def _sample_reference_for_row(
+    row: dict[str, Any],
+    references: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    for key in ("dataset_record_id", "record_id", "unit_id", "positive_unit_id"):
+        value = row.get(key)
+        if value in references:
+            return references[value]
+    sir_unit = _candidate_like_sir_unit(row)
+    if isinstance(sir_unit, dict) and sir_unit.get("unit_id") in references:
+        return references[sir_unit["unit_id"]]
+    return None
+
+
+def _sample_raw_contract_report(
+    row: dict[str, Any],
+    references: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    reference = _sample_reference_for_row(row, references)
+    sir_unit = _candidate_like_sir_unit(row)
+    parseable = _sample_row_parseable(row)
+    report: dict[str, Any] = {
+        "record_id": str(row.get("dataset_record_id") or row.get("record_id") or ""),
+        "row_unit_id": row.get("unit_id"),
+        "raw_unit_id": sir_unit.get("unit_id") if isinstance(sir_unit, dict) else None,
+        "expected_unit_id": None if reference is None else reference["unit_id"],
+        "parseable": parseable,
+        "hit_generation_cap": bool(row.get("hit_generation_cap")),
+        "schema_core_valid": False,
+        "schema_error": None,
+        "top_level_keys_valid": False,
+        "missing_top_level_keys": [],
+        "extra_top_level_keys": [],
+        "identity_exact": False,
+        "identity_mismatches": [],
+        "compact_shape_valid": False,
+        "list_count_overruns": {},
+        "data_ml_count_overruns": {},
+        "repair_free_contract_valid": False,
+    }
+    if reference is None:
+        report["schema_error"] = "missing_reference"
+        return report
+    if not isinstance(sir_unit, dict):
+        report["schema_error"] = "missing_sir_unit"
+        return report
+    if sir_unit.get("raw_error"):
+        report["schema_error"] = str(sir_unit.get("raw_error"))
+        return report
+
+    try:
+        validate_unit(sir_unit)
+        report["schema_core_valid"] = True
+    except SchemaValidationError as exc:
+        report["schema_error"] = str(exc)
+
+    target = _schema_output_template(reference)
+    observed_keys = set(sir_unit)
+    allowed_keys = set(SIR_UNIT_TOP_LEVEL_KEYS)
+    report["missing_top_level_keys"] = [
+        key for key in SIR_UNIT_TOP_LEVEL_KEYS if key not in observed_keys
+    ]
+    report["extra_top_level_keys"] = sorted(observed_keys - allowed_keys)
+    report["top_level_keys_valid"] = (
+        not report["missing_top_level_keys"] and not report["extra_top_level_keys"]
+    )
+
+    identity_mismatches = [
+        field for field in SIR_IDENTITY_FIELDS if sir_unit.get(field) != target.get(field)
+    ]
+    report["identity_mismatches"] = identity_mismatches
+    report["identity_exact"] = not identity_mismatches
+
+    expected_counts = _compact_expected_counts(target)
+    list_overruns: dict[str, dict[str, int]] = {}
+    for field in SIR_LIST_FIELDS:
+        observed = sir_unit.get(field)
+        observed_count = len(observed) if isinstance(observed, list) else 0
+        expected_count = int(expected_counts.get(field, 0))
+        if observed_count > expected_count:
+            list_overruns[field] = {
+                "observed": observed_count,
+                "expected": expected_count,
+            }
+    data_ml_overruns: dict[str, dict[str, int]] = {}
+    raw_details = sir_unit.get("data_ml_details", {})
+    expected_details = expected_counts.get("data_ml_details", {})
+    for category in DATA_ML_DETAIL_CATEGORIES:
+        observed = raw_details.get(category) if isinstance(raw_details, dict) else None
+        observed_count = len(observed) if isinstance(observed, list) else 0
+        expected_count = int(expected_details.get(category, 0))
+        if observed_count > expected_count:
+            data_ml_overruns[category] = {
+                "observed": observed_count,
+                "expected": expected_count,
+            }
+    report["list_count_overruns"] = list_overruns
+    report["data_ml_count_overruns"] = data_ml_overruns
+    report["compact_shape_valid"] = not list_overruns and not data_ml_overruns
+    report["repair_free_contract_valid"] = (
+        report["parseable"]
+        and report["schema_core_valid"]
+        and report["top_level_keys_valid"]
+        and report["identity_exact"]
+        and report["compact_shape_valid"]
+        and not report["hit_generation_cap"]
+    )
+    return report
+
+
+def _sample_row_parseable(row: dict[str, Any]) -> bool:
+    if row.get("repair_applied") is False and isinstance(row.get("raw_text"), str):
+        sir_unit = _raw_text_sir_unit(row)
+        return isinstance(sir_unit, dict) and not sir_unit.get("raw_error")
+    if isinstance(row.get("raw_parseable"), bool):
+        return bool(row["raw_parseable"])
+    sir_unit = _candidate_like_sir_unit(row)
+    return isinstance(sir_unit, dict) and not sir_unit.get("raw_error")
+
+
+def _candidate_like_sir_unit(row: dict[str, Any]) -> dict[str, Any] | None:
+    if row.get("repair_applied") is False:
+        raw_text_unit = _raw_text_sir_unit(row)
+        if raw_text_unit is not None:
+            return raw_text_unit
+    for key in ("sir_unit", "raw_sir_unit", "candidate", "output"):
+        value = row.get(key)
+        if isinstance(value, dict):
+            return value.get("sir_unit") if isinstance(value.get("sir_unit"), dict) else value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    return None
+
+
+def _raw_text_sir_unit(row: dict[str, Any]) -> dict[str, Any] | None:
+    raw_text = row.get("raw_text")
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return None
+    decoder = json.JSONDecoder()
+    last_error = "no JSON object found"
+    first_json = raw_text.find("{")
+    indices = [first_json] if first_json >= 0 and not raw_text[:first_json].strip() else [
+        index for index, char in enumerate(raw_text) if char == "{"
+    ]
+    for index in indices:
+        if index < 0:
+            continue
+        char = raw_text[index]
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(raw_text[index:])
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+            continue
+        if isinstance(parsed, dict) and "unit_id" in parsed:
+            return parsed
+    return {"unit_id": "<unparseable>", "raw_error": f"no SIR JSON object found: {last_error}"}
+
+
+def _sample_inspection_markdown(
+    manifest: dict[str, Any],
+    raw_rows: list[dict[str, Any]],
+    repaired_rows: list[dict[str, Any]],
+    raw_eval: dict[str, Any],
+    repaired_eval: dict[str, Any],
+) -> str:
+    raw_by_key = {_sample_row_key(row): row for row in raw_rows}
+    repaired_by_key = {_sample_row_key(row): row for row in repaired_rows}
+    raw_results = {_sample_result_key(row): row for row in raw_eval["results"]}
+    repaired_results = {_sample_result_key(row): row for row in repaired_eval["results"]}
+    raw_contracts = {
+        str(report.get("row_unit_id") or report.get("expected_unit_id") or report.get("record_id")): report
+        for report in manifest.get("raw_contract_reports", [])
+    }
+    lines = [
+        "# Semantic Mirror Sample Inspection",
+        "",
+        f"- Model: `{manifest['model_name']}`",
+        f"- Dataset: `{manifest['dataset']}`",
+        f"- Raw parseable: {manifest['raw_parseability_count']} / {manifest['raw_candidate_count']}",
+        (
+            f"- Raw generation cap hits: {manifest['raw_generation_cap_hits']} / "
+            f"{manifest['raw_candidate_count']}"
+        ),
+        (
+            f"- Raw schema valid: {manifest['raw_schema_validity_count']} / "
+            f"{manifest['raw_candidate_count']}"
+        ),
+        (
+            f"- Raw repair-free contract valid: {manifest['raw_repair_free_contract_count']} / "
+            f"{manifest['raw_candidate_count']}"
+        ),
+        (
+            f"- Raw exact identity: {manifest['raw_exact_identity_count']} / "
+            f"{manifest['raw_candidate_count']}"
+        ),
+        (
+            f"- Raw top-level key valid: {manifest['raw_top_level_key_validity_count']} / "
+            f"{manifest['raw_candidate_count']}"
+        ),
+        (
+            f"- Raw compact shape valid: {manifest['raw_compact_shape_count']} / "
+            f"{manifest['raw_candidate_count']}"
+        ),
+        (
+            f"- Repaired schema valid: {manifest['repaired_schema_validity_count']} / "
+            f"{manifest['repaired_candidate_count']}"
+        ),
+        "",
+    ]
+    generation_config = manifest.get("generation_config", {})
+    if generation_config.get("generation_mode") == "field-wise":
+        lines[14:14] = [
+            (
+                "- Field fragments parseable: "
+                f"{generation_config.get('field_generation_parseable_count', 0)} / "
+                f"{generation_config.get('field_generation_report_count', 0)}"
+            ),
+            (
+                "- Field fragments empty: "
+                f"{generation_config.get('field_generation_empty_count', 0)} / "
+                f"{generation_config.get('field_generation_report_count', 0)}"
+            ),
+            (
+                "- Field fragment cap hits: "
+                f"{generation_config.get('field_generation_cap_hits', 0)} / "
+                f"{generation_config.get('field_generation_report_count', 0)}"
+            ),
+        ]
+    for key in sorted(repaired_by_key):
+        raw_row = raw_by_key.get(key, {})
+        repaired_row = repaired_by_key[key]
+        unit_id = repaired_row.get("unit_id") or key
+        raw_result = raw_results.get(unit_id, {})
+        repaired_result = repaired_results.get(unit_id, {})
+        raw_contract = raw_contracts.get(str(unit_id)) or raw_contracts.get(str(key)) or {}
+        raw_parse_error = (
+            raw_row.get("raw_parse_error")
+            or raw_contract.get("schema_error")
+            or "none"
+        )
+        lines.extend(
+            [
+                f"## `{unit_id}`",
+                "",
+                f"- Source: `{repaired_row.get('source_path', '<unknown>')}`",
+                f"- Raw score: `{raw_result.get('score', 'n/a')}`",
+                f"- Repaired score: `{repaired_result.get('score', 'n/a')}`",
+                f"- Raw parse error: `{raw_parse_error}`",
+                f"- Raw hit generation cap: `{raw_row.get('hit_generation_cap', False)}`",
+                f"- Raw schema valid: `{raw_result.get('schema_valid', False)}`",
+                (
+                    f"- Raw repair-free contract valid: "
+                    f"`{raw_contract.get('repair_free_contract_valid', False)}`"
+                ),
+                (
+                    f"- Raw identity mismatches: "
+                    f"`{_format_list(raw_contract.get('identity_mismatches', []))}`"
+                ),
+                (
+                    f"- Raw extra top-level keys: "
+                    f"`{_format_list(raw_contract.get('extra_top_level_keys', []))}`"
+                ),
+                (
+                    f"- Raw missing top-level keys: "
+                    f"`{_format_list(raw_contract.get('missing_top_level_keys', []))}`"
+                ),
+                (
+                    f"- Raw list overruns: "
+                    f"`{_format_mapping(raw_contract.get('list_count_overruns', {}))}`"
+                ),
+                (
+                    f"- Raw data/ML overruns: "
+                    f"`{_format_mapping(raw_contract.get('data_ml_count_overruns', {}))}`"
+                ),
+                f"- Repaired schema valid: `{repaired_result.get('schema_valid', False)}`",
+                "",
+                "Raw output:",
+                "",
+                "```text",
+                _truncate(str(raw_row.get("raw_text") or raw_row.get("output") or ""), 1600),
+                "```",
+                "",
+                "Repaired candidate:",
+                "",
+                "```json",
+                _truncate(json.dumps(repaired_row.get("sir_unit", {}), indent=2), 1600),
+                "```",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _format_list(values: Any) -> str:
+    if not values:
+        return "none"
+    return ", ".join(str(value) for value in values)
+
+
+def _format_mapping(value: Any) -> str:
+    if not value:
+        return "none"
+    return json.dumps(value, sort_keys=True)
+
+
+def _sample_row_key(row: dict[str, Any]) -> str:
+    return str(row.get("unit_id") or row.get("dataset_record_id") or row.get("record_id"))
+
+
+def _sample_result_key(row: dict[str, Any]) -> str:
+    return str(row.get("unit_id") or row.get("index"))
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 32].rstrip() + "\n... truncated ..."
 
 
 def _parse_int(value: str) -> int | None:

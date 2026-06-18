@@ -6,7 +6,7 @@ import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 REVIEW_VERSION = "0.1.0"
 QUESTION_KINDS = (
@@ -17,6 +17,25 @@ QUESTION_KINDS = (
     "dependency_calls",
     "uncertainty_and_hazards",
 )
+PHASE6_HUMAN_STUDY_REQUIREMENTS = {
+    "required_task_sets": ["whole_repo", "diff_mode"],
+    "required_answer_source": "real_timed_reviewer_logs",
+    "evaluation_command": (
+        "uv run semantic-mirror eval human-study <study_dir> "
+        "--answers <answers.jsonl> --out <report.json>"
+    ),
+    "pass_gates": [
+        "real_timed_reviewer_logs",
+        "reviewer_identity_present",
+        "answer_text_present",
+        "paired_answer_coverage_complete",
+        "mirror_accuracy_at_or_above_threshold",
+        "mirror_accuracy_not_lower_than_source",
+        "mirror_median_faster_than_source",
+        "changed_behavior_accuracy_at_or_above_threshold",
+        "visibility_items_acknowledged",
+    ],
+}
 
 
 def create_review_pack(
@@ -230,6 +249,7 @@ def create_human_usefulness_study(
             "answer_template_records": len(answer_template),
             "change_task_groups": len(change_tasks),
         },
+        "phase6_requirements": PHASE6_HUMAN_STUDY_REQUIREMENTS,
         "files": {
             "mirror_tasks": "mirror_tasks.jsonl",
             "source_tasks": "source_tasks.jsonl",
@@ -312,9 +332,31 @@ def evaluate_human_usefulness_study(
         for answer in visibility_answers
         if bool(answer.get("acknowledged")) or bool(answer.get("correct"))
     ]
+    real_timed_answers = [answer for answer in valid_answers if _has_real_timed_log(answer)]
+    reviewer_answers = [answer for answer in valid_answers if _has_reviewer_identity(answer)]
+    source_mirror_answers = [
+        answer for answer in valid_answers if answer.get("condition") in {"mirror", "source"}
+    ]
+    text_answers = [
+        answer for answer in source_mirror_answers if _has_answer_text(answer)
+    ]
+    answered_task_sets = sorted(
+        {
+            "diff_mode" if answer.get("task_type") == "changed_behavior" else "whole_repo"
+            for answer in source_mirror_answers
+        }
+    )
+    real_timed_logs_present = bool(valid_answers) and len(real_timed_answers) == len(valid_answers)
+    reviewer_identity_present = bool(valid_answers) and len(reviewer_answers) == len(valid_answers)
+    answer_text_present = bool(source_mirror_answers) and (
+        len(text_answers) == len(source_mirror_answers)
+    )
 
     gates = [
         _gate("study_manifest_mode", manifest.get("mode"), expected="human_usefulness_study"),
+        _gate("real_timed_reviewer_logs", real_timed_logs_present, expected=True),
+        _gate("reviewer_identity_present", reviewer_identity_present, expected=True),
+        _gate("answer_text_present", answer_text_present, expected=True),
         _gate("paired_task_groups_present", len(paired_groups), minimum=1),
         _gate(
             "paired_answer_coverage",
@@ -322,6 +364,11 @@ def evaluate_human_usefulness_study(
             minimum=1.0,
         ),
         _gate("mirror_answer_accuracy", mirror_accuracy, minimum=min_accuracy),
+        _gate(
+            "mirror_accuracy_not_lower_than_source",
+            round(mirror_accuracy - source_accuracy, 6),
+            minimum=0.0,
+        ),
         _gate("mirror_faster_than_source", speedup, minimum=min_speedup),
         _gate(
             "changed_behavior_accuracy",
@@ -341,6 +388,21 @@ def evaluate_human_usefulness_study(
         "generated_at": _now(),
         "passed": all(gate["passed"] for gate in gates),
         "gates": gates,
+        "phase6_gate_summary": {
+            "real_timed_reviewer_logs": real_timed_logs_present,
+            "reviewer_identity_present": reviewer_identity_present,
+            "answer_text_present": answer_text_present,
+            "paired_answer_coverage_complete": _ratio(len(answered_groups), len(paired_groups)) == 1.0,
+            "mirror_accuracy_at_or_above_threshold": mirror_accuracy >= min_accuracy,
+            "mirror_accuracy_not_lower_than_source": mirror_accuracy >= source_accuracy,
+            "mirror_median_faster_than_source": speedup >= min_speedup,
+            "changed_behavior_accuracy_at_or_above_threshold": (
+                _accuracy(mirror_change_answers) >= min_accuracy
+            ),
+            "visibility_items_acknowledged": (
+                _ratio(len(visibility_acknowledged), len(visibility_tasks)) == 1.0
+            ),
+        },
         "metrics": {
             "paired_task_groups": len(paired_groups),
             "answered_paired_task_groups": len(answered_groups),
@@ -352,6 +414,11 @@ def evaluate_human_usefulness_study(
             "mirror_change_answers": len(mirror_change_answers),
             "visibility_tasks": len(visibility_tasks),
             "visibility_acknowledged": len(visibility_acknowledged),
+            "valid_answer_records": len(valid_answers),
+            "real_timed_answer_records": len(real_timed_answers),
+            "source_mirror_answer_records": len(source_mirror_answers),
+            "source_mirror_answer_text_records": len(text_answers),
+            "answered_task_sets": answered_task_sets,
         },
     }
     if out_path is not None:
@@ -359,6 +426,132 @@ def evaluate_human_usefulness_study(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
+
+
+def summarize_human_usefulness_studies(
+    report_paths: Iterable[Path | str],
+    *,
+    out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Summarize whole-repo and diff-mode Phase 6 human-study evaluations."""
+
+    reports = [_read_json(Path(path)) for path in report_paths]
+    report_summaries: list[dict[str, Any]] = []
+    answered_task_sets: set[str] = set()
+    phase6_keys = {
+        "real_timed_reviewer_logs",
+        "reviewer_identity_present",
+        "answer_text_present",
+        "paired_answer_coverage_complete",
+        "mirror_accuracy_not_lower_than_source",
+        "mirror_median_faster_than_source",
+        "changed_behavior_accuracy_at_or_above_threshold",
+        "visibility_items_acknowledged",
+    }
+    aggregate_phase6 = {key: bool(reports) for key in phase6_keys}
+    for report in reports:
+        metrics = report.get("metrics", {})
+        task_sets = metrics.get("answered_task_sets", [])
+        answered_task_sets.update(task_sets)
+        phase6 = report.get("phase6_gate_summary", {})
+        for key in phase6_keys:
+            if key == "changed_behavior_accuracy_at_or_above_threshold" and "diff_mode" not in task_sets:
+                continue
+            if key in phase6:
+                aggregate_phase6[key] = aggregate_phase6[key] and bool(phase6[key])
+        report_summaries.append(
+            {
+                "path": report.get("answers") or report.get("study"),
+                "study": report.get("study"),
+                "answers": report.get("answers"),
+                "passed": bool(report.get("passed")),
+                "answered_task_sets": task_sets,
+                "phase6_gate_summary": phase6,
+                "metrics": {
+                    "mirror_answer_accuracy": metrics.get("mirror_answer_accuracy"),
+                    "source_answer_accuracy": metrics.get("source_answer_accuracy"),
+                    "mirror_median_seconds": metrics.get("mirror_median_seconds"),
+                    "source_median_seconds": metrics.get("source_median_seconds"),
+                    "mirror_speedup_over_source": metrics.get("mirror_speedup_over_source"),
+                    "valid_answer_records": metrics.get("valid_answer_records"),
+                    "real_timed_answer_records": metrics.get("real_timed_answer_records"),
+                },
+            }
+        )
+    required_task_sets = {"whole_repo", "diff_mode"}
+    gates = [
+        _gate("human_study_reports_present", len(reports), minimum=2),
+        _gate("whole_repo_answers_present", "whole_repo" in answered_task_sets, expected=True),
+        _gate("diff_mode_answers_present", "diff_mode" in answered_task_sets, expected=True),
+        _gate("all_reports_passed", all(bool(report.get("passed")) for report in reports), expected=True),
+        _gate(
+            "real_timed_reviewer_logs_all_reports",
+            aggregate_phase6["real_timed_reviewer_logs"],
+            expected=True,
+        ),
+        _gate(
+            "reviewer_identity_present_all_reports",
+            aggregate_phase6["reviewer_identity_present"],
+            expected=True,
+        ),
+        _gate(
+            "answer_text_present_all_reports",
+            aggregate_phase6["answer_text_present"],
+            expected=True,
+        ),
+        _gate(
+            "mirror_accuracy_not_lower_than_source_all_reports",
+            aggregate_phase6["mirror_accuracy_not_lower_than_source"],
+            expected=True,
+        ),
+        _gate(
+            "mirror_median_faster_than_source_all_reports",
+            aggregate_phase6["mirror_median_faster_than_source"],
+            expected=True,
+        ),
+        _gate(
+            "changed_behavior_accuracy_at_or_above_threshold",
+            aggregate_phase6["changed_behavior_accuracy_at_or_above_threshold"],
+            expected=True,
+        ),
+        _gate(
+            "visibility_items_acknowledged_all_reports",
+            aggregate_phase6["visibility_items_acknowledged"],
+            expected=True,
+        ),
+    ]
+    summary = {
+        "mode": "human_usefulness_study_suite_summary",
+        "generated_at": _now(),
+        "passed": all(gate["passed"] for gate in gates),
+        "reports": report_summaries,
+        "gates": gates,
+        "phase6_gate_summary": {
+            **aggregate_phase6,
+            "whole_repo_answers_present": "whole_repo" in answered_task_sets,
+            "diff_mode_answers_present": "diff_mode" in answered_task_sets,
+            "required_task_sets_present": required_task_sets.issubset(answered_task_sets),
+            "all_reports_passed": all(bool(report.get("passed")) for report in reports),
+        },
+        "metrics": {
+            "report_count": len(reports),
+            "answered_task_sets": sorted(answered_task_sets),
+            "required_task_sets": sorted(required_task_sets),
+            "total_valid_answer_records": sum(
+                int(report.get("metrics", {}).get("valid_answer_records", 0))
+                for report in reports
+            ),
+            "total_real_timed_answer_records": sum(
+                int(report.get("metrics", {}).get("real_timed_answer_records", 0))
+                for report in reports
+            ),
+        },
+    }
+    if out_path is not None:
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
 
 
 def conduct_human_usefulness_study(
@@ -962,8 +1155,36 @@ def _normalise_answer(answer: dict[str, Any], task: dict[str, Any]) -> dict[str,
         "task_group_id": task["task_group_id"],
         "condition": task["condition"],
         "task_type": task["task_type"],
-        "elapsed_seconds": float(elapsed) if elapsed is not None else None,
+        "elapsed_seconds": _float_or_none(elapsed),
     }
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_reviewer_identity(answer: dict[str, Any]) -> bool:
+    return bool(str(answer.get("reviewer", "")).strip())
+
+
+def _has_answer_text(answer: dict[str, Any]) -> bool:
+    return bool(str(answer.get("answer", "")).strip())
+
+
+def _has_real_timed_log(answer: dict[str, Any]) -> bool:
+    elapsed = answer.get("elapsed_seconds")
+    return (
+        _has_reviewer_identity(answer)
+        and bool(str(answer.get("started_at", "")).strip())
+        and bool(str(answer.get("completed_at", "")).strip())
+        and isinstance(elapsed, int | float)
+        and elapsed > 0.0
+    )
 
 
 def _group_answer(
@@ -999,16 +1220,21 @@ def _human_study_readme(
     source_count: int,
     visibility_count: int,
 ) -> str:
+    required_task_sets = ", ".join(PHASE6_HUMAN_STUDY_REQUIREMENTS["required_task_sets"])
+    pass_gates = "\n".join(
+        f"- `{gate}`" for gate in PHASE6_HUMAN_STUDY_REQUIREMENTS["pass_gates"]
+    )
     return f"""# Semantic Mirror Human Usefulness Study
 
 This directory is generated from `{review_pack}`.
 
 Use `source_tasks.jsonl` for the source-only timed condition and
 `mirror_tasks.jsonl` for the mirror-first timed condition. Fill one line per task
-in `answers_template.jsonl`, including `elapsed_seconds`, `answer`, and
-reviewer-scored `correct`. For `visibility_tasks.jsonl`, set `acknowledged` when
-the reviewer found the unsupported, low-confidence, hazard, or uncertainty
-marker in the mirror.
+    in `answers_template.jsonl`, including `reviewer`, `started_at`,
+`completed_at`, positive `elapsed_seconds`, `answer`, and reviewer-scored
+`correct`. For `visibility_tasks.jsonl`, set `acknowledged` when the reviewer
+found the unsupported, low-confidence, hazard, or uncertainty marker in the
+mirror.
 
 Task counts:
 
@@ -1016,10 +1242,19 @@ Task counts:
 - Source paired tasks: {source_count}
 - Visibility tasks: {visibility_count}
 
+Phase 6 contract requirements:
+
+- Required task sets: {required_task_sets}
+- Required answer source: real timed reviewer logs
+
+Pass gates:
+
+{pass_gates}
+
 Evaluate completed answers with:
 
 ```powershell
-uv run semantic-mirror eval human-study <study_dir> --answers <answers.jsonl> --out <report.json>
+{PHASE6_HUMAN_STUDY_REQUIREMENTS["evaluation_command"]}
 ```
 """
 

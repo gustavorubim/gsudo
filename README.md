@@ -174,6 +174,7 @@ uv run semantic-mirror review pack <mirror_repo> --out <review_pack_dir>
 uv run semantic-mirror review study <review_pack_dir> --out <human_study_dir>
 uv run semantic-mirror review conduct-study <human_study_dir> --out <answers.jsonl> --reviewer <name>
 uv run semantic-mirror eval human-study <human_study_dir> --answers <answers.jsonl> --out <report.json>
+uv run semantic-mirror eval human-study-suite --report <whole_repo_report.json> --report <diff_mode_report.json> --out <phase6_summary.json>
 ```
 
 ## Command Map
@@ -212,7 +213,20 @@ uv run semantic-mirror review pack <mirror_repo> --out <review_pack_dir>
 uv run semantic-mirror review study <review_pack_dir> --out <human_study_dir>
 uv run semantic-mirror review conduct-study <human_study_dir> --out <answers.jsonl> --reviewer <name>
 uv run semantic-mirror eval human-study <human_study_dir> --answers <answers.jsonl> --out <report.json>
+uv run semantic-mirror eval human-study-suite --report <whole_repo_report.json> --report <diff_mode_report.json> --out <phase6_summary.json>
 ```
+
+`eval human-study` prints and writes `phase6_gate_summary`, including real
+timed reviewer-log provenance, reviewer identity, source/mirror answer text,
+paired answer coverage, mirror-first accuracy threshold, mirror accuracy versus
+source-only, median speedup, changed-behavior accuracy, and visibility
+acknowledgement gates. Answer records must include `reviewer`, `started_at`,
+`completed_at`, positive `elapsed_seconds`, and nonempty source/mirror
+`answer` text before Phase 6 can pass.
+`eval human-study-suite` combines completed whole-repo and diff-mode
+`eval human-study` reports into one Phase 6 summary and fails unless both
+required task sets are present, all reports pass, and the aggregate real-timed,
+accuracy, speed, changed-behavior, and visibility gates pass.
 
 ### Teacher And Critic Pipeline
 
@@ -232,17 +246,157 @@ uv run semantic-mirror teacher pipeline <dataset_dir> --out <teacher_pipeline_di
 ```powershell
 uv run semantic-mirror train prepare <dataset_dir> --out <training_dir>
 uv run semantic-mirror train prepare <dataset_dir> --teacher-results <teacher_pipeline_dir> --out <training_dir>
-uv run semantic-mirror train validate <training_dir>
+uv run semantic-mirror train validate <training_dir> --out <training_dir>/validation_report.json
 uv run semantic-mirror train audit <training_dir> --env-file .env
+uv run semantic-mirror train audit <training_dir> --python-executable C:\path\to\python.exe --env-file .env
 uv run semantic-mirror train package <training_dir> --out <training_bundle_dir> --env-file .env
 uv run semantic-mirror train run-sft <training_dir> --output-dir <sft_model_dir> --max-steps 300 --dry-run
 uv run semantic-mirror train run-dpo <training_dir> --model-name-or-path <sft_model_dir> --output-dir <dpo_model_dir> --max-steps 120 --dry-run
 uv run semantic-mirror train run-rl <training_dir> --model-name-or-path <dpo_model_dir> --output-dir <rl_model_dir> --max-steps 120 --dry-run
+uv run semantic-mirror train report <run_outputs_dir> --out <run_outputs_dir>/diagnostics
+uv run semantic-mirror train contract-status <run_outputs_dir> --sft-steps 300 --dpo-steps 120 --rl-steps 120 --repo-root . --windows-audit <windows_audit.json> --wsl-smoke-manifest <smoke_chain_manifest.json> --human-study-suite <phase6_summary.json> --out <run_outputs_dir>/contract_status.json --markdown-out <run_outputs_dir>/contract_status.md
+uv run semantic-mirror train inspect-samples <dataset_dir> --raw-candidates <raw.jsonl> --repaired-candidates <repaired.jsonl> --out <samples_dir> --model-name <run_name>
 ```
 
 Packaged GPU bundles also include `launch/run_full_training_eval.sh`, which
-runs SFT, DPO, RL, held-out candidate generation, candidate scoring, SFT-vs-
-baseline comparison, and RL-vs-SFT comparison.
+runs SFT, DPO, RL, held-out raw/repaired candidate generation, per-stage sample
+inspection, diagnostics, SFT-vs-baseline comparison, DPO-vs-SFT comparison, and
+RL-vs-SFT comparison. It writes `outputs/validation_report.json` and
+`outputs/audit.json` before training, then includes both in
+`outputs/training_eval_summary.json`. The package `launch/commands.json` also
+lists standalone validate, audit, inspect-samples, and report commands for
+manual operator runs, plus contract-status, repaired, and raw model-compare commands for
+SFT/DPO/RL. Raw candidate eval reports and raw SFT/DPO/RL comparison reports
+are saved even when raw output does not pass schema gates, so repair is not
+hidden; `training_eval_summary.json` marks raw comparisons as diagnostic
+non-blocking, reports required/diagnostic gate counts, and includes a per-stage
+`raw_gate_summary` with raw parseability, schema validity, repair-free contract
+counts/rates, raw stretch-gate pass flags, raw eval metrics, and raw comparison
+deltas. The same summary includes `final_eval_gate_summary`, a compact rollup of
+held-out coverage, repaired schema validity, repaired model-compare gates,
+RL-vs-SFT raw non-regression, and raw stretch gate status. The launcher also
+writes `outputs/contract_status.json` and `outputs/contract_status.md`, which
+list any missing stage manifests, eval reports, sample inspections,
+diagnostics, or final gates. Generated prompts include
+an explicit compact final SIR JSON object prefilled with source-backed static
+facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
+model to return that object as the final JSON. The
+generated SFT/RL/candidate scripts use the tokenizer chat template when
+available and disable Qwen thinking during candidate generation. The RL script
+also rewards raw completions for preserving populated source-backed fields
+before repair, while penalizing extra report-style keys and over-expanded fact
+lists. The reward reference now carries the compact target unit and expected
+list counts, so RL can penalize identity drift, extra top-level keys, long
+completions, and compact-count overruns before deterministic repair.
+
+Longer full-eval runs can be restarted deliberately. Set
+`REUSE_STAGE_OUTPUTS=1` to reuse an existing SFT/DPO/RL output directory only
+when its `training_stage_manifest.json` `max_steps` matches the requested stage
+cap; set
+`SFT_RESUME_FROM_CHECKPOINT=<checkpoint_dir>` or
+`DPO_RESUME_FROM_CHECKPOINT=<checkpoint_dir>` to resume those trainer-backed
+stages from a checkpoint. The trainer-backed stages default to
+`SFT_SAVE_STEPS=10`, `DPO_SAVE_STEPS=10`, `SFT_SAVE_TOTAL_LIMIT=3`, and
+`DPO_SAVE_TOTAL_LIMIT=3` so interrupted bounded runs keep recent checkpoints
+without retaining every checkpoint. RL currently records `resume_supported=false`,
+so the wrapper only reuses completed RL output.
+Generation prompts explicitly require the answer to start with `{"unit_id"`,
+preserve identity fields exactly, and forbid template or marker wrappers.
+Candidate and RL generation also use a balanced-JSON stop criterion so decoding
+can stop after the first complete object instead of running to the token cap.
+Generated RL and candidate commands default to
+`--schema-prefix-mode schema-scaffold`, which prefixes exact identity fields and
+a complete required-key SIR skeleton before the model continues the JSON object.
+This is the default constrained raw-output diagnostic because the current smoke
+failure mode is parseable JSON with missing required top-level keys. Set
+`SCHEMA_PREFIX_MODE=off` (or pass `--schema-prefix-mode off`) to measure
+unconstrained free-form completions; use `identity-algorithm` to reproduce the
+weaker identity-plus-algorithm prefix.
+Candidate generation also supports `--generation-mode field-wise`, exposed in
+packages as `GENERATION_MODE=field-wise`. That mode asks the model for
+individual source-backed field fragments and assembles them into a raw SIR unit,
+recording per-field parse, empty-output, token, and cap-hit metadata as
+`field_generation_reports`. It defaults to `--field-target-mode compact`, which
+uses the compact target as the field upper bound; use
+`FIELD_TARGET_MODE=static-facts` (or `--field-target-mode static-facts`) when
+measuring full source-backed static-fact coverage. `FIELD_TARGET_LIMIT=<n>` can
+bound large static-fact fields during that diagnostic to reduce cap hits and
+over-generation. `FIELD_TARGET_MODE=static-hints` is a bounded middle path: it
+keeps compact JSON item shapes, adds compacted static-fact hints, and defaults
+to conservative per-field hint budgets that preserve parseability. Set
+`FIELD_TARGET_LIMIT=<n>` to override those budgets explicitly, and set
+`FIELD_TARGET_MAX_CHUNKS=<n>` to cover larger fields in multiple small hint
+chunks while keeping each fragment parseable. Use
+`FIELD_TARGET_CHUNK_FIELDS=calls,writes,...` to restrict chunking to selected
+fields when broader chunking improves coverage but increases hallucinations.
+This can measure whether
+parseable field-wise generation can preserve more source-backed facts without
+feeding the model the full verbose static-facts record.
+`FIELD_OBJECT_PREFIX_MODE=object` is available as an opt-in
+fragment-shape diagnostic; it defaults to `off` because prefixing can make weak
+models emit empty fragments. Field-wise mode is a constrained field-generation
+diagnostic, not deterministic repair.
+
+Generated candidate export now defaults deterministic faithfulness repair to
+`--faithfulness-repair-mode schema-only`, exposed in packages as
+`FAITHFULNESS_REPAIR_MODE=schema-only`. This keeps repaired candidates from
+adding semantic claims while still normalizing identity and required schema
+shape. Use `FAITHFULNESS_REPAIR_MODE=compact-target` to copy the compact target
+claims, or `FAITHFULNESS_REPAIR_MODE=full-static` only for explicit diagnostics
+that need to reproduce the old full static-facts repair.
+Sample manifests report raw generation cap hits, parse errors, repair-free
+contract counts, exact identity counts, top-level key validity, and compact
+shape validity so raw-output failures stay visible apart from repaired schema
+validity.
+
+For the required bounded smoke gate, packaged bundles include
+`launch/run_smoke_chain.sh`:
+
+```bash
+HELD_OUT_DATASET=<dataset_dir> SFT_SMOKE_STEPS=1 DPO_SMOKE_STEPS=1 RL_SMOKE_STEPS=1 SMOKE_SCHEMA_PREFIX_MODE=schema-scaffold SMOKE_GENERATION_MODE=full-json bash launch/run_smoke_chain.sh
+```
+
+The smoke chain validates and audits the batch, runs capped SFT/DPO/RL stages,
+generates raw and repaired candidates for each stage, writes sample inspection
+artifacts, produces diagnostics, and records `outputs/smoke-chain/smoke_chain_manifest.json`.
+The smoke manifest includes per-stage sample rollups for raw parseability, raw
+schema validity, repair-free contract counts, repaired schema validity, and
+stage/sample artifact existence checks, with rates and gate flags for raw
+parseability, raw schema validity, raw repair-free contract validity, and
+repaired schema validity.
+
+Use `train report` after smoke or full runs to produce
+`diagnostics/training_summary.json`, `diagnostics/training_summary.md`, and PNG
+plots for SFT, DPO, RL, generation, eval, and schema/coverage metrics. Use
+`train contract-status` on a full-eval `outputs` directory to list which target
+stage manifests, eval reports, sample inspections, diagnostics, and final gates
+are proven or still missing; pass `--markdown-out` for a reviewer-readable
+summary. The status report includes a contract scorecard, per-stage evidence
+table, reward summary from the contract's maximum-point table, grouped
+remaining gates, resume-inspection decisions when present, and next-action
+commands for resume, diagnostics regeneration, and status refresh. Unknown or
+unproven required areas earn zero reward points, so a run-output-only status
+does not claim repo hygiene or Windows readiness. Pass `--repo-root` to include
+`git status --short --branch --ignored` evidence; tracked edits, untracked
+paths, or unexpected ignored files keep repo hygiene at zero while allowed
+local-only ignored paths such as `.env`, `.semantic-mirror/`, `.venv/`,
+`SEMANTIC_MIRROR_PLAN.md`, `SEMANTIC_MIRROR_GOAL_CONTRACT.md`, and `outputs/`
+are classified separately. Pass
+`--windows-audit` and `--wsl-smoke-manifest` to score Windows/Unsloth readiness:
+a Windows-native audit can pass directly, or a documented native blocker can
+pass when paired with complete Windows-hosted WSL smoke-chain evidence for
+SFT/DPO/RL stage manifests, sample manifests, and diagnostics. Pass
+`--human-study-suite` with an `eval human-study-suite` report to score the
+optional Phase 6 usefulness area; every real-timed reviewer, accuracy, speed,
+changed-behavior, visibility, and task-set gate must pass before those points
+are earned. It treats DPO/RL evals,
+samples, and diagnostics as stale unless the corresponding stage manifest
+matches the requested target cap; diagnostics must also cite source files from
+the current `outputs` directory. Use
+`train inspect-samples` after generation to
+keep raw parseability, raw schema validity, raw generation cap hits, raw
+repair-free contract validity, repaired schema validity, and repaired
+faithfulness evidence separate.
 
 ## Output Files
 

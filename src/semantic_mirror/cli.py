@@ -23,6 +23,7 @@ from semantic_mirror.review import (
     create_review_pack,
     evaluate_human_usefulness_study,
     evaluate_review_pack,
+    summarize_human_usefulness_studies,
 )
 from semantic_mirror.schema import SUPPORTED_PROFILES, SUPPORTED_ZOOMS
 from semantic_mirror.teacher import (
@@ -37,9 +38,12 @@ from semantic_mirror.teacher import (
 from semantic_mirror.training import (
     DEFAULT_BASE_MODEL,
     audit_training_environment,
+    create_sample_inspection,
+    generate_training_diagnostics,
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
+    summarize_full_eval_contract_status,
     validate_training_batch,
 )
 
@@ -160,6 +164,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(_eval_summary(report), indent=2, sort_keys=True))
         return 0 if report["passed"] else 1
+    elif args.command == "eval" and args.eval_command == "human-study-suite":
+        report = summarize_human_usefulness_studies(
+            [Path(path) for path in args.report],
+            out_path=Path(args.out) if args.out is not None else None,
+        )
+        print(json.dumps(_eval_summary(report), indent=2, sort_keys=True))
+        return 0 if report["passed"] else 1
     elif args.command == "review" and args.review_command == "pack":
         manifest = create_review_pack(
             Path(args.mirror),
@@ -195,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "train" and args.train_command == "validate":
         report = validate_training_batch(Path(args.training_dir))
+        if args.out is not None:
+            Path(args.out).write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         print(json.dumps(_eval_summary(report), indent=2, sort_keys=True))
         return 0 if report["passed"] else 1
     elif args.command == "train" and args.train_command == "audit":
@@ -203,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             env_file=Path(args.env_file) if args.env_file is not None else None,
             require_gpu=not args.allow_cpu,
             require_hf_token=args.require_hf_token,
+            python_executable=args.python_executable,
         )
         if args.out is not None:
             Path(args.out).write_text(
@@ -221,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
             require_gpu=not args.allow_cpu,
             require_hf_token=args.require_hf_token,
             python_executable=args.python_executable,
+            max_steps=args.max_steps,
+            resume_from_checkpoint=args.resume_from_checkpoint,
+            seed=args.seed,
             report_out=Path(args.report_out) if args.report_out is not None else None,
         )
         print(json.dumps(_training_runtime_summary(report), indent=2, sort_keys=True))
@@ -237,6 +257,9 @@ def main(argv: list[str] | None = None) -> int:
             python_executable=args.python_executable,
             model_name_or_path=args.model_name_or_path,
             beta=args.beta,
+            max_steps=args.max_steps,
+            resume_from_checkpoint=args.resume_from_checkpoint,
+            seed=args.seed,
             report_out=Path(args.report_out) if args.report_out is not None else None,
         )
         print(json.dumps(_training_runtime_summary(report), indent=2, sort_keys=True))
@@ -254,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
             model_name_or_path=args.model_name_or_path,
             max_steps=args.max_steps,
             kl_coef=args.kl_coef,
+            schema_prefix_mode=args.schema_prefix_mode,
+            seed=args.seed,
             report_out=Path(args.report_out) if args.report_out is not None else None,
         )
         print(json.dumps(_training_runtime_summary(report), indent=2, sort_keys=True))
@@ -265,9 +290,52 @@ def main(argv: list[str] | None = None) -> int:
             env_file=Path(args.env_file) if args.env_file is not None else None,
             require_gpu=not args.allow_cpu,
             require_hf_token=args.require_hf_token,
+            python_executable=args.python_executable,
         )
         print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
         return 0 if manifest["passed"] else 1
+    elif args.command == "train" and args.train_command == "report":
+        manifest = generate_training_diagnostics(
+            Path(args.run_dir),
+            out_path=Path(args.out) if args.out is not None else None,
+        )
+        print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
+        return 0
+    elif args.command == "train" and args.train_command == "contract-status":
+        manifest = summarize_full_eval_contract_status(
+            Path(args.run_dir),
+            sft_steps=args.sft_steps,
+            dpo_steps=args.dpo_steps,
+            rl_steps=args.rl_steps,
+            repo_root=Path(args.repo_root) if args.repo_root is not None else None,
+            windows_audit_path=Path(args.windows_audit)
+            if args.windows_audit is not None
+            else None,
+            wsl_smoke_manifest_path=Path(args.wsl_smoke_manifest)
+            if args.wsl_smoke_manifest is not None
+            else None,
+            human_study_suite_path=Path(args.human_study_suite)
+            if args.human_study_suite is not None
+            else None,
+            out_path=Path(args.out) if args.out is not None else None,
+            markdown_out_path=Path(args.markdown_out) if args.markdown_out is not None else None,
+        )
+        print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
+        return 0 if manifest["passed"] else 1
+    elif args.command == "train" and args.train_command == "inspect-samples":
+        manifest = create_sample_inspection(
+            Path(args.dataset),
+            raw_candidates_path=Path(args.raw_candidates),
+            repaired_candidates_path=Path(args.repaired_candidates),
+            out_path=Path(args.out),
+            model_name=args.model_name,
+            model_or_adapter_path=Path(args.model_or_adapter_path)
+            if args.model_or_adapter_path is not None
+            else None,
+            generation_config=_load_json_arg(args.generation_config_json),
+        )
+        print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
+        return 0
     elif args.command == "teacher" and args.teacher_command == "export":
         manifest = export_teacher_requests(
             Path(args.dataset),
@@ -467,7 +535,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     eval_model_compare.add_argument("baseline_report", help="Baseline model evaluation report JSON.")
     eval_model_compare.add_argument("current_report", help="Current model evaluation report JSON.")
-    eval_model_compare.add_argument("--stage", required=True, choices=["sft", "rl"])
+    eval_model_compare.add_argument("--stage", required=True, choices=["sft", "dpo", "rl"])
     eval_model_compare.add_argument(
         "--min-score-improvement",
         type=float,
@@ -503,6 +571,18 @@ def _parser() -> argparse.ArgumentParser:
         help="Minimum source-median/mirror-median speed ratio.",
     )
     eval_human_study.add_argument("--out", help="Optional JSON report output path.")
+
+    eval_human_study_suite = eval_subparsers.add_parser(
+        "human-study-suite",
+        help="Summarize whole-repo and diff-mode Phase 6 human-study evaluation reports.",
+    )
+    eval_human_study_suite.add_argument(
+        "--report",
+        action="append",
+        required=True,
+        help="A JSON report written by `eval human-study`; repeat for whole-repo and diff-mode.",
+    )
+    eval_human_study_suite.add_argument("--out", help="Optional JSON summary output path.")
 
     review = subparsers.add_parser(
         "review",
@@ -561,7 +641,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument(
         "--base-model",
         default=DEFAULT_BASE_MODEL,
-        help="Base 7-14B-compatible model id to place in the Unsloth config.",
+        help="Base Qwen3-family model id to place in the Unsloth config.",
     )
     prepare.add_argument("--max-records", type=int, help="Optional cap on positive records.")
     prepare.add_argument(
@@ -581,6 +661,7 @@ def _parser() -> argparse.ArgumentParser:
         help="Validate prepared SFT/RL training artifacts before launching GPU training.",
     )
     validate_train.add_argument("training_dir", help="Training batch directory.")
+    validate_train.add_argument("--out", help="Optional full JSON validation report path.")
     audit_train = train_subparsers.add_parser(
         "audit",
         help="Check local CUDA/dependency readiness for Unsloth/TRL training.",
@@ -595,6 +676,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     run_sft.add_argument("training_dir", help="Training batch directory.")
     run_sft.add_argument("--output-dir", required=True, help="Model output directory.")
+    run_sft.add_argument("--max-steps", type=int, help="Optional cap on SFT update steps.")
+    run_sft.add_argument("--resume-from-checkpoint", help="Optional SFT checkpoint path.")
+    run_sft.add_argument("--seed", type=int, help="Deterministic SFT seed.")
     _add_training_launch_options(run_sft)
 
     run_dpo = train_subparsers.add_parser(
@@ -605,6 +689,9 @@ def _parser() -> argparse.ArgumentParser:
     run_dpo.add_argument("--output-dir", required=True, help="Model output directory.")
     run_dpo.add_argument("--model-name-or-path", help="SFT model or adapter path for DPO.")
     run_dpo.add_argument("--beta", type=float, default=0.1, help="DPO beta value.")
+    run_dpo.add_argument("--max-steps", type=int, help="Optional cap on DPO update steps.")
+    run_dpo.add_argument("--resume-from-checkpoint", help="Optional DPO checkpoint path.")
+    run_dpo.add_argument("--seed", type=int, help="Deterministic DPO seed.")
     _add_training_launch_options(run_dpo)
 
     run_rl = train_subparsers.add_parser(
@@ -616,6 +703,13 @@ def _parser() -> argparse.ArgumentParser:
     run_rl.add_argument("--model-name-or-path", help="DPO/SFT model or adapter path for RL.")
     run_rl.add_argument("--max-steps", type=int, help="Optional cap on RL update steps.")
     run_rl.add_argument("--kl-coef", type=float, default=0.05, help="Length/KL-style penalty weight.")
+    run_rl.add_argument(
+        "--schema-prefix-mode",
+        choices=["off", "identity", "identity-algorithm", "schema-scaffold"],
+        default="schema-scaffold",
+        help="Constrain RL generations with an explicit SIR schema prefix.",
+    )
+    run_rl.add_argument("--seed", type=int, help="Deterministic RL seed.")
     _add_training_launch_options(run_rl)
 
     package_train = train_subparsers.add_parser(
@@ -625,6 +719,59 @@ def _parser() -> argparse.ArgumentParser:
     package_train.add_argument("training_dir", help="Training batch directory.")
     package_train.add_argument("--out", required=True, help="Output training bundle directory.")
     _add_training_runtime_options(package_train)
+
+    report_train = train_subparsers.add_parser(
+        "report",
+        help="Generate JSON, Markdown, and PNG diagnostics from a training run directory.",
+    )
+    report_train.add_argument("run_dir", help="Training run or outputs directory.")
+    report_train.add_argument("--out", help="Diagnostics output directory. Defaults to run_dir/diagnostics.")
+
+    contract_status = train_subparsers.add_parser(
+        "contract-status",
+        help="Summarize which full-eval contract gates are proven by an outputs directory.",
+    )
+    contract_status.add_argument("run_dir", help="Full-eval outputs directory.")
+    contract_status.add_argument("--sft-steps", type=int, help="Expected SFT max_steps.")
+    contract_status.add_argument("--dpo-steps", type=int, help="Expected DPO max_steps.")
+    contract_status.add_argument("--rl-steps", type=int, help="Expected RL max_steps.")
+    contract_status.add_argument(
+        "--repo-root",
+        help="Optional repository root for git hygiene evidence in the contract scorecard.",
+    )
+    contract_status.add_argument(
+        "--windows-audit",
+        help="Optional Windows-native training audit JSON for readiness evidence.",
+    )
+    contract_status.add_argument(
+        "--wsl-smoke-manifest",
+        help="Optional Windows-hosted WSL smoke-chain manifest JSON for fallback readiness evidence.",
+    )
+    contract_status.add_argument(
+        "--human-study-suite",
+        help="Optional Phase 6 human-study-suite JSON summary for usefulness evidence.",
+    )
+    contract_status.add_argument("--out", help="Optional JSON status report output path.")
+    contract_status.add_argument("--markdown-out", help="Optional Markdown status report output path.")
+
+    inspect_samples = train_subparsers.add_parser(
+        "inspect-samples",
+        help="Build raw-vs-repaired sample eval and inspection artifacts.",
+    )
+    inspect_samples.add_argument("dataset", help="Held-out dataset directory.")
+    inspect_samples.add_argument("--raw-candidates", required=True, help="Raw candidate JSONL.")
+    inspect_samples.add_argument(
+        "--repaired-candidates",
+        required=True,
+        help="Repaired candidate JSONL.",
+    )
+    inspect_samples.add_argument("--out", required=True, help="Sample artifact output directory.")
+    inspect_samples.add_argument("--model-name", required=True, help="Model/run name.")
+    inspect_samples.add_argument("--model-or-adapter-path", help="Model or adapter path.")
+    inspect_samples.add_argument(
+        "--generation-config-json",
+        help="Inline JSON object recording generation settings.",
+    )
 
     teacher = subparsers.add_parser(
         "teacher",
@@ -805,6 +952,10 @@ def _add_training_runtime_options(parser: argparse.ArgumentParser) -> None:
         "--env-file",
         help="Optional .env path. Defaults to .env in the current working directory.",
     )
+    parser.add_argument(
+        "--python-executable",
+        help="Python executable to audit or use for generated training scripts.",
+    )
 
 
 def _add_training_launch_options(parser: argparse.ArgumentParser) -> None:
@@ -813,10 +964,6 @@ def _add_training_launch_options(parser: argparse.ArgumentParser) -> None:
         "--dry-run",
         action="store_true",
         help="Print the gated launch command without starting training.",
-    )
-    parser.add_argument(
-        "--python-executable",
-        help="Python executable to use for the generated training script.",
     )
     parser.add_argument("--report-out", help="Optional full launch JSON report path.")
 
@@ -859,6 +1006,28 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "output_counts": manifest.get("output_counts", {}),
             "files": manifest["files"],
         }
+    if manifest.get("mode") == "training_diagnostics":
+        return {
+            "mode": manifest["mode"],
+            "run_dir": manifest["run_dir"],
+            "diagnostics_dir": manifest["diagnostics_dir"],
+            "missing_metrics": manifest["missing_metrics"],
+            "plots": {
+                name: {"path": plot["path"], "points": plot["points"], "missing": plot["missing"]}
+                for name, plot in manifest["plots"].items()
+            },
+        }
+    if manifest.get("mode") == "sample_inspection":
+        return {
+            "mode": manifest["mode"],
+            "dataset": manifest["dataset"],
+            "model_name": manifest["model_name"],
+            "raw_parseability_count": manifest["raw_parseability_count"],
+            "raw_generation_cap_hits": manifest["raw_generation_cap_hits"],
+            "raw_schema_validity_count": manifest["raw_schema_validity_count"],
+            "repaired_schema_validity_count": manifest["repaired_schema_validity_count"],
+            "files": manifest["files"],
+        }
     if manifest.get("mode") == "corpus_collect":
         return {
             "mode": manifest["mode"],
@@ -897,6 +1066,15 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "completed_records": manifest["completed_records"],
             "answer_records": manifest["answer_records"],
         }
+    if manifest.get("mode") == "full_eval_contract_status":
+        return {
+            "mode": manifest["mode"],
+            "run_dir": manifest["run_dir"],
+            "passed": manifest["passed"],
+            "requested_max_steps": manifest["requested_max_steps"],
+            "remaining_items": manifest["remaining_items"],
+            "gates": manifest["gates"],
+        }
     if manifest.get("mode") in {
         "teacher_export",
         "teacher_ingest",
@@ -928,11 +1106,14 @@ def _eval_summary(report: dict[str, object]) -> dict[str, object]:
             "passed": report["passed"],
             "issues": report.get("issues", []),
         }
-    return {
+    summary = {
         "mode": report["mode"],
         "passed": report["passed"],
         "gates": report["gates"],
     }
+    if "phase6_gate_summary" in report:
+        summary["phase6_gate_summary"] = report["phase6_gate_summary"]
+    return summary
 
 
 def _training_runtime_summary(report: dict[str, object]) -> dict[str, object]:
@@ -955,6 +1136,8 @@ def _training_runtime_summary(report: dict[str, object]) -> dict[str, object]:
         "ready_to_launch": report["ready_to_launch"],
         "require_gpu": report["require_gpu"],
         "failed_checks": _failed_training_checks(report),
+        "blocker": report.get("blocker"),
+        "repro": report.get("repro"),
         "command_hints": report["command_hints"],
     }
 
@@ -974,6 +1157,15 @@ def _failed_training_checks(report: object) -> list[dict[str, object]]:
         for check in checks
         if isinstance(check, dict) and not check.get("passed")
     ]
+
+
+def _load_json_arg(value: str | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("--generation-config-json must be a JSON object")
+    return parsed
 
 
 if __name__ == "__main__":

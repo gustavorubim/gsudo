@@ -11,6 +11,7 @@ from semantic_mirror.review import (
     create_review_pack,
     evaluate_human_usefulness_study,
     evaluate_review_pack,
+    summarize_human_usefulness_studies,
 )
 from semantic_mirror.teacher import (
     export_teacher_requests,
@@ -25,6 +26,7 @@ from semantic_mirror.training import (
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
+    summarize_full_eval_contract_status,
     validate_training_batch,
 )
 
@@ -42,10 +44,12 @@ __all__ = [
     "evaluate_model_candidates",
     "evaluate_human_usefulness_study",
     "evaluate_review_pack",
+    "summarize_human_usefulness_studies",
     "export_teacher_requests",
     "ingest_critic_responses",
     "ingest_teacher_responses",
     "prepare_training_data",
+    "summarize_full_eval_contract_status",
     "promote_gold_records",
     "launch_training_job",
     "package_training_bundle",

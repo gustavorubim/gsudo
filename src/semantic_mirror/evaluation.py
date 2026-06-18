@@ -199,7 +199,7 @@ def evaluate_model_candidates(
     candidates_file = Path(candidates_path).resolve()
     manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
     default_repo = _default_repo_from_manifest(manifest)
-    source_repos = _source_repo_lookup(manifest)
+    source_repos = _source_repo_lookup(manifest, dataset=dataset)
     references = _candidate_references(dataset, manifest)
     candidates = _read_jsonl(candidates_file)
 
@@ -297,10 +297,10 @@ def compare_model_evaluations(
     ]
     if stage == "rl":
         gates.append(_gate("hallucination_penalties_not_increased", hallucination_delta, maximum=0))
-    elif stage == "sft":
+    elif stage in {"sft", "dpo"}:
         gates.append(_gate("hallucination_penalties_not_increased", hallucination_delta, maximum=0))
     else:
-        raise ValueError("stage must be 'sft' or 'rl'")
+        raise ValueError("stage must be 'sft', 'dpo', or 'rl'")
 
     report = {
         "mode": "model_evaluation_comparison",
@@ -424,13 +424,18 @@ def _default_repo_from_manifest(manifest: dict[str, Any]) -> Path | None:
     return Path(repo).resolve()
 
 
-def _source_repo_lookup(manifest: dict[str, Any]) -> dict[str, Path]:
+def _source_repo_lookup(manifest: dict[str, Any], *, dataset: Path | None = None) -> dict[str, Path]:
     repos: dict[str, Path] = {}
     for entry in manifest.get("source_repos", []):
         repo_id = entry.get("repo_id")
         path = entry.get("path")
         if repo_id and path:
-            repos[repo_id] = Path(path).resolve()
+            repo_path = Path(path).resolve()
+            if not repo_path.exists() and dataset is not None:
+                portable_path = dataset.parent / "repos" / repo_id
+                if portable_path.exists():
+                    repo_path = portable_path.resolve()
+            repos[repo_id] = repo_path
     return repos
 
 
@@ -443,10 +448,14 @@ def _reference_repo(
     if reference is None:
         return default_repo
     if reference.get("source_repo_path"):
-        return Path(reference["source_repo_path"]).resolve()
+        repo_path = Path(reference["source_repo_path"]).resolve()
+        if repo_path.exists():
+            return repo_path
     repo_id = reference.get("source_repo_id")
     if repo_id in source_repos:
         return source_repos[repo_id]
+    if reference.get("source_repo_path"):
+        return Path(reference["source_repo_path"]).resolve()
     return default_repo
 
 
@@ -542,6 +551,10 @@ def _sir_unit_for_scoring(sir_unit: dict[str, Any], reference: dict[str, Any]) -
 
 
 def _candidate_sir_unit(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    if candidate.get("repair_applied") is False:
+        raw_text_unit = _candidate_raw_text_unit(candidate)
+        if raw_text_unit is not None:
+            return raw_text_unit
     for key in ("sir_unit", "candidate", "output"):
         value = candidate.get(key)
         if isinstance(value, dict) and key == "sir_unit":
@@ -558,6 +571,32 @@ def _candidate_sir_unit(candidate: dict[str, Any]) -> dict[str, Any] | None:
             if isinstance(parsed, dict):
                 return parsed
     return None
+
+
+def _candidate_raw_text_unit(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    raw_text = candidate.get("raw_text")
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return None
+    decoder = json.JSONDecoder()
+    last_error = "no JSON object found"
+    first_json = raw_text.find("{")
+    indices = [first_json] if first_json >= 0 and not raw_text[:first_json].strip() else [
+        index for index, char in enumerate(raw_text) if char == "{"
+    ]
+    for index in indices:
+        if index < 0:
+            continue
+        char = raw_text[index]
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(raw_text[index:])
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+            continue
+        if isinstance(parsed, dict) and "unit_id" in parsed:
+            return parsed
+    return {"unit_id": "<unparseable>", "raw_error": f"no SIR JSON object found: {last_error}"}
 
 
 def _aggregate_penalties(results: list[dict[str, Any]]) -> dict[str, int]:

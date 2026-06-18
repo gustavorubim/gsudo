@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from semantic_mirror.builder import build_repository, diff_repository
@@ -22,6 +24,7 @@ from semantic_mirror.review import (
     create_review_pack,
     evaluate_human_usefulness_study,
     evaluate_review_pack,
+    summarize_human_usefulness_studies,
 )
 from semantic_mirror.schema import validate_ir_document, validate_manifest, validate_unit
 from semantic_mirror.teacher import (
@@ -33,11 +36,15 @@ from semantic_mirror.teacher import (
     run_teacher_requests,
 )
 from semantic_mirror.training import (
+    DEFAULT_BASE_MODEL,
     REQUIRED_TRAINING_MODULES,
     audit_training_environment,
+    create_sample_inspection,
+    generate_training_diagnostics,
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
+    summarize_full_eval_contract_status,
     validate_training_batch,
 )
 
@@ -210,6 +217,18 @@ def test_build_generates_path_preserving_ir_with_data_ml_details(tmp_path: Path)
     )
     assert study_manifest["mode"] == "human_usefulness_study"
     assert study_manifest["counts"]["mirror_tasks"] == study_manifest["counts"]["source_tasks"]
+    assert study_manifest["phase6_requirements"]["required_answer_source"] == (
+        "real_timed_reviewer_logs"
+    )
+    assert "whole_repo" in study_manifest["phase6_requirements"]["required_task_sets"]
+    assert "diff_mode" in study_manifest["phase6_requirements"]["required_task_sets"]
+    assert "mirror_accuracy_not_lower_than_source" in study_manifest["phase6_requirements"][
+        "pass_gates"
+    ]
+    study_readme = (tmp_path / "review_study" / "README.md").read_text(encoding="utf-8")
+    assert "Phase 6 contract requirements" in study_readme
+    assert "real timed reviewer logs" in study_readme
+    assert "uv run semantic-mirror eval human-study" in study_readme
     answers_path = tmp_path / "review_study_answers.jsonl"
     _write_jsonl(answers_path, _completed_study_answers(tmp_path / "review_study"))
     study_eval = evaluate_human_usefulness_study(
@@ -219,8 +238,109 @@ def test_build_generates_path_preserving_ir_with_data_ml_details(tmp_path: Path)
     )
     assert study_eval["passed"]
     study_gates = {gate["name"]: gate for gate in study_eval["gates"]}
+    assert study_gates["real_timed_reviewer_logs"]["actual"] is True
+    assert study_gates["reviewer_identity_present"]["actual"] is True
+    assert study_gates["answer_text_present"]["actual"] is True
     assert study_gates["mirror_faster_than_source"]["actual"] > 1.0
+    assert study_gates["mirror_accuracy_not_lower_than_source"]["actual"] >= 0.0
     assert study_gates["visibility_items_acknowledged"]["actual"] == 1.0
+    assert study_eval["phase6_gate_summary"]["real_timed_reviewer_logs"]
+    assert study_eval["phase6_gate_summary"]["reviewer_identity_present"]
+    assert study_eval["phase6_gate_summary"]["answer_text_present"]
+    assert study_eval["phase6_gate_summary"]["mirror_accuracy_not_lower_than_source"]
+    assert study_eval["phase6_gate_summary"]["mirror_median_faster_than_source"]
+    cli_report = tmp_path / "review_study_eval.json"
+    cli_eval = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "eval",
+            "human-study",
+            str(tmp_path / "review_study"),
+            "--answers",
+            str(answers_path),
+            "--min-accuracy",
+            "1.0",
+            "--out",
+            str(cli_report),
+        ],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    cli_summary = json.loads(cli_eval.stdout)
+    assert cli_summary["phase6_gate_summary"]["mirror_accuracy_not_lower_than_source"]
+    assert json.loads(cli_report.read_text(encoding="utf-8"))["phase6_gate_summary"][
+        "mirror_median_faster_than_source"
+    ]
+    diff_report = copy.deepcopy(study_eval)
+    diff_report["study"] = str(tmp_path / "diff_review_study")
+    diff_report["answers"] = str(tmp_path / "diff_review_study_answers.jsonl")
+    diff_report["metrics"]["answered_task_sets"] = ["diff_mode"]
+    diff_report["phase6_gate_summary"][
+        "changed_behavior_accuracy_at_or_above_threshold"
+    ] = True
+    whole_report_path = tmp_path / "phase6_whole_report.json"
+    diff_report_path = tmp_path / "phase6_diff_report.json"
+    whole_report_path.write_text(
+        json.dumps(study_eval, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    diff_report_path.write_text(
+        json.dumps(diff_report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    phase6_summary = summarize_human_usefulness_studies(
+        [whole_report_path, diff_report_path],
+        out_path=tmp_path / "phase6_summary.json",
+    )
+    assert phase6_summary["passed"]
+    assert phase6_summary["phase6_gate_summary"]["required_task_sets_present"]
+    assert phase6_summary["phase6_gate_summary"]["all_reports_passed"]
+    assert phase6_summary["metrics"]["answered_task_sets"] == ["diff_mode", "whole_repo"]
+    assert phase6_summary["metrics"]["report_count"] == 2
+    phase6_cli_report = tmp_path / "phase6_cli_summary.json"
+    phase6_cli = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "eval",
+            "human-study-suite",
+            "--report",
+            str(whole_report_path),
+            "--report",
+            str(diff_report_path),
+            "--out",
+            str(phase6_cli_report),
+        ],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    phase6_cli_summary = json.loads(phase6_cli.stdout)
+    assert phase6_cli_summary["phase6_gate_summary"]["required_task_sets_present"]
+    assert json.loads(phase6_cli_report.read_text(encoding="utf-8"))["passed"]
+
+    untimed_answers = _completed_study_answers(tmp_path / "review_study")
+    untimed_answers[0]["reviewer"] = ""
+    untimed_answers[0]["started_at"] = ""
+    untimed_answers[0]["completed_at"] = ""
+    untimed_answers[0]["elapsed_seconds"] = 0.0
+    untimed_answers[1]["answer"] = ""
+    untimed_path = tmp_path / "review_study_untimed_answers.jsonl"
+    _write_jsonl(untimed_path, untimed_answers)
+    untimed_eval = evaluate_human_usefulness_study(
+        tmp_path / "review_study",
+        untimed_path,
+        min_accuracy=1.0,
+    )
+    untimed_gates = {gate["name"]: gate for gate in untimed_eval["gates"]}
+    assert not untimed_eval["passed"]
+    assert not untimed_gates["real_timed_reviewer_logs"]["passed"]
+    assert not untimed_gates["reviewer_identity_present"]["passed"]
+    assert not untimed_gates["answer_text_present"]["passed"]
 
 
 def test_semantic_zoom_levels_control_detail_budget(tmp_path: Path) -> None:
@@ -372,6 +492,508 @@ def test_conduct_human_usefulness_study_records_timed_answers(tmp_path: Path) ->
     assert visibility_record["elapsed_seconds"] == 1.25
 
 
+def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) -> None:
+    run = tmp_path / "outputs"
+    run.mkdir()
+    requested = {"sft": 300, "dpo": 120, "rl": 120}
+    (run / "training_eval_summary.json").write_text(
+        json.dumps(
+            {
+                "mode": "training_eval_summary",
+                "passed": False,
+                "all_final_eval_gates_passed": False,
+                "eval_run_config": {"requested_max_steps": requested},
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for stage, steps in {"sft": 300, "dpo": 10}.items():
+        stage_dir = run / f"semantic-mirror-{stage}"
+        stage_dir.mkdir()
+        if stage == "dpo":
+            (stage_dir / "checkpoint-10").mkdir()
+        (stage_dir / "training_stage_manifest.json").write_text(
+            json.dumps({"stage": stage, "max_steps": steps}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    for name in ("sft_eval", "sft_vs_baseline", "dpo_eval", "dpo_vs_sft"):
+        (run / f"{name}.json").write_text(
+            json.dumps({"mode": name, "passed": True}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    for stage in ("sft", "dpo"):
+        sample_dir = run / "samples" / stage
+        sample_dir.mkdir(parents=True)
+        for name in (
+            "sample_manifest.json",
+            "raw_candidates.jsonl",
+            "repaired_candidates.jsonl",
+            "sample_inspection.md",
+        ):
+            (sample_dir / name).write_text("{}\n", encoding="utf-8")
+    diagnostics = run / "diagnostics"
+    diagnostics.mkdir()
+    for name in (
+        "training_summary.json",
+        "training_summary.md",
+        "sft_loss.png",
+        "dpo_loss.png",
+        "dpo_reward_accuracy.png",
+        "rl_reward.png",
+        "rl_parseability.png",
+        "generation_lengths.png",
+        "eval_metrics.png",
+        "schema_coverage.png",
+    ):
+        (diagnostics / name).write_bytes(b"{}")
+    (diagnostics / "training_summary.json").write_text(
+        json.dumps(
+            {
+                "mode": "training_diagnostics",
+                "plots": {
+                    "dpo_loss": {
+                        "source_files": [
+                            str(tmp_path / "old-run" / "semantic-mirror-dpo" / "checkpoint-10" / "trainer_state.json")
+                        ]
+                    }
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run / "full_training_eval_resume_inspection.json").write_text(
+        json.dumps(
+            {
+                "mode": "full_training_eval_resume_inspection",
+                "requested_max_steps": requested,
+                "reuse_stage_outputs_enabled": True,
+                "decisions": {
+                    "sft": {
+                        "action": "reuse",
+                        "requested_max_steps": 300,
+                        "manifest_max_steps": 300,
+                        "reason": "manifest max_steps matches requested cap",
+                        "resume_from_checkpoint": {"path": None, "exists": None},
+                    },
+                    "dpo": {
+                        "action": "resume",
+                        "requested_max_steps": 120,
+                        "manifest_max_steps": 10,
+                        "reason": "resume checkpoint provided",
+                        "resume_from_checkpoint": {
+                            "path": "outputs/semantic-mirror-dpo/checkpoint-10",
+                            "exists": True,
+                        },
+                    },
+                    "rl": {
+                        "action": "run",
+                        "requested_max_steps": 120,
+                        "manifest_max_steps": None,
+                        "reason": "no completed stage manifest",
+                        "resume_from_checkpoint": {"path": None, "exists": None},
+                    },
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    status = summarize_full_eval_contract_status(
+        run,
+        sft_steps=300,
+        dpo_steps=120,
+        rl_steps=120,
+        out_path=tmp_path / "contract_status.json",
+        markdown_out_path=tmp_path / "contract_status.md",
+    )
+    assert not status["passed"]
+    remaining = {item["gate"] for item in status["remaining_items"]}
+    assert "dpo_stage_manifest_matches_requested_steps" in remaining
+    assert "rl_stage_manifest_matches_requested_steps" in remaining
+    assert "dpo_eval_exists_and_passed" in remaining
+    assert "dpo_vs_sft_exists_and_passed" in remaining
+    assert "rl_eval_exists_and_passed" in remaining
+    assert "dpo_sample_inspection_complete" in remaining
+    assert "rl_sample_inspection_complete" in remaining
+    assert "diagnostic_plots_exist" in remaining
+    assert "training_eval_summary_matches_requested_steps" in remaining
+    assert not status["training_eval_summary_status"]["stage_manifest_max_steps_match"]
+    assert status["stage_status"]["sft"]["manifest_matches_requested_max_steps"]
+    assert not status["stage_status"]["dpo"]["manifest_matches_requested_max_steps"]
+    assert status["stage_evidence_summary"]["sft"]["manifest_current"]
+    assert status["stage_evidence_summary"]["sft"]["eval_current"]
+    assert status["stage_evidence_summary"]["sft"]["sample_current"]
+    assert not status["stage_evidence_summary"]["dpo"]["manifest_current"]
+    assert not status["stage_evidence_summary"]["dpo"]["eval_current"]
+    assert not status["stage_evidence_summary"]["dpo"]["sample_current"]
+    assert not status["stage_evidence_summary"]["rl"]["manifest_current"]
+    assert not status["stage_evidence_summary"]["rl"]["eval_current"]
+    assert not status["stage_evidence_summary"]["rl"]["sample_current"]
+    assert status["report_status"]["dpo_eval"]["exists"]
+    assert status["report_status"]["dpo_eval"]["passed"]
+    assert not status["report_status"]["dpo_eval"]["current_for_requested_stage"]
+    assert status["sample_status"]["dpo"]["manifest_exists"]
+    assert not status["sample_status"]["dpo"]["complete_for_requested_stage"]
+    assert status["diagnostics_status"]["all_required_plots_exist"]
+    assert not status["diagnostics_status"]["sources_current_for_run"]
+    assert not status["diagnostics_status"]["stages_current_for_requested_steps"]
+    assert status["diagnostics_status"]["stale_or_missing_stages"] == ["dpo", "rl"]
+    assert set(status["remaining_by_area"]) == {
+        "diagnostics",
+        "dpo",
+        "final_summary",
+        "rl",
+    }
+    assert "dpo_stage_manifest_matches_requested_steps" in status["remaining_by_area"]["dpo"]
+    assert "rl_eval_exists_and_passed" in status["remaining_by_area"]["rl"]
+    assert "diagnostic_plots_exist" in status["remaining_by_area"]["diagnostics"]
+    assert not status["repo_hygiene_status"]["checked"]
+    assert not status["windows_readiness_status"]["checked"]
+    assert not status["human_usefulness_status"]["checked"]
+    scorecard = {row["area"]: row for row in status["contract_scorecard"]}
+    assert scorecard["repo_hygiene"]["passed"] is None
+    assert scorecard["repo_hygiene"]["max_reward"] == 25
+    assert scorecard["repo_hygiene"]["earned_reward"] == 0
+    assert scorecard["windows_unsloth_readiness"]["passed"] is None
+    assert not scorecard["sft_dpo_rl_implementation"]["passed"]
+    assert scorecard["sft_dpo_rl_implementation"]["max_reward"] == 85
+    assert not scorecard["diagnostic_plots"]["passed"]
+    assert not scorecard["post_training_samples"]["passed"]
+    assert not scorecard["real_training_eval_gates"]["passed"]
+    assert scorecard["human_usefulness"]["passed"] is None
+    assert status["contract_reward_summary"] == {
+        "completion_eligible": False,
+        "failed_required_areas": [
+            "repo_hygiene",
+            "windows_unsloth_readiness",
+            "sft_dpo_rl_implementation",
+            "diagnostic_plots",
+            "post_training_samples",
+            "real_training_eval_gates",
+        ],
+        "minimum_acceptable_required_reward": 320,
+        "optional_reward_earned": 0,
+        "optional_reward_possible": 70,
+        "required_reward_earned": 0,
+        "required_reward_possible": 420,
+        "required_reward_threshold_met": False,
+        "zero_failed_required_areas": False,
+    }
+    diagnostic_item = next(
+        item for item in status["remaining_items"] if item["gate"] == "diagnostic_plots_exist"
+    )
+    assert diagnostic_item["actual"]["foreign_source_file_count"] == 1
+    assert diagnostic_item["actual"]["foreign_source_file_examples"]
+    assert diagnostic_item["actual"]["stale_or_missing_stages"] == ["dpo", "rl"]
+    assert status["resume_inspection_status"]["exists"]
+    assert status["resume_inspection_status"]["decisions"]["sft"]["action"] == "reuse"
+    assert status["resume_inspection_status"]["decisions"]["dpo"]["action"] == "resume"
+    assert status["resume_inspection_status"]["decisions"]["rl"]["action"] == "run"
+    assert any(
+        "DPO_RESUME_FROM_CHECKPOINT=outputs/semantic-mirror-dpo/checkpoint-10"
+        in action["command"]
+        for action in status["next_actions"]
+    )
+    assert any(
+        action["title"] == "Resume full eval through DPO and RL"
+        and "RL/final eval evidence is incomplete" in action["reason"]
+        for action in status["next_actions"]
+    )
+    assert any(
+        action["title"] == "Regenerate target diagnostics"
+        and "train report outputs --out outputs/diagnostics" in action["command"]
+        for action in status["next_actions"]
+    )
+    windows_commands = [
+        action["windows_powershell_command"]
+        for action in status["next_actions"]
+        if action.get("windows_powershell_command")
+    ]
+    assert windows_commands
+    assert any("wsl.exe -d Ubuntu -- bash -lc" in command for command in windows_commands)
+    assert any(
+        "DPO_RESUME_FROM_CHECKPOINT=outputs/semantic-mirror-dpo/checkpoint-10"
+        in command
+        for command in windows_commands
+    )
+    assert any("--dpo-steps 120" in command for command in windows_commands)
+    assert json.loads((tmp_path / "contract_status.json").read_text(encoding="utf-8"))[
+        "remaining_items"
+    ]
+    status_markdown = (tmp_path / "contract_status.md").read_text(encoding="utf-8")
+    assert "# Semantic Mirror Full-Eval Contract Status" in status_markdown
+    assert "`dpo_stage_manifest_matches_requested_steps`" in status_markdown
+    assert "`dpo_eval_exists_and_passed`" in status_markdown
+    assert "`dpo_sample_inspection_complete`" in status_markdown
+    assert "## Stage Evidence" in status_markdown
+    assert "| `sft` | `True` | `True` | `True` | `True` |" in status_markdown
+    assert "| `dpo` | `False` | `False` | `False` | `False` |" in status_markdown
+    assert "| `rl` | `False` | `False` | `False` | `False` |" in status_markdown
+    assert "## Contract Scorecard" in status_markdown
+    assert "## Repo Hygiene" in status_markdown
+    assert "Repo hygiene not checked" in status_markdown
+    assert "## Windows Readiness" in status_markdown
+    assert "Windows readiness not checked" in status_markdown
+    assert "## Human Usefulness" in status_markdown
+    assert "Human usefulness not checked" in status_markdown
+    assert "`real_training_eval_gates`" in status_markdown
+    assert "## Reward Summary" in status_markdown
+    assert "Required reward: `0/420`" in status_markdown
+    assert "Completion eligible: `False`" in status_markdown
+    assert "## Remaining Items" in status_markdown
+    assert "### By Area" in status_markdown
+    assert "| `dpo` |" in status_markdown
+    assert "| `diagnostics` |" in status_markdown
+    assert "## Resume Inspection" in status_markdown
+    assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
+    assert "## Next Actions" in status_markdown
+    assert "Resume full eval through DPO and RL" in status_markdown
+    assert "RL/final eval evidence is incomplete" in status_markdown
+    assert "Regenerate target diagnostics" in status_markdown
+    assert "bash launch/inspect_full_training_eval_resume.sh" in status_markdown
+    assert "```powershell" in status_markdown
+    assert "wsl.exe -d Ubuntu -- bash -lc" in status_markdown
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.name", "Semantic Mirror Test")
+    _git(repo, "config", "user.email", "semantic@example.test")
+    (repo / "tracked.txt").write_text("clean\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "initial")
+    (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    (repo / "untracked.txt").write_text("review me\n", encoding="utf-8")
+    (repo / ".gitignore").write_text(
+        ".env\n.semantic-mirror/\nSEMANTIC_MIRROR_GOAL_CONTRACT.md\nignored.tmp\n",
+        encoding="utf-8",
+    )
+    (repo / ".env").write_text("SECRET=local\n", encoding="utf-8")
+    (repo / "SEMANTIC_MIRROR_GOAL_CONTRACT.md").write_text(
+        "# local execution contract\n",
+        encoding="utf-8",
+    )
+    (repo / ".semantic-mirror").mkdir()
+    (repo / ".semantic-mirror" / "local.json").write_text("{}\n", encoding="utf-8")
+    (repo / "ignored.tmp").write_text("unexpected\n", encoding="utf-8")
+    dirty_status = summarize_full_eval_contract_status(run, repo_root=repo)
+    assert dirty_status["repo_hygiene_status"]["checked"]
+    assert not dirty_status["repo_hygiene_status"]["passed"]
+    assert len(dirty_status["repo_hygiene_status"]["tracked_changes"]) == 1
+    assert "untracked.txt" in dirty_status["repo_hygiene_status"]["untracked"]
+    assert ".env" in dirty_status["repo_hygiene_status"]["ignored_allowed"]
+    assert (
+        "SEMANTIC_MIRROR_GOAL_CONTRACT.md"
+        in dirty_status["repo_hygiene_status"]["ignored_allowed"]
+    )
+    assert ".semantic-mirror/" in dirty_status["repo_hygiene_status"]["ignored_allowed"]
+    assert "ignored.tmp" in dirty_status["repo_hygiene_status"]["ignored_unexpected"]
+    dirty_scorecard = {row["area"]: row for row in dirty_status["contract_scorecard"]}
+    assert dirty_scorecard["repo_hygiene"]["passed"] is False
+    windows_audit = tmp_path / "windows_audit.json"
+    windows_audit.write_text(
+        json.dumps(
+            {
+                "mode": "training_environment_audit",
+                "passed": False,
+                "ready_to_launch": False,
+                "blocker": {
+                    "blocked": True,
+                    "failed_required_checks": ["torch_cuda_available"],
+                    "recommended_fallback": "Use WSL CUDA.",
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wsl_smoke = tmp_path / "smoke_chain_manifest.json"
+    wsl_smoke.write_text(
+        json.dumps(
+            {
+                "mode": "smoke_chain",
+                "diagnostics_exists": True,
+                "smoke_out": "/home/test/smoke",
+                "stages": {
+                    stage: {"stage_manifest_exists": True}
+                    for stage in ("sft", "dpo", "rl")
+                },
+                "samples": {
+                    stage: {"sample_manifest_exists": True}
+                    for stage in ("sft", "dpo", "rl")
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    readiness_status = summarize_full_eval_contract_status(
+        run,
+        windows_audit_path=windows_audit,
+        wsl_smoke_manifest_path=wsl_smoke,
+    )
+    assert readiness_status["windows_readiness_status"]["checked"]
+    assert readiness_status["windows_readiness_status"]["native_blocked"]
+    assert readiness_status["windows_readiness_status"]["wsl_smoke_complete"]
+    readiness_scorecard = {
+        row["area"]: row for row in readiness_status["contract_scorecard"]
+    }
+    assert readiness_scorecard["windows_unsloth_readiness"]["passed"] is True
+    assert readiness_scorecard["windows_unsloth_readiness"]["earned_reward"] == 65
+    human_suite = tmp_path / "phase6_summary.json"
+    human_suite.write_text(
+        json.dumps(
+            {
+                "mode": "human_usefulness_study_suite_summary",
+                "passed": True,
+                "phase6_gate_summary": {
+                    "required_task_sets_present": True,
+                    "all_reports_passed": True,
+                    "real_timed_reviewer_logs": True,
+                    "reviewer_identity_present": True,
+                    "answer_text_present": True,
+                    "mirror_accuracy_not_lower_than_source": True,
+                    "mirror_median_faster_than_source": True,
+                    "changed_behavior_accuracy_at_or_above_threshold": True,
+                    "visibility_items_acknowledged": True,
+                },
+                "metrics": {
+                    "answered_task_sets": ["diff_mode", "whole_repo"],
+                    "report_count": 2,
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    usefulness_status = summarize_full_eval_contract_status(
+        run,
+        human_study_suite_path=human_suite,
+    )
+    assert usefulness_status["human_usefulness_status"]["checked"]
+    assert usefulness_status["human_usefulness_status"]["passed"]
+    usefulness_scorecard = {
+        row["area"]: row for row in usefulness_status["contract_scorecard"]
+    }
+    assert usefulness_scorecard["human_usefulness"]["passed"] is True
+    assert usefulness_scorecard["human_usefulness"]["earned_reward"] == 70
+
+    cli_status = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "train",
+            "contract-status",
+            str(run),
+            "--sft-steps",
+            "300",
+            "--dpo-steps",
+            "120",
+            "--rl-steps",
+            "120",
+            "--repo-root",
+            str(repo),
+            "--windows-audit",
+            str(windows_audit),
+            "--wsl-smoke-manifest",
+            str(wsl_smoke),
+            "--human-study-suite",
+            str(human_suite),
+            "--out",
+            str(tmp_path / "contract_status_cli.json"),
+            "--markdown-out",
+            str(tmp_path / "contract_status_cli.md"),
+        ],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert cli_status.returncode == 1
+    assert json.loads(cli_status.stdout)["passed"] is False
+    cli_status_json = json.loads(
+        (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
+    )
+    refresh_action = next(
+        action
+        for action in cli_status_json["next_actions"]
+        if action["title"] == "Regenerate contract status"
+    )
+    assert "--repo-root 'repo'" in refresh_action["command"]
+    assert "--windows-audit 'windows_audit.json'" in refresh_action["command"]
+    assert "--wsl-smoke-manifest 'smoke_chain_manifest.json'" in refresh_action["command"]
+    assert "--human-study-suite 'phase6_summary.json'" in refresh_action["command"]
+    assert "training_eval_summary_matches_requested_steps" in (
+        tmp_path / "contract_status_cli.md"
+    ).read_text(encoding="utf-8")
+
+    (run / "training_eval_summary.json").write_text(
+        json.dumps(
+            {
+                "mode": "training_eval_summary",
+                "passed": True,
+                "all_final_eval_gates_passed": True,
+                "eval_run_config": {"requested_max_steps": requested},
+                "stage_execution_summary": {
+                    stage: {"manifest_max_steps": steps}
+                    for stage, steps in requested.items()
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for stage, steps in requested.items():
+        stage_dir = run / f"semantic-mirror-{stage}"
+        stage_dir.mkdir(exist_ok=True)
+        (stage_dir / "training_stage_manifest.json").write_text(
+            json.dumps({"stage": stage, "max_steps": steps}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    for name in ("rl_eval", "rl_vs_sft"):
+        (run / f"{name}.json").write_text(
+            json.dumps({"mode": name, "passed": True}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    sample_dir = run / "samples" / "rl"
+    sample_dir.mkdir(parents=True)
+    for name in (
+        "sample_manifest.json",
+        "raw_candidates.jsonl",
+        "repaired_candidates.jsonl",
+        "sample_inspection.md",
+    ):
+        (sample_dir / name).write_text("{}\n", encoding="utf-8")
+    (diagnostics / "training_summary.json").write_text(
+        json.dumps(
+            {
+                "mode": "training_diagnostics",
+                "plots": {
+                    "dpo_loss": {
+                        "source_files": [
+                            str(run / "semantic-mirror-dpo" / "checkpoint-120" / "trainer_state.json")
+                        ]
+                    }
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert summarize_full_eval_contract_status(run)["passed"]
+
+
 def test_diff_marks_changed_units_and_preserves_context(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     out = tmp_path / "mirror-diff"
@@ -454,6 +1076,10 @@ def test_diff_marks_changed_units_and_preserves_context(tmp_path: Path) -> None:
         tmp_path / "diff_review_study",
     )
     assert study_manifest["counts"]["change_task_groups"] >= 1
+    assert "diff_mode" in study_manifest["phase6_requirements"]["required_task_sets"]
+    assert "changed_behavior_accuracy_at_or_above_threshold" in study_manifest[
+        "phase6_requirements"
+    ]["pass_gates"]
     diff_answers_path = tmp_path / "diff_review_study_answers.jsonl"
     _write_jsonl(diff_answers_path, _completed_study_answers(tmp_path / "diff_review_study"))
     diff_study_eval = evaluate_human_usefulness_study(
@@ -463,7 +1089,10 @@ def test_diff_marks_changed_units_and_preserves_context(tmp_path: Path) -> None:
     )
     assert diff_study_eval["passed"]
     diff_study_gates = {gate["name"]: gate for gate in diff_study_eval["gates"]}
+    assert diff_study_gates["real_timed_reviewer_logs"]["actual"] is True
     assert diff_study_gates["changed_behavior_accuracy"]["actual"] == 1.0
+    assert diff_study_eval["phase6_gate_summary"]["changed_behavior_accuracy_at_or_above_threshold"]
+    assert "diff_mode" in diff_study_eval["metrics"]["answered_task_sets"]
 
 
 def test_syntax_error_file_gets_explicit_unsupported_reason(tmp_path: Path) -> None:
@@ -603,8 +1232,50 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "static_facts" in sft[0]["messages"][1]["content"]
     assert "static_analysis" in sft[0]["messages"][1]["content"]
     assert "schema_contract" in sft[0]["messages"][1]["content"]
+    assert "FINAL_SIR_JSON_START" in sft[0]["messages"][1]["content"]
+    assert "FINAL_SIR_JSON_END" in sft[0]["messages"][1]["content"]
+    assert "no Markdown fence" in sft[0]["messages"][1]["content"]
     assert "text_excerpt" in sft[0]["messages"][1]["content"]
+    prompt_text = sft[0]["messages"][1]["content"]
+    prompt_header, final_json_text = prompt_text.split("FINAL_SIR_JSON_START\n", 1)
+    final_json_text = final_json_text.split("\nFINAL_SIR_JSON_END", 1)[0]
+    prompt_payload = json.loads(prompt_header)
+    final_sir_json = json.loads(final_json_text)
+    validate_unit(final_sir_json)
+    assert final_sir_json["unit_id"] == silver[0]["unit_id"]
+    assert (
+        prompt_payload["output_rules"][0]
+        == "return the final SIR JSON object between FINAL_SIR_JSON_START and FINAL_SIR_JSON_END"
+    )
+    assert (
+        "do not add any top-level key outside schema_contract.required_top_level_keys"
+        in prompt_payload["output_rules"]
+    )
+    assert (
+        "copy identity fields exactly from final SIR JSON; do not shorten unit_id or qualified_name"
+        in prompt_payload["output_rules"]
+    )
+    assert (
+        'the answer must start with {"unit_id" and must not include template or marker keys'
+        in prompt_payload["output_rules"]
+    )
+    assert final_sir_json["calls"] == prompt_payload["static_facts"]["calls"]
+    assert final_sir_json["writes"] == prompt_payload["static_facts"]["writes"]
+    assert (
+        final_sir_json["data_ml_details"]
+        == prompt_payload["static_facts"]["data_ml_details"]
+    )
+    assert prompt_payload["schema_contract"]["compact_expected_counts"]["calls"] == len(
+        final_sir_json["calls"]
+    )
+    assert (
+        prompt_payload["schema_contract"]["compact_expected_counts"]["data_ml_details"][
+            "training_loops"
+        ]
+        == len(final_sir_json["data_ml_details"]["training_loops"])
+    )
     assert "source_spans" in sft[0]["messages"][2]["content"]
+    assert sft[0]["messages"][2]["content"].startswith('{"unit_id"')
     compact_target = json.loads(sft[0]["messages"][2]["content"])
     validate_unit(compact_target)
     assert "zoom_policy" not in compact_target
@@ -619,9 +1290,19 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert len(rl_prompts[0]["reward_reference"]["static_facts"]["calls"]) >= len(
         compact_target["calls"]
     )
+    assert rl_prompts[0]["reward_reference"]["qualified_name"] == silver[0]["qualified_name"]
+    assert rl_prompts[0]["reward_reference"]["compact_target"]["unit_id"] == silver[0]["unit_id"]
+    assert rl_prompts[0]["reward_reference"]["compact_expected_counts"]["calls"] == len(
+        compact_target["calls"]
+    )
     assert sft_config["base_model"] == "test/base-7b"
     assert sft_config["method"] == "QLoRA"
     assert reward_config["objective"] == "faithfulness_first_compactness_second"
+    assert training_manifest["training_defaults"]["method"] == sft_config["method"]
+    assert training_manifest["training_defaults"]["target_model_size"] == sft_config[
+        "model_size_target"
+    ]
+    assert training_manifest["training_defaults"]["target_model_size"] != "7-14B"
     assert training_manifest["files"]["sft_script"] == "run_unsloth_sft.py"
     assert training_manifest["files"]["preference_script"] == "run_preference_dpo.py"
     assert training_manifest["files"]["rl_script"] == "run_reward_rl.py"
@@ -630,6 +1311,48 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     validation_report = validate_training_batch(training_out)
     assert validation_report["passed"]
     assert validation_report["issues"] == []
+    validation_out = tmp_path / "validation_report.json"
+    validation_cli = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "train",
+            "validate",
+            str(training_out),
+            "--out",
+            str(validation_out),
+        ],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert json.loads(validation_cli.stdout)["passed"]
+    assert json.loads(validation_out.read_text(encoding="utf-8")) == validation_report
+    audit_out = tmp_path / "audit_report.json"
+    audit_cli = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "train",
+            "audit",
+            str(training_out),
+            "--python-executable",
+            "definitely-not-semantic-mirror-python",
+            "--out",
+            str(audit_out),
+        ],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert audit_cli.returncode == 1
+    audit_summary = json.loads(audit_cli.stdout)
+    audit_report = json.loads(audit_out.read_text(encoding="utf-8"))
+    assert audit_summary["blocker"]["blocked"]
+    assert audit_summary["repro"]["audit_command"] == audit_report["repro"]["audit_command"]
+    assert "--python-executable" in audit_summary["repro"]["audit_command"]
 
     promotion_report = promote_gold_records(
         out,
@@ -653,6 +1376,12 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         tmp_path / "gold_training",
         include_silver_when_gold_exists=False,
     )
+    gold_sft_config = json.loads(
+        (tmp_path / "gold_training" / "unsloth_sft_config.json").read_text(encoding="utf-8")
+    )
+    assert gold_training_manifest["base_model"] == DEFAULT_BASE_MODEL
+    assert gold_training_manifest["training_defaults"]["method"] == "bf16 LoRA"
+    assert gold_sft_config["load_in_16bit"]
     assert gold_training_manifest["input_counts"]["gold"] == 1
     assert gold_training_manifest["output_counts"]["sft_records"] == 1
     gold_sft = _read_jsonl(tmp_path / "gold_training" / "sft.jsonl")
@@ -683,6 +1412,11 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert audit_report["passed"]
     assert audit_report["ready_to_launch"]
     assert not [check for check in audit_report["checks"] if check["required"] and not check["passed"]]
+    assert audit_report["repro"]["required_python_range"] == ">=3.11,<3.14"
+    assert "unsloth" in audit_report["repro"]["required_modules"]
+    assert "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" in (
+        audit_report["repro"]["training_requirements"]
+    )
 
     dry_run = launch_training_job(
         training_out,
@@ -691,12 +1425,49 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         dry_run=True,
         audit_report=audit_report,
         python_executable="python-test",
+        max_steps=5,
+        resume_from_checkpoint="sft-checkpoint-path",
+        seed=101,
     )
     assert dry_run["passed"]
     assert dry_run["would_launch"]
     assert not dry_run["launched"]
     assert dry_run["command"][0] == "python-test"
     assert "run_unsloth_sft.py" in dry_run["command"][1]
+    assert "--max-steps" in dry_run["command"]
+    assert "5" in dry_run["command"]
+    assert "--resume-from-checkpoint" in dry_run["command"]
+    assert "sft-checkpoint-path" in dry_run["command"]
+    assert "--seed" in dry_run["command"]
+    assert "101" in dry_run["command"]
+
+    dpo_dry_run = launch_training_job(
+        training_out,
+        stage="dpo",
+        output_dir=tmp_path / "dpo-output",
+        dry_run=True,
+        audit_report=audit_report,
+        python_executable="python-test",
+        model_name_or_path="sft-adapter-path",
+        beta=0.2,
+        max_steps=7,
+        resume_from_checkpoint="dpo-checkpoint-path",
+        seed=102,
+    )
+    assert dpo_dry_run["passed"]
+    assert dpo_dry_run["would_launch"]
+    assert not dpo_dry_run["launched"]
+    assert "run_preference_dpo.py" in dpo_dry_run["command"][1]
+    assert "--model-name-or-path" in dpo_dry_run["command"]
+    assert "sft-adapter-path" in dpo_dry_run["command"]
+    assert "--beta" in dpo_dry_run["command"]
+    assert "0.2" in dpo_dry_run["command"]
+    assert "--max-steps" in dpo_dry_run["command"]
+    assert "7" in dpo_dry_run["command"]
+    assert "--resume-from-checkpoint" in dpo_dry_run["command"]
+    assert "dpo-checkpoint-path" in dpo_dry_run["command"]
+    assert "--seed" in dpo_dry_run["command"]
+    assert "102" in dpo_dry_run["command"]
 
     rl_dry_run = launch_training_job(
         training_out,
@@ -708,6 +1479,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         model_name_or_path="dpo-adapter-path",
         max_steps=3,
         kl_coef=0.02,
+        schema_prefix_mode="identity",
+        seed=103,
     )
     assert rl_dry_run["passed"]
     assert rl_dry_run["would_launch"]
@@ -718,6 +1491,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--max-steps" in rl_dry_run["command"]
     assert "3" in rl_dry_run["command"]
     assert "--kl-coef" in rl_dry_run["command"]
+    assert "--schema-prefix-mode" in rl_dry_run["command"]
+    assert "identity" in rl_dry_run["command"]
+    assert "--seed" in rl_dry_run["command"]
+    assert "103" in rl_dry_run["command"]
 
     package_manifest = package_training_bundle(
         training_out,
@@ -733,14 +1510,29 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert package_manifest["passed"]
     assert package_manifest["current_runtime_ready"]
     assert package_manifest["output_counts"]["sft_records"] == 4
+    assert package_manifest["files"]["smoke_chain_launcher"] == "launch/run_smoke_chain.sh"
     assert validate_training_batch(bundle_out / "training")["passed"]
     assert (bundle_out / "training" / "run_unsloth_sft.py").exists()
     sft_script = (bundle_out / "training" / "run_unsloth_sft.py").read_text(encoding="utf-8")
     assert "SFTConfig" in sft_script
     assert "processing_class=tokenizer" in sft_script
     assert "tokenizer=tokenizer" not in sft_script
+    assert "_messages_to_text(row[\"messages\"], tokenizer)" in sft_script
+    assert "tokenizer.apply_chat_template" in sft_script
     assert 'parser.add_argument("--max-steps", type=int)' in sft_script
+    assert 'parser.add_argument("--resume-from-checkpoint")' in sft_script
+    assert 'parser.add_argument("--seed", type=int, default=42)' in sft_script
+    assert 'parser.add_argument("--save-steps", type=int, default=10)' in sft_script
+    assert 'parser.add_argument("--save-total-limit", type=int, default=3)' in sft_script
     assert "max_steps=args.max_steps or -1" in sft_script
+    assert 'save_strategy="steps"' in sft_script
+    assert "save_steps=args.save_steps" in sft_script
+    assert "save_total_limit=args.save_total_limit" in sft_script
+    assert "trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)" in sft_script
+    assert '"stage": "sft"' in sft_script
+    assert '"save_steps": args.save_steps' in sft_script
+    assert '"save_total_limit": args.save_total_limit' in sft_script
+    assert "training_stage_manifest.json" in sft_script
     assert 'tokenizer.truncation_side = "left"' in sft_script
     assert 'os.environ.setdefault("UNSLOTH_ENABLE_CCE", "0")' in sft_script
     assert 'os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")' in sft_script
@@ -749,42 +1541,302 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "TRANSFORMERS_CACHE" in dpo_script
     assert "DPOTrainer" in dpo_script
     assert "model.warnings_issued" in dpo_script
+    assert "def _has_peft_adapters" in dpo_script
+    assert "if not _has_peft_adapters(model):" in dpo_script
+    assert 'dataset = dataset.add_column("images", [None] * len(dataset))' in dpo_script
+    assert 'if original_model_type in {"qwen3_5", "qwen3_5_moe"}:' in dpo_script
+    assert 'model.config.model_type = "qwen3_text"' in dpo_script
+    assert 'dpo_processing_class = getattr(tokenizer, "tokenizer", tokenizer)' in dpo_script
+    assert "processing_class=dpo_processing_class" in dpo_script
     assert 'parser.add_argument("--max-steps", type=int)' in dpo_script
+    assert 'parser.add_argument("--resume-from-checkpoint")' in dpo_script
+    assert 'parser.add_argument("--seed", type=int, default=43)' in dpo_script
+    assert 'parser.add_argument("--save-steps", type=int, default=10)' in dpo_script
+    assert 'parser.add_argument("--save-total-limit", type=int, default=3)' in dpo_script
     assert "max_steps=args.max_steps or -1" in dpo_script
+    assert 'save_strategy="steps"' in dpo_script
+    assert "save_steps=args.save_steps" in dpo_script
+    assert "save_total_limit=args.save_total_limit" in dpo_script
+    assert "trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)" in dpo_script
+    assert '"stage": "dpo"' in dpo_script
+    assert '"save_steps": args.save_steps' in dpo_script
+    assert '"save_total_limit": args.save_total_limit' in dpo_script
+    assert "training_stage_manifest.json" in dpo_script
     rl_script = (bundle_out / "training" / "run_reward_rl.py").read_text(encoding="utf-8")
     assert "_preferences_by_prompt(root, reward_config" in rl_script
     assert "_preferences_by_prompt(root / reward_config" not in rl_script
+    assert "def _has_peft_adapters" in rl_script
+    assert "if not _has_peft_adapters(model):" in rl_script
+    assert 'parser.add_argument("--seed", type=int, default=44)' in rl_script
+    assert '"--schema-prefix-mode"' in rl_script
+    assert 'default="schema-scaffold"' in rl_script
+    assert "def _schema_prefix" in rl_script
+    assert "def _encode_generation_inputs" in rl_script
+    assert "torch.manual_seed(args.seed)" in rl_script
+    assert 'text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)' in rl_script
+    assert "encoded = text_tokenizer(" in rl_script
+    assert "tokenizer.apply_chat_template" in rl_script
+    assert "enable_thinking=False" in rl_script
     assert "output_ids = output_ids.detach().clone().to(device)" in rl_script
     assert 'tokenizer.truncation_side = "left"' in rl_script
     assert "formatted_prompt = _format_generation_prompt" in rl_script
     assert "min_new_tokens=8" in rl_script
+    assert "StoppingCriteriaList" in rl_script
+    assert "def _has_complete_json_object" in rl_script
+    assert "stopping_criteria=StoppingCriteriaList" in rl_script
     assert "raw_sir_unit = _extract_json_object(text)" in rl_script
     assert "sir_unit = _repair_sir_unit(" in rl_script
     assert "sir_unit = _apply_faithfulness_repair(" in rl_script
     assert 'elif unit.get("raw_error"):' in rl_script
     assert "reward += _raw_generation_bonus(" in rl_script
+    assert 'record["reward_reference"],' in rl_script
+    assert "repair_input = json.loads(json.dumps(raw_sir_unit))" in rl_script
+    assert 'if raw_sir_unit.get(field) == expected:' in rl_script
+    assert "schema_prefix_tokens" in rl_script
+    assert "generated_tokens" in rl_script
+    assert "schema-scaffold" in rl_script
+    assert '"external_dependencies": []' in rl_script
+    assert '"confidence": target.get("confidence"' in rl_script
+    assert '"schema_prefix_mode": args.schema_prefix_mode' in rl_script
+    assert "Copy the final SIR JSON object between" in rl_script
+    assert "compact_token_budget" in rl_script
+    assert "compact_expected_counts" in rl_script
+    assert "return -80.0" in rl_script
+    assert "len(missing_keys) * 4.0" in rl_script
+    assert "len(extra_keys) * 5.0" in rl_script
+    assert "extra_keys = set(raw_sir_unit) - allowed_keys" in rl_script
+    assert "must start with" in rl_script
     assert '"raw_parseable"' in rl_script
+    assert '"stage": "rl"' in rl_script
+    assert "training_stage_manifest.json" in rl_script
     candidate_script = (bundle_out / "training" / "generate_sir_candidates.py").read_text(
         encoding="utf-8"
     )
     assert 'parser.add_argument("--max-new-tokens", type=int, default=1536)' in candidate_script
     assert 'parser.add_argument("--max-prompts", type=int)' in candidate_script
+    assert 'parser.add_argument("--prompt-file")' in candidate_script
     assert 'parser.add_argument("--no-faithfulness-repair", action="store_true")' in candidate_script
+    assert '"--faithfulness-repair-mode"' in candidate_script
+    assert '"schema-only"' in candidate_script
+    assert '"compact-target"' in candidate_script
+    assert '"full-static"' in candidate_script
+    assert '"--generation-mode"' in candidate_script
+    assert '"field-wise"' in candidate_script
+    assert '"--field-max-new-tokens"' in candidate_script
+    assert '"--field-target-mode"' in candidate_script
+    assert '"static-facts"' in candidate_script
+    assert '"static-hints"' in candidate_script
+    assert '"--field-target-limit"' in candidate_script
+    assert '"--field-target-max-chunks"' in candidate_script
+    assert '"--field-target-chunk-fields"' in candidate_script
+    assert '"--field-object-prefix-mode"' in candidate_script
+    assert '"--schema-prefix-mode"' in candidate_script
+    assert "def _generate_field_wise_candidate" in candidate_script
+    assert "FIELD_STATIC_HINT_DEFAULT_LIMITS" in candidate_script
+    assert '"reads": 2' in candidate_script
+    assert '"external_dependencies": 1' in candidate_script
+    assert 'or reference.get("source_spans")' in candidate_script
+    assert 'or metadata.get("source_spans")' in candidate_script
+    assert 'static_algorithm = reference.get("static_facts", {}).get("algorithm", {})' in candidate_script
+    assert 'Semantic IR unit for {source_path}.' in candidate_script
+    assert "def _compact_static_hint_value" in candidate_script
+    assert "def _compact_static_hint_chunk" in candidate_script
+    assert "def _merge_field_value" in candidate_script
+    assert "def _parse_field_set" in candidate_script
+    assert "Output budget for" in candidate_script
+    assert "effective_field_target_limit" in candidate_script
+    assert "field_target_chunk_index" in candidate_script
+    assert "field_target_chunk_count" in candidate_script
+    assert "field_target_chunk_enabled" in candidate_script
+    assert "field_generation_reports" in candidate_script
+    assert "object_prefix_tokens" in candidate_script
+    assert 'object_prefix=f\'{{"{field}":\'' in candidate_script
+    assert "def _schema_prefix" in candidate_script
+    assert "def _encode_generation_inputs" in candidate_script
+    assert "prompts_path = Path(args.prompt_file)" in candidate_script
     assert "prompts = prompts[: args.max_prompts]" in candidate_script
     assert 'tokenizer.truncation_side = "left"' in candidate_script
+    assert 'text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)' in candidate_script
+    assert "tokenizer.apply_chat_template" in candidate_script
+    assert "enable_thinking=False" in candidate_script
     assert "formatted_prompt = _format_generation_prompt" in candidate_script
+    assert "or use Markdown fences" in candidate_script
+    assert "Copy the final SIR JSON object between" in candidate_script
+    assert "Do not shorten unit_id" in candidate_script
+    assert "safety_report" in candidate_script
+    assert "must start with" in candidate_script
+    assert "completion_tokens" in candidate_script
+    assert "hit_generation_cap" in candidate_script
+    assert "raw_parse_error" in candidate_script
+    assert "StoppingCriteriaList" in candidate_script
+    assert "def _has_complete_json_object" in candidate_script
+    assert "stopping_criteria=StoppingCriteriaList" in candidate_script
+    assert "def _assistant_completion_region" in candidate_script
+    assert "repair_input = json.loads(json.dumps(raw_sir_unit))" in candidate_script
     assert "sir_unit = _repair_sir_unit(" in candidate_script
     assert "sir_unit = _apply_faithfulness_repair(" in candidate_script
     assert 'elif unit.get("raw_error"):' in candidate_script
     assert "DATA_ML_DETAIL_CATEGORIES" in candidate_script
-    assert "Do not continue the input JSON" in candidate_script
+    assert "continue the input JSON" in candidate_script
     assert "generation_tokens = min(" in candidate_script
     assert "max_prompt_tokens = max(128" in candidate_script
     assert "truncation=True" in candidate_script
-    assert "max_length=max_prompt_tokens" in candidate_script
-    assert 'prompt_len = inputs["input_ids"].shape[1]' in candidate_script
+    assert "max_length=prompt_limit" in candidate_script
+    assert "prompt_len = int(input_ids.shape[1])" in candidate_script
     assert "completion_ids = output_ids[:, prompt_len:]" in candidate_script
-    assert "tokenizer.decode(completion_ids[0]" in candidate_script
+    assert "text_tokenizer.decode(completion_ids[0]" in candidate_script
+    assert '"schema_prefix_mode": args.schema_prefix_mode' in candidate_script
+    assert '"faithfulness_repair_mode": args.faithfulness_repair_mode' in candidate_script
+    assert '"schema_prefix_applied": bool(schema_prefix)' in candidate_script
+    assert '"generated_tokens": generated_tokens' in candidate_script
+    assert '"generation_mode": args.generation_mode' in candidate_script
+    assert '"field_target_mode": args.field_target_mode' in candidate_script
+    assert '"field_target_limit": args.field_target_limit' in candidate_script
+    assert '"field_object_prefix_mode": args.field_object_prefix_mode' in candidate_script
+    assert "schema-scaffold" in candidate_script
+    assert 'default="schema-scaffold"' in candidate_script
+    assert '"external_dependencies": []' in candidate_script
+    assert '"confidence": target.get("confidence"' in candidate_script
+    assert 'parser.add_argument("--raw-out")' in candidate_script
+    assert '"raw_parseable"' in candidate_script
+    assert '"raw_sir_unit"' in candidate_script
+
+    fake_run = tmp_path / "fake_run"
+    fake_run.mkdir()
+    (fake_run / "sft_stdout.log").write_text(
+        "{'loss': '0.5', 'epoch': '0.1'}\n{'loss': '0.25', 'epoch': '0.2'}\n",
+        encoding="utf-8",
+    )
+    (fake_run / "dpo_stdout.log").write_text(
+        "{'loss': '0.4', 'reward_accuracy': '0.75'}\n",
+        encoding="utf-8",
+    )
+    rl_dir = fake_run / "semantic-mirror-rl"
+    rl_dir.mkdir()
+    (rl_dir / "rl_training_report.json").write_text(
+        json.dumps(
+            {
+                "stage": "rl",
+                "history": [
+                    {"step": 0, "reward": 1.0, "raw_parseable": False, "loss": 0.3},
+                    {"step": 1, "reward": 2.0, "raw_parseable": True, "loss": 0.2},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    diagnostics = generate_training_diagnostics(fake_run)
+    diagnostics_out = fake_run / "diagnostics"
+    assert diagnostics["plots"]["sft_loss"]["points"] == 2
+    assert diagnostics["plots"]["dpo_reward_accuracy"]["points"] == 1
+    assert diagnostics["plots"]["rl_parseability"]["points"] == 2
+    assert (diagnostics_out / "training_summary.json").exists()
+    assert (diagnostics_out / "training_summary.md").exists()
+    assert (diagnostics_out / "sft_loss.png").read_bytes().startswith(b"\x89PNG")
+
+    sample_record = silver[0]
+    raw_candidates = tmp_path / "raw_candidates.jsonl"
+    repaired_candidates = tmp_path / "repaired_candidates.jsonl"
+    raw_candidates.write_text(
+        json.dumps(
+            {
+                "record_id": "raw-1",
+                "dataset_record_id": sample_record["record_id"],
+                "unit_id": sample_record["unit_id"],
+                "source_path": sample_record["source_path"],
+                "profile": sample_record["profile"],
+                "zoom": sample_record["zoom"],
+                "raw_text": "not json",
+                "raw_parseable": False,
+                "raw_parse_error": "no JSON",
+                "hit_generation_cap": True,
+                "sir_unit": {"unit_id": "<unparseable>", "raw_error": "no JSON"},
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    repaired_candidates.write_text(
+        json.dumps(
+            {
+                "record_id": "repaired-1",
+                "dataset_record_id": sample_record["record_id"],
+                "unit_id": sample_record["unit_id"],
+                "source_path": sample_record["source_path"],
+                "profile": sample_record["profile"],
+                "zoom": sample_record["zoom"],
+                "raw_text": "not json",
+                "sir_unit": sample_record["target"]["sir_unit"],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sample_manifest = create_sample_inspection(
+        out,
+        raw_candidates_path=raw_candidates,
+        repaired_candidates_path=repaired_candidates,
+        out_path=tmp_path / "samples",
+        model_name="unit-test-model",
+        generation_config={"max_new_tokens": 32, "seed": 42},
+    )
+    assert sample_manifest["raw_parseability_count"] == 0
+    assert sample_manifest["raw_generation_cap_hits"] == 1
+    assert sample_manifest["raw_repair_free_contract_count"] == 0
+    assert sample_manifest["raw_exact_identity_count"] == 0
+    assert sample_manifest["raw_top_level_key_validity_count"] == 0
+    assert sample_manifest["raw_compact_shape_count"] == 0
+    assert sample_manifest["repaired_schema_validity_count"] == 1
+    inspection = (tmp_path / "samples" / "sample_inspection.md").read_text(encoding="utf-8")
+    assert "Raw generation cap hits: 1 / 1" in inspection
+    assert "Raw repair-free contract valid: 0 / 1" in inspection
+    assert "Raw parse error: `no JSON`" in inspection
+    assert "Raw repair-free contract valid: `False`" in inspection
+    assert (tmp_path / "samples" / "raw_eval.json").exists()
+    assert (tmp_path / "samples" / "repaired_eval.json").exists()
+    assert (tmp_path / "samples" / "sample_inspection.md").exists()
+
+    contaminated_raw = tmp_path / "contaminated_raw_candidates.jsonl"
+    malformed_raw_unit = {
+        "unit_id": "short-id",
+        "qualified_name": sample_record["qualified_name"],
+        "language": "python",
+        "source_spans": sample_record["source_spans"],
+    }
+    contaminated_raw.write_text(
+        json.dumps(
+            {
+                "record_id": "raw-contaminated",
+                "dataset_record_id": sample_record["record_id"],
+                "unit_id": sample_record["unit_id"],
+                "source_path": sample_record["source_path"],
+                "profile": sample_record["profile"],
+                "zoom": sample_record["zoom"],
+                "raw_text": json.dumps(malformed_raw_unit, separators=(",", ":")),
+                "raw_parseable": True,
+                "repair_applied": False,
+                "hit_generation_cap": False,
+                "sir_unit": sample_record["target"]["sir_unit"],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    contaminated_manifest = create_sample_inspection(
+        out,
+        raw_candidates_path=contaminated_raw,
+        repaired_candidates_path=repaired_candidates,
+        out_path=tmp_path / "contaminated_samples",
+        model_name="contaminated-raw-model",
+    )
+    assert contaminated_manifest["raw_parseability_count"] == 1
+    assert contaminated_manifest["raw_schema_validity_count"] == 0
+    assert contaminated_manifest["raw_repair_free_contract_count"] == 0
+    assert contaminated_manifest["raw_contract_reports"][0]["raw_unit_id"] == "short-id"
+    assert "unit_id" in contaminated_manifest["raw_contract_reports"][0]["identity_mismatches"]
     assert (bundle_out / "src" / "semantic_mirror" / "training.py").exists()
     assert (bundle_out / "pyproject.toml").exists()
     requirements = (bundle_out / "requirements-training.txt").read_text(encoding="utf-8")
@@ -792,19 +1844,40 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "unsloth" in requirements
     assert "mergekit" in requirements
     assert "llm-blender" in requirements
+    assert "peft" in requirements
     assert "weave" in requirements
     commands = json.loads((bundle_out / "launch" / "commands.json").read_text(encoding="utf-8"))
     assert "bootstrap_linux_cuda.sh" in commands["bootstrap_linux_cuda"]
     assert "run_full_training_eval.sh" in commands["full_training_eval"]
+    assert "run_smoke_chain.sh" in commands["smoke_chain"]
+    assert "run_wsl_smoke_chain.ps1" in commands["wsl_smoke_chain"]
+    assert "-HeldOutDataset <windows_dataset_dir>" in commands["wsl_smoke_chain"]
+    assert "--out outputs/validation_report.json" in commands["validate"]
+    assert "--out outputs/audit.json" in commands["audit"]
+    assert "train inspect-samples" in commands["inspect_samples"]
+    assert "train report outputs" in commands["report"]
+    assert "train contract-status outputs" in commands["contract_status"]
+    assert "--sft-steps $SFT_MAX_STEPS" in commands["contract_status"]
+    assert "--markdown-out outputs/contract_status.md" in commands["contract_status"]
     assert "run_unsloth_sft.py" in commands["sft"]
     assert "run_reward_rl.py" in commands["rl"]
+    assert "--schema-prefix-mode schema-scaffold" in commands["rl"]
+    assert "--schema-prefix-mode schema-scaffold" in commands["generate_candidates"]
+    assert "outputs/dpo_eval.json" in commands["compare_dpo"]
+    assert "--stage dpo" in commands["compare_dpo"]
+    assert "outputs/sft_raw_eval.json" in commands["compare_sft_raw"]
+    assert "outputs/dpo_raw_vs_sft.json" in commands["compare_dpo_raw"]
+    assert "outputs/rl_raw_vs_sft.json" in commands["compare_rl_raw"]
     assert (bundle_out / "setup" / "bootstrap_linux_cuda.sh").exists()
     assert (bundle_out / "setup" / "bootstrap_wsl_ubuntu.ps1").exists()
     bootstrap = (bundle_out / "setup" / "bootstrap_linux_cuda.sh").read_text(encoding="utf-8")
     assert "3.11" in bootstrap
     assert "3.14" in bootstrap
+    assert package_manifest["files"]["wsl_smoke_chain_launcher"] == "launch/run_wsl_smoke_chain.ps1"
     assert (bundle_out / "launch" / "run_sft.sh").exists()
     assert (bundle_out / "launch" / "run_rl.sh").exists()
+    assert (bundle_out / "launch" / "run_smoke_chain.sh").exists()
+    assert (bundle_out / "launch" / "run_wsl_smoke_chain.ps1").exists()
     assert (bundle_out / "launch" / "run_full_training_eval.sh").exists()
     for shell_script in [
         bundle_out / "setup" / "bootstrap_linux_cuda.sh",
@@ -813,15 +1886,215 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         bundle_out / "launch" / "run_rl.sh",
         bundle_out / "launch" / "generate_candidates.sh",
         bundle_out / "launch" / "score_candidates.sh",
+        bundle_out / "launch" / "run_smoke_chain.sh",
         bundle_out / "launch" / "run_full_training_eval.sh",
     ]:
         assert b"\r\n" not in shell_script.read_bytes()
+    smoke_chain_script = (bundle_out / "launch" / "run_smoke_chain.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "train validate training" in smoke_chain_script
+    assert '--out "$SMOKE_OUT/validation_report.json"' in smoke_chain_script
+    assert "train audit training" in smoke_chain_script
+    assert "train inspect-samples" in smoke_chain_script
+    assert "train report" in smoke_chain_script
+    assert "smoke_chain_manifest.json" in smoke_chain_script
+    assert "sample_rollup" in smoke_chain_script
+    assert "raw_parseability_rate" in smoke_chain_script
+    assert "raw_schema_validity_gate_passed" in smoke_chain_script
+    assert "raw_repair_free_contract_gate_passed" in smoke_chain_script
+    assert "repaired_schema_validity_gate_passed" in smoke_chain_script
+    assert "all_stage_outputs_exist" in smoke_chain_script
+    assert "all_sample_manifests_exist" in smoke_chain_script
+    wsl_smoke_script = (bundle_out / "launch" / "run_wsl_smoke_chain.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "wslpath -a" in wsl_smoke_script
+    assert "$windowsPathForWsl = $windowsPath -replace '\\\\', '/'" in wsl_smoke_script
+    assert "$datasetPathForWsl = $datasetPath -replace '\\\\', '/'" in wsl_smoke_script
+    assert '[string]$VenvPath = ".venv"' in wsl_smoke_script
+    assert ".run_wsl_smoke_chain.generated.sh" in wsl_smoke_script
+    assert '$bashScript = $bashScript -replace "`r`n", "`n"' in wsl_smoke_script
+    assert "System.Text.UTF8Encoding($false)" in wsl_smoke_script
+    assert "[System.IO.File]::WriteAllText($scriptPath, $bashScript, $utf8NoBom)" in wsl_smoke_script
+    assert 'wsl.exe -d $Distro -- bash "$scriptWslPath"' in wsl_smoke_script
+    assert "wsl_smoke_environment.json" in wsl_smoke_script
+    assert '"wsl_repo_path"' in wsl_smoke_script
+    assert '"python_executable"' in wsl_smoke_script
+    assert '"venv_path"' in wsl_smoke_script
+    assert '"cuda_device"' in wsl_smoke_script
+    assert '"output_path"' in wsl_smoke_script
+    assert "HELD_OUT_DATASET='__HELD_OUT_WSL__'" in wsl_smoke_script
+    assert "bash launch/run_smoke_chain.sh" in wsl_smoke_script
+    package_readme = (bundle_out / "README.md").read_text(encoding="utf-8")
+    assert "run_wsl_smoke_chain.ps1" in package_readme
+    assert "wsl_smoke_environment.json" in package_readme
+    assert "CUDA device" in package_readme
+    wsl_bootstrap = (bundle_out / "setup" / "bootstrap_wsl_ubuntu.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$windowsPathForWsl = $windowsPath -replace '\\\\', '/'" in wsl_bootstrap
+    assert "all_repaired_samples_schema_valid" in smoke_chain_script
+    assert "SFT_SMOKE_STEPS" in smoke_chain_script
+    assert "SMOKE_SCHEMA_PREFIX_MODE" in smoke_chain_script
+    assert 'SMOKE_SCHEMA_PREFIX_MODE="${SMOKE_SCHEMA_PREFIX_MODE:-schema-scaffold}"' in smoke_chain_script
+    assert "SMOKE_GENERATION_MODE" in smoke_chain_script
+    assert "SMOKE_FIELD_MAX_NEW_TOKENS" in smoke_chain_script
+    assert "SMOKE_FIELD_TARGET_MODE" in smoke_chain_script
+    assert "SMOKE_FIELD_TARGET_LIMIT" in smoke_chain_script
+    assert "SMOKE_FIELD_TARGET_MAX_CHUNKS" in smoke_chain_script
+    assert "SMOKE_FIELD_TARGET_CHUNK_FIELDS" in smoke_chain_script
+    assert "SMOKE_FIELD_OBJECT_PREFIX_MODE" in smoke_chain_script
+    assert "SMOKE_FAITHFULNESS_REPAIR_MODE" in smoke_chain_script
+    assert 'SMOKE_FAITHFULNESS_REPAIR_MODE="${SMOKE_FAITHFULNESS_REPAIR_MODE:-schema-only}"' in smoke_chain_script
+    assert '--generation-mode "$SMOKE_GENERATION_MODE"' in smoke_chain_script
+    assert '--field-target-mode "$SMOKE_FIELD_TARGET_MODE"' in smoke_chain_script
+    assert '--field-target-limit "$SMOKE_FIELD_TARGET_LIMIT"' in smoke_chain_script
+    assert '--field-target-max-chunks "$SMOKE_FIELD_TARGET_MAX_CHUNKS"' in smoke_chain_script
+    assert '--field-target-chunk-fields "$SMOKE_FIELD_TARGET_CHUNK_FIELDS"' in smoke_chain_script
+    assert '--field-object-prefix-mode "$SMOKE_FIELD_OBJECT_PREFIX_MODE"' in smoke_chain_script
+    assert '--faithfulness-repair-mode "$SMOKE_FAITHFULNESS_REPAIR_MODE"' in smoke_chain_script
+    assert '--schema-prefix-mode "$SMOKE_SCHEMA_PREFIX_MODE"' in smoke_chain_script
     full_eval_script = (bundle_out / "launch" / "run_full_training_eval.sh").read_text(
         encoding="utf-8"
     )
+    resume_inspector = (
+        bundle_out / "launch" / "inspect_full_training_eval_resume.sh"
+    ).read_text(encoding="utf-8")
+    launch_commands = json.loads(
+        (bundle_out / "launch" / "commands.json").read_text(encoding="utf-8")
+    )
+    package_readme = (bundle_out / "README.md").read_text(encoding="utf-8")
     assert "eval candidates" in full_eval_script
     assert "eval model-compare" in full_eval_script
+    assert "train validate training --out outputs/validation_report.json" in full_eval_script
+    assert "train audit training --out outputs/audit.json" in full_eval_script
+    assert "outputs/heldout_eval_dataset" in full_eval_script
+    assert "outputs/heldout_eval_training" in full_eval_script
+    assert "outputs/baseline_candidates_eval.jsonl" in full_eval_script
+    assert "--prompt-file outputs/heldout_eval_training/rl_prompts.jsonl" in full_eval_script
+    assert "SCHEMA_PREFIX_MODE" in full_eval_script
+    assert 'SCHEMA_PREFIX_MODE="${SCHEMA_PREFIX_MODE:-schema-scaffold}"' in full_eval_script
+    assert 'FAITHFULNESS_REPAIR_MODE="${FAITHFULNESS_REPAIR_MODE:-schema-only}"' in full_eval_script
+    assert 'REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"' in full_eval_script
+    assert 'SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"' in full_eval_script
+    assert 'DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"' in full_eval_script
+    assert 'SFT_SAVE_STEPS="${SFT_SAVE_STEPS:-10}"' in full_eval_script
+    assert 'DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-10}"' in full_eval_script
+    assert 'SFT_SAVE_TOTAL_LIMIT="${SFT_SAVE_TOTAL_LIMIT:-3}"' in full_eval_script
+    assert 'DPO_SAVE_TOTAL_LIMIT="${DPO_SAVE_TOTAL_LIMIT:-3}"' in full_eval_script
+    assert "stage_ready()" in full_eval_script
+    assert 'local requested_steps="$2"' in full_eval_script
+    assert 'manifest.get("max_steps") == int(sys.argv[2])' in full_eval_script
+    assert 'stage_ready outputs/semantic-mirror-sft "$SFT_MAX_STEPS"' in full_eval_script
+    assert 'stage_ready outputs/semantic-mirror-dpo "$DPO_MAX_STEPS"' in full_eval_script
+    assert 'stage_ready outputs/semantic-mirror-rl "$RL_MAX_STEPS"' in full_eval_script
+    assert "Reusing existing SFT stage output" in full_eval_script
+    assert "Reusing existing DPO stage output" in full_eval_script
+    assert "Reusing existing RL stage output" in full_eval_script
+    assert 'sft_resume_args=(--resume-from-checkpoint "$SFT_RESUME_FROM_CHECKPOINT")' in full_eval_script
+    assert 'dpo_resume_args=(--resume-from-checkpoint "$DPO_RESUME_FROM_CHECKPOINT")' in full_eval_script
+    assert '--save-steps "$SFT_SAVE_STEPS"' in full_eval_script
+    assert '--save-total-limit "$SFT_SAVE_TOTAL_LIMIT"' in full_eval_script
+    assert '--save-steps "$DPO_SAVE_STEPS"' in full_eval_script
+    assert '--save-total-limit "$DPO_SAVE_TOTAL_LIMIT"' in full_eval_script
+    assert '"schema_prefix_mode": sys.argv[5]' in full_eval_script
+    assert "GENERATION_MODE" in full_eval_script
+    assert '"generation_mode": sys.argv[6]' in full_eval_script
+    assert '"field_max_new_tokens": int(sys.argv[7])' in full_eval_script
+    assert '"field_target_mode": sys.argv[8]' in full_eval_script
+    assert '"field_target_limit": int(sys.argv[9])' in full_eval_script
+    assert '"field_target_max_chunks": int(sys.argv[10])' in full_eval_script
+    assert '"field_target_chunk_fields": [item for item in sys.argv[11].split(",") if item]' in full_eval_script
+    assert '"field_object_prefix_mode": sys.argv[12]' in full_eval_script
+    assert '"faithfulness_repair_mode": sys.argv[13]' in full_eval_script
+    assert '"checkpoint_policy": {' in full_eval_script
+    assert '"sft_save_steps": int(sys.argv[21])' in full_eval_script
+    assert '"dpo_save_steps": int(sys.argv[22])' in full_eval_script
+    assert '"sft_save_total_limit": int(sys.argv[23])' in full_eval_script
+    assert '"dpo_save_total_limit": int(sys.argv[24])' in full_eval_script
+    assert '--generation-mode "$GENERATION_MODE"' in full_eval_script
+    assert '--field-target-mode "$FIELD_TARGET_MODE"' in full_eval_script
+    assert '--field-target-limit "$FIELD_TARGET_LIMIT"' in full_eval_script
+    assert '--field-target-max-chunks "$FIELD_TARGET_MAX_CHUNKS"' in full_eval_script
+    assert '--field-target-chunk-fields "$FIELD_TARGET_CHUNK_FIELDS"' in full_eval_script
+    assert '--field-object-prefix-mode "$FIELD_OBJECT_PREFIX_MODE"' in full_eval_script
+    assert '--faithfulness-repair-mode "$FAITHFULNESS_REPAIR_MODE"' in full_eval_script
+    assert '--schema-prefix-mode "$SCHEMA_PREFIX_MODE"' in full_eval_script
+    assert "generate_and_inspect dpo" in full_eval_script
+    assert "train inspect-samples" in full_eval_script
+    assert "dpo_vs_sft.json" in full_eval_script
+    assert "dpo_raw_eval.json" in full_eval_script
+    assert "sft_raw_vs_baseline.json" in full_eval_script
+    assert "dpo_raw_vs_sft.json" in full_eval_script
+    assert "rl_raw_vs_sft.json" in full_eval_script
+    assert "train report outputs" in full_eval_script
+    assert "required_reports" in full_eval_script
+    assert "diagnostic_reports" in full_eval_script
+    assert "eval_run_config" in full_eval_script
+    assert "stage_execution_summary" in full_eval_script
+    assert "requested_max_steps" in full_eval_script
+    assert "manifest_max_steps" in full_eval_script
+    assert "reuse_mode_enabled" in full_eval_script
+    assert "manifest_matches_requested_max_steps" in full_eval_script
+    assert "gate_policy" in full_eval_script
+    assert "diagnostic_non_blocking" in full_eval_script
+    assert "gate_counts" in full_eval_script
+    assert 'summary["required_total"] = summary["gate_counts"]["required_total"]' in full_eval_script
+    assert 'summary["required_passed"] = summary["gate_counts"]["required_passed"]' in full_eval_script
+    assert 'summary["all_final_eval_gates_passed"] = summary["final_eval_gate_summary"]' in full_eval_script
+    assert "raw_gate_summary" in full_eval_script
+    assert "raw_gate_stage_summary" in full_eval_script
+    assert "raw_compare_deltas" in full_eval_script
+    assert "final_eval_gate_summary" in full_eval_script
+    assert "all_final_eval_gates_passed" in full_eval_script
+    assert "rl_raw_hallucination_not_worse_than_sft" in full_eval_script
+    assert "raw_repair_free_contract_stretch_passed" in full_eval_script
+    assert "raw_candidate_count" in full_eval_script
+    assert "raw_parseability_rate" in full_eval_script
+    assert "raw_parseability_gate_passed" in full_eval_script
+    assert "raw_schema_validity_gate_passed" in full_eval_script
+    assert "raw_repair_free_contract_gate_passed" in full_eval_script
+    assert '"validation_report": "outputs/validation_report.json"' in full_eval_script
+    assert '"audit_report": "outputs/audit.json"' in full_eval_script
+    assert '"sft_raw_vs_baseline": "outputs/sft_raw_vs_baseline.json"' in full_eval_script
+    assert '"dpo_raw_vs_sft": "outputs/dpo_raw_vs_sft.json"' in full_eval_script
+    assert '"rl_raw_vs_sft": "outputs/rl_raw_vs_sft.json"' in full_eval_script
+    assert "raw_parseability_count" in full_eval_script
+    assert "raw_generation_cap_hits" in full_eval_script
+    assert "raw_repair_free_contract_count" in full_eval_script
+    assert "raw_exact_identity_count" in full_eval_script
+    assert "raw_top_level_key_validity_count" in full_eval_script
+    assert "raw_compact_shape_count" in full_eval_script
     assert "training_eval_summary.json" in full_eval_script
+    assert "train contract-status outputs" in full_eval_script
+    assert "--sft-steps \"$SFT_MAX_STEPS\"" in full_eval_script
+    assert "--out outputs/contract_status.json" in full_eval_script
+    assert "--markdown-out outputs/contract_status.md" in full_eval_script
+    assert "contract_status.json" in package_readme
+    assert "contract_status.md" in package_readme
+    assert (
+        package_manifest["files"]["full_training_eval_resume_inspector"]
+        == "launch/inspect_full_training_eval_resume.sh"
+    )
+    assert "inspect_full_training_eval_resume" in launch_commands
+    assert "full_training_eval_resume_inspection.json" in package_readme
+    assert "full_training_eval_resume_inspection" in resume_inspector
+    assert 'REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"' in resume_inspector
+    assert 'SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"' in resume_inspector
+    assert 'DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"' in resume_inspector
+    assert 'PYTHON_BIN="${PYTHON_BIN:-python}"' in resume_inspector
+    assert "command -v python3" in resume_inspector
+    assert '"$PYTHON_BIN" - "$SFT_MAX_STEPS"' in resume_inspector
+    assert 'json.dumps(summary, indent=2, sort_keys=True) + "\\n"' in resume_inspector
+    assert '"sft": Path("outputs/semantic-mirror-sft")' in resume_inspector
+    assert 'manifest_max_steps == requested_steps[stage]' in resume_inspector
+    assert 'action = "reuse"' in resume_inspector
+    assert 'action = "resume"' in resume_inspector
+    assert 'action = "rerun"' in resume_inspector
+    assert 'action = "run"' in resume_inspector
+    assert '"resume_supported": stage in {"sft", "dpo"}' in resume_inspector
+    assert "stage action requested manifest checkpoint reason" in resume_inspector
     packaged_audit_text = (bundle_out / "audit" / "current_environment.json").read_text(
         encoding="utf-8"
     )
@@ -843,6 +2116,14 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         check["name"] == "python_version_supported_for_unsloth" and not check["passed"]
         for check in unsupported_python_audit["checks"]
     )
+    assert unsupported_python_audit["blocker"]["blocked"]
+    assert "python_version_supported_for_unsloth" in unsupported_python_audit["blocker"][
+        "failed_required_checks"
+    ]
+    assert any(
+        "outside the supported >=3.11,<3.14 range" in item
+        for item in unsupported_python_audit["blocker"]["summary"]
+    )
 
     failed_runtime_package = package_training_bundle(
         training_out,
@@ -862,6 +2143,15 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         platform_name="Windows",
     )
     assert not failed_audit["passed"]
+    assert failed_audit["blocker"]["blocked"]
+    assert "torch_cuda_available" in failed_audit["blocker"]["failed_required_checks"]
+    assert failed_audit["blocker"]["recommended_fallback"]
+    assert failed_audit["repro"]["audit_command"][:4] == [
+        "uv",
+        "run",
+        "semantic-mirror",
+        "train",
+    ]
     failed_launch = launch_training_job(
         training_out,
         stage="dpo",
@@ -1331,7 +2621,13 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         tmp_path / "rl_regressed_eval.json",
         stage="rl",
     )
+    dpo_comparison = compare_model_evaluations(
+        tmp_path / "sft_eval.json",
+        tmp_path / "sft_eval.json",
+        stage="dpo",
+    )
     assert sft_comparison["passed"]
+    assert dpo_comparison["passed"]
     assert not rl_comparison["passed"]
     rl_gates = {gate["name"]: gate for gate in rl_comparison["gates"]}
     assert not rl_gates["hallucination_penalties_not_increased"]["passed"]
@@ -1418,6 +2714,44 @@ def accuracy(logits, labels):
         for result in aggregate_model_eval["results"]
         if result["reference_found"]
     } == {"repo_a", "repo_b"}
+
+    stale_aggregate = tmp_path / "corpus" / "stale_aggregate"
+    shutil.copytree(aggregate, stale_aggregate)
+    stale_manifest = json.loads((stale_aggregate / "manifest.json").read_text(encoding="utf-8"))
+    for source_repo in stale_manifest["source_repos"]:
+        source_repo["path"] = str(tmp_path / "missing-host-path" / source_repo["repo_id"])
+    (stale_aggregate / "manifest.json").write_text(
+        json.dumps(stale_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    stale_silver = _read_jsonl(stale_aggregate / "silver.jsonl")
+    for record in stale_silver:
+        record["source_repo_path"] = str(tmp_path / "missing-host-path" / record["source_repo_id"])
+    _write_jsonl(stale_aggregate / "silver.jsonl", stale_silver)
+    stale_candidates_path = tmp_path / "stale_aggregate_candidates.jsonl"
+    _write_jsonl(
+        stale_candidates_path,
+        [
+            {
+                "dataset_record_id": record["record_id"],
+                "unit_id": record["unit_id"],
+                "source_repo_path": record["source_repo_path"],
+                "sir_unit": record["target"]["sir_unit"],
+            }
+            for record in stale_silver
+        ],
+    )
+    stale_model_eval = evaluate_model_candidates(
+        stale_aggregate,
+        stale_candidates_path,
+        model_name="aggregate-faithful-stale-paths",
+    )
+    assert stale_model_eval["passed"]
+    assert {
+        Path(result["source_repo_path"]).name
+        for result in stale_model_eval["results"]
+        if result["reference_found"]
+    } == {"000-first", "001-second"}
 
     teacher_request_path = tmp_path / "aggregate_teacher_requests.jsonl"
     teacher_response_path = tmp_path / "aggregate_teacher_responses.jsonl"
@@ -1518,6 +2852,8 @@ def _completed_study_answers(study_dir: Path) -> list[dict[str, object]]:
     for template in _read_jsonl(study_dir / "answers_template.jsonl"):
         record = dict(template)
         record["reviewer"] = "unit-test"
+        record["started_at"] = "2026-06-08T00:00:00+00:00"
+        record["completed_at"] = "2026-06-08T00:00:10+00:00"
         record["answer"] = "Reviewer found the expected source-backed behavior."
         record["correct"] = True
         record["acknowledged"] = record["task_type"] == "visibility_marker"
