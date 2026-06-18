@@ -1404,10 +1404,37 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
     collection_plan = status.get("collection_plan_status")
     if not isinstance(collection_plan, dict):
         collection_plan = {}
+    required_phase6_gates = status.get("required_phase6_gates")
+    if not isinstance(required_phase6_gates, dict):
+        required_phase6_gates = {}
+    metrics = status.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    coverage_reports = status.get("coverage_reports")
+    if not isinstance(coverage_reports, list):
+        coverage_reports = []
     return {
         "checked": status.get("checked", False),
         "passed": status.get("passed"),
         "summary": status.get("summary"),
+        "failed_phase6_gates": [
+            gate for gate, passed in required_phase6_gates.items() if not passed
+        ],
+        "total_real_timed_answer_records": metrics.get(
+            "total_real_timed_answer_records"
+        ),
+        "total_valid_answer_records": metrics.get("total_valid_answer_records"),
+        "coverage_reports": [
+            {
+                "path": report.get("path"),
+                "passed": report.get("passed"),
+                "pending_task_count": report.get("pending_task_count"),
+                "real_timed_answer_records": report.get("real_timed_answer_records"),
+                "failed_gates": report.get("failed_gates", []),
+            }
+            for report in coverage_reports
+            if isinstance(report, dict)
+        ],
         "collection_plan": {
             "checked": collection_plan.get("checked", False),
             "passed": collection_plan.get("passed"),

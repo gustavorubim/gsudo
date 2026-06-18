@@ -1388,6 +1388,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["human_usefulness_summary"]["collection_plan"][
         "required_total_answer_records"
     ] == 108
+    assert cli_stdout["human_usefulness_summary"]["failed_phase6_gates"] == []
+    assert cli_stdout["human_usefulness_summary"]["coverage_reports"][0][
+        "passed"
+    ] is False
+    assert cli_stdout["human_usefulness_summary"]["coverage_reports"][0][
+        "pending_task_count"
+    ] == 108
+    assert cli_stdout["human_usefulness_summary"]["coverage_reports"][0][
+        "real_timed_answer_records"
+    ] == 0
+    assert cli_stdout["human_usefulness_summary"]["coverage_reports"][0][
+        "failed_gates"
+    ] == ["answer_task_id_coverage", "real_timed_reviewer_logs"]
     assert cli_stdout["stage_recovery_summary"]["sft"]["action"] == "reuse"
     assert cli_stdout["stage_recovery_summary"]["sft"]["manifest_max_steps"] == 300
     assert cli_stdout["stage_recovery_summary"]["dpo"]["action"] == "resume"
