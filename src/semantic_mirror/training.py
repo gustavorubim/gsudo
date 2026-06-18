@@ -612,6 +612,79 @@ def launch_training_job(
     return report
 
 
+def inspect_full_training_eval_resume(
+    run_dir: Path | str,
+    *,
+    sft_steps: int | None = None,
+    dpo_steps: int | None = None,
+    rl_steps: int | None = None,
+    reuse_stage_outputs: bool = False,
+    sft_resume_from_checkpoint: Path | str | None = None,
+    dpo_resume_from_checkpoint: Path | str | None = None,
+    sft_save_steps: int = 10,
+    dpo_save_steps: int = 10,
+    sft_save_total_limit: int = 3,
+    dpo_save_total_limit: int = 3,
+    out_path: Path | str | None = None,
+    markdown_out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Preview full-eval stage reuse/resume decisions without launching training."""
+
+    run = Path(run_dir)
+    requested_steps = {
+        "sft": sft_steps,
+        "dpo": dpo_steps,
+        "rl": rl_steps,
+    }
+    resume_from_checkpoint = {
+        "sft": Path(sft_resume_from_checkpoint) if sft_resume_from_checkpoint else None,
+        "dpo": Path(dpo_resume_from_checkpoint) if dpo_resume_from_checkpoint else None,
+        "rl": None,
+    }
+    stage_dirs = {
+        "sft": run / "semantic-mirror-sft",
+        "dpo": run / "semantic-mirror-dpo",
+        "rl": run / "semantic-mirror-rl",
+    }
+    decisions = {
+        stage: _full_eval_resume_stage_decision(
+            stage=stage,
+            stage_dir=stage_dir,
+            requested_max_steps=requested_steps[stage],
+            reuse_stage_outputs=reuse_stage_outputs,
+            resume_from_checkpoint=resume_from_checkpoint[stage],
+        )
+        for stage, stage_dir in stage_dirs.items()
+    }
+    manifest = {
+        "mode": "full_training_eval_resume_inspection",
+        "training_version": TRAINING_VERSION,
+        "run_dir": str(run),
+        "generated_at": _now(),
+        "requested_max_steps": requested_steps,
+        "reuse_stage_outputs_enabled": reuse_stage_outputs,
+        "checkpoint_policy": {
+            "sft_save_steps": sft_save_steps,
+            "dpo_save_steps": dpo_save_steps,
+            "sft_save_total_limit": sft_save_total_limit,
+            "dpo_save_total_limit": dpo_save_total_limit,
+        },
+        "decisions": decisions,
+        "files": {
+            "json": str(out_path) if out_path is not None else None,
+            "markdown": str(markdown_out_path) if markdown_out_path is not None else None,
+        },
+    }
+    if out_path is not None:
+        _write_optional_report(manifest, out_path)
+    if markdown_out_path is not None:
+        Path(markdown_out_path).write_text(
+            _full_eval_resume_inspection_markdown(manifest),
+            encoding="utf-8",
+        )
+    return manifest
+
+
 def package_training_bundle(
     training_path: Path | str,
     out_path: Path | str,
@@ -3025,108 +3098,28 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 mkdir -p outputs
-"$PYTHON_BIN" - "$SFT_MAX_STEPS" "$DPO_MAX_STEPS" "$RL_MAX_STEPS" "$REUSE_STAGE_OUTPUTS" "$SFT_RESUME_FROM_CHECKPOINT" "$DPO_RESUME_FROM_CHECKPOINT" "$SFT_SAVE_STEPS" "$DPO_SAVE_STEPS" "$SFT_SAVE_TOTAL_LIMIT" "$DPO_SAVE_TOTAL_LIMIT" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-requested_steps = {
-    "sft": int(sys.argv[1]),
-    "dpo": int(sys.argv[2]),
-    "rl": int(sys.argv[3]),
-}
-reuse_enabled = sys.argv[4] == "1"
-resume_from_checkpoint = {
-    "sft": sys.argv[5] or None,
-    "dpo": sys.argv[6] or None,
-    "rl": None,
-}
-checkpoint_policy = {
-    "sft_save_steps": int(sys.argv[7]),
-    "dpo_save_steps": int(sys.argv[8]),
-    "sft_save_total_limit": int(sys.argv[9]),
-    "dpo_save_total_limit": int(sys.argv[10]),
-}
-stage_dirs = {
-    "sft": Path("outputs/semantic-mirror-sft"),
-    "dpo": Path("outputs/semantic-mirror-dpo"),
-    "rl": Path("outputs/semantic-mirror-rl"),
-}
-
-def load_manifest(stage, stage_dir):
-    manifest_path = stage_dir / "training_stage_manifest.json"
-    if not manifest_path.exists():
-        return None, manifest_path, None
-    try:
-        return json.loads(manifest_path.read_text(encoding="utf-8")), manifest_path, None
-    except Exception as exc:  # pragma: no cover - defensive for operator-created files
-        return None, manifest_path, f"{type(exc).__name__}: {exc}"
-
-def checkpoint_status(path_text):
-    if not path_text:
-        return {"path": None, "exists": None}
-    path = Path(path_text)
-    return {"path": path_text, "exists": path.exists(), "is_dir": path.is_dir()}
-
-decisions = {}
-for stage, stage_dir in stage_dirs.items():
-    manifest, manifest_path, manifest_error = load_manifest(stage, stage_dir)
-    manifest_max_steps = manifest.get("max_steps") if isinstance(manifest, dict) else None
-    manifest_matches = manifest_max_steps == requested_steps[stage]
-    reuse = reuse_enabled and manifest_matches
-    resume_status = checkpoint_status(resume_from_checkpoint[stage])
-    if reuse:
-        action = "reuse"
-        reason = "manifest max_steps matches requested cap"
-    elif resume_status["path"]:
-        action = "resume"
-        reason = "resume checkpoint provided"
-    elif manifest is None:
-        action = "run"
-        reason = "no completed stage manifest"
-    else:
-        action = "rerun"
-        reason = "manifest max_steps does not match requested cap"
-    decisions[stage] = {
-        "action": action,
-        "reason": reason,
-        "stage_dir": str(stage_dir),
-        "manifest_path": str(manifest_path),
-        "manifest_exists": manifest_path.exists(),
-        "manifest_read_error": manifest_error,
-        "manifest_max_steps": manifest_max_steps,
-        "requested_max_steps": requested_steps[stage],
-        "manifest_matches_requested_max_steps": manifest_matches,
-        "reuse_stage_outputs_enabled": reuse_enabled,
-        "resume_from_checkpoint": resume_status,
-        "resume_supported": stage in {"sft", "dpo"},
-    }
-
-summary = {
-    "mode": "full_training_eval_resume_inspection",
-    "requested_max_steps": requested_steps,
-    "reuse_stage_outputs_enabled": reuse_enabled,
-    "checkpoint_policy": checkpoint_policy,
-    "decisions": decisions,
-}
-out = Path("outputs/full_training_eval_resume_inspection.json")
-out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-
-print("stage action requested manifest checkpoint reason")
-for stage in ("sft", "dpo", "rl"):
-    item = decisions[stage]
-    checkpoint = item["resume_from_checkpoint"]["path"] or "-"
-    exists = item["resume_from_checkpoint"]["exists"]
-    if exists is True:
-        checkpoint = f"{checkpoint}:exists"
-    elif exists is False:
-        checkpoint = f"{checkpoint}:missing"
-    print(
-        f"{stage} {item['action']} {item['requested_max_steps']} "
-        f"{item['manifest_max_steps']} {checkpoint} {item['reason']}"
-    )
-print(f"wrote {out}")
-PY
+inspect_args=(
+  train inspect-resume outputs
+  --sft-steps "$SFT_MAX_STEPS"
+  --dpo-steps "$DPO_MAX_STEPS"
+  --rl-steps "$RL_MAX_STEPS"
+  --sft-save-steps "$SFT_SAVE_STEPS"
+  --dpo-save-steps "$DPO_SAVE_STEPS"
+  --sft-save-total-limit "$SFT_SAVE_TOTAL_LIMIT"
+  --dpo-save-total-limit "$DPO_SAVE_TOTAL_LIMIT"
+  --out outputs/full_training_eval_resume_inspection.json
+  --markdown-out outputs/full_training_eval_resume_inspection.md
+)
+if [[ "$REUSE_STAGE_OUTPUTS" == "1" ]]; then
+  inspect_args+=(--reuse-stage-outputs)
+fi
+if [[ -n "$SFT_RESUME_FROM_CHECKPOINT" ]]; then
+  inspect_args+=(--sft-resume-from-checkpoint "$SFT_RESUME_FROM_CHECKPOINT")
+fi
+if [[ -n "$DPO_RESUME_FROM_CHECKPOINT" ]]; then
+  inspect_args+=(--dpo-resume-from-checkpoint "$DPO_RESUME_FROM_CHECKPOINT")
+fi
+PYTHONPATH=src "$PYTHON_BIN" -m semantic_mirror.cli "${inspect_args[@]}"
 """,
     }
     for name, content in scripts.items():
@@ -8144,6 +8137,85 @@ def _resume_inspection_contract_status(path: Path) -> dict[str, Any]:
             for stage in ("sft", "dpo", "rl")
         },
     }
+
+
+def _full_eval_resume_stage_decision(
+    *,
+    stage: str,
+    stage_dir: Path,
+    requested_max_steps: int | None,
+    reuse_stage_outputs: bool,
+    resume_from_checkpoint: Path | None,
+) -> dict[str, Any]:
+    manifest_path = stage_dir / "training_stage_manifest.json"
+    manifest = _read_json_file(manifest_path)
+    manifest_error = None
+    if manifest_path.exists() and not isinstance(manifest, dict):
+        manifest_error = "manifest is missing or not a JSON object"
+    manifest_max_steps = manifest.get("max_steps") if isinstance(manifest, dict) else None
+    manifest_matches = (
+        requested_max_steps is not None and manifest_max_steps == requested_max_steps
+    )
+    checkpoint = _resume_checkpoint_status(resume_from_checkpoint)
+    if reuse_stage_outputs and manifest_matches:
+        action = "reuse"
+        reason = "manifest max_steps matches requested cap"
+    elif checkpoint["path"]:
+        action = "resume"
+        reason = "resume checkpoint provided"
+    elif manifest is None:
+        action = "run"
+        reason = "no completed stage manifest"
+    else:
+        action = "rerun"
+        reason = "manifest max_steps does not match requested cap"
+    return {
+        "action": action,
+        "reason": reason,
+        "stage_dir": str(stage_dir),
+        "manifest_path": str(manifest_path),
+        "manifest_exists": manifest_path.exists(),
+        "manifest_read_error": manifest_error,
+        "manifest_max_steps": manifest_max_steps,
+        "requested_max_steps": requested_max_steps,
+        "manifest_matches_requested_max_steps": manifest_matches,
+        "reuse_stage_outputs_enabled": reuse_stage_outputs,
+        "resume_from_checkpoint": checkpoint,
+        "resume_supported": stage in {"sft", "dpo"},
+    }
+
+
+def _resume_checkpoint_status(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {"path": None, "exists": None}
+    return {"path": str(path), "exists": path.exists(), "is_dir": path.is_dir()}
+
+
+def _full_eval_resume_inspection_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# Semantic Mirror Full-Eval Resume Inspection",
+        "",
+        f"- Run directory: `{report['run_dir']}`",
+        f"- Reuse stage outputs: `{report['reuse_stage_outputs_enabled']}`",
+        "",
+        "| Stage | Action | Requested Steps | Manifest Steps | Checkpoint | Reason |",
+        "| --- | --- | ---: | ---: | --- | --- |",
+    ]
+    decisions = report["decisions"]
+    for stage in ("sft", "dpo", "rl"):
+        decision = decisions[stage]
+        checkpoint = decision["resume_from_checkpoint"]["path"] or "None"
+        exists = decision["resume_from_checkpoint"]["exists"]
+        if exists is True:
+            checkpoint = f"{checkpoint}:exists"
+        elif exists is False:
+            checkpoint = f"{checkpoint}:missing"
+        lines.append(
+            f"| `{stage}` | `{decision['action']}` | "
+            f"{decision['requested_max_steps']} | {decision['manifest_max_steps']} | "
+            f"`{checkpoint}` | `{decision['reason']}` |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _training_diagnostics_markdown(summary: dict[str, Any]) -> str:

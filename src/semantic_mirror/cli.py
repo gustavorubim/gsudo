@@ -43,6 +43,7 @@ from semantic_mirror.training import (
     create_sample_inspection,
     generate_training_diagnostics,
     generate_training_package_source_freshness,
+    inspect_full_training_eval_resume,
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
@@ -358,6 +359,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
         return 0 if manifest["passed"] else 1
+    elif args.command == "train" and args.train_command == "inspect-resume":
+        manifest = inspect_full_training_eval_resume(
+            Path(args.run_dir),
+            sft_steps=args.sft_steps,
+            dpo_steps=args.dpo_steps,
+            rl_steps=args.rl_steps,
+            reuse_stage_outputs=args.reuse_stage_outputs,
+            sft_resume_from_checkpoint=args.sft_resume_from_checkpoint,
+            dpo_resume_from_checkpoint=args.dpo_resume_from_checkpoint,
+            sft_save_steps=args.sft_save_steps,
+            dpo_save_steps=args.dpo_save_steps,
+            sft_save_total_limit=args.sft_save_total_limit,
+            dpo_save_total_limit=args.dpo_save_total_limit,
+            out_path=Path(args.out) if args.out is not None else None,
+            markdown_out_path=Path(args.markdown_out) if args.markdown_out is not None else None,
+        )
+        print(json.dumps(_summary(manifest), indent=2, sort_keys=True))
+        return 0
     elif args.command == "train" and args.train_command == "inspect-samples":
         manifest = create_sample_inspection(
             Path(args.dataset),
@@ -851,6 +870,38 @@ def _parser() -> argparse.ArgumentParser:
     contract_status.add_argument("--out", help="Optional JSON status report output path.")
     contract_status.add_argument("--markdown-out", help="Optional Markdown status report output path.")
 
+    inspect_resume = train_subparsers.add_parser(
+        "inspect-resume",
+        help="Preview full-eval stage reuse and resume decisions without launching training.",
+    )
+    inspect_resume.add_argument("run_dir", help="Full-eval outputs directory.")
+    inspect_resume.add_argument("--sft-steps", type=int, help="Expected SFT max_steps.")
+    inspect_resume.add_argument("--dpo-steps", type=int, help="Expected DPO max_steps.")
+    inspect_resume.add_argument("--rl-steps", type=int, help="Expected RL max_steps.")
+    inspect_resume.add_argument(
+        "--reuse-stage-outputs",
+        action="store_true",
+        help="Reuse stages whose manifest max_steps already matches the requested cap.",
+    )
+    inspect_resume.add_argument("--sft-resume-from-checkpoint", help="Optional SFT checkpoint path.")
+    inspect_resume.add_argument("--dpo-resume-from-checkpoint", help="Optional DPO checkpoint path.")
+    inspect_resume.add_argument("--sft-save-steps", type=int, default=10, help="SFT checkpoint interval.")
+    inspect_resume.add_argument("--dpo-save-steps", type=int, default=10, help="DPO checkpoint interval.")
+    inspect_resume.add_argument(
+        "--sft-save-total-limit",
+        type=int,
+        default=3,
+        help="Maximum retained SFT checkpoints.",
+    )
+    inspect_resume.add_argument(
+        "--dpo-save-total-limit",
+        type=int,
+        default=3,
+        help="Maximum retained DPO checkpoints.",
+    )
+    inspect_resume.add_argument("--out", help="Optional JSON output path.")
+    inspect_resume.add_argument("--markdown-out", help="Optional Markdown output path.")
+
     inspect_samples = train_subparsers.add_parser(
         "inspect-samples",
         help="Build raw-vs-repaired sample eval and inspection artifacts.",
@@ -1186,6 +1237,24 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "requested_max_steps": manifest["requested_max_steps"],
             "remaining_items": manifest["remaining_items"],
             "gates": manifest["gates"],
+        }
+    if manifest.get("mode") == "full_training_eval_resume_inspection":
+        return {
+            "mode": manifest["mode"],
+            "run_dir": manifest["run_dir"],
+            "requested_max_steps": manifest["requested_max_steps"],
+            "reuse_stage_outputs_enabled": manifest["reuse_stage_outputs_enabled"],
+            "decisions": {
+                stage: {
+                    "action": decision["action"],
+                    "reason": decision["reason"],
+                    "manifest_max_steps": decision["manifest_max_steps"],
+                    "checkpoint": decision["resume_from_checkpoint"]["path"],
+                    "checkpoint_exists": decision["resume_from_checkpoint"]["exists"],
+                }
+                for stage, decision in manifest["decisions"].items()
+            },
+            "files": manifest["files"],
         }
     if manifest.get("mode") in {
         "teacher_export",

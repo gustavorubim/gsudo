@@ -44,6 +44,7 @@ from semantic_mirror.training import (
     create_sample_inspection,
     generate_training_diagnostics,
     generate_training_package_source_freshness,
+    inspect_full_training_eval_resume,
     launch_training_job,
     package_training_bundle,
     prepare_training_data,
@@ -1439,6 +1440,81 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert summarize_full_eval_contract_status(run)["passed"]
 
 
+def test_inspect_full_eval_resume_cli_reports_safe_stage_decisions(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "outputs"
+    sft = run / "semantic-mirror-sft"
+    dpo = run / "semantic-mirror-dpo"
+    rl = run / "semantic-mirror-rl"
+    sft.mkdir(parents=True)
+    dpo.mkdir(parents=True)
+    rl.mkdir(parents=True)
+    (sft / "training_stage_manifest.json").write_text(
+        json.dumps({"stage": "sft", "max_steps": 300}) + "\n",
+        encoding="utf-8",
+    )
+    (dpo / "training_stage_manifest.json").write_text(
+        json.dumps({"stage": "dpo", "max_steps": 10}) + "\n",
+        encoding="utf-8",
+    )
+    (dpo / "checkpoint-10").mkdir()
+    report = inspect_full_training_eval_resume(
+        run,
+        sft_steps=300,
+        dpo_steps=120,
+        rl_steps=120,
+        reuse_stage_outputs=True,
+        dpo_resume_from_checkpoint=dpo / "checkpoint-10",
+        out_path=tmp_path / "resume.json",
+        markdown_out_path=tmp_path / "resume.md",
+    )
+    assert report["decisions"]["sft"]["action"] == "reuse"
+    assert report["decisions"]["dpo"]["action"] == "resume"
+    assert report["decisions"]["dpo"]["resume_from_checkpoint"]["exists"] is True
+    assert report["decisions"]["rl"]["action"] == "run"
+    resume_markdown = (tmp_path / "resume.md").read_text(encoding="utf-8")
+    assert "# Semantic Mirror Full-Eval Resume Inspection" in resume_markdown
+    assert "| `dpo` | `resume` | 120 | 10 |" in resume_markdown
+
+    cli_json = tmp_path / "resume_cli.json"
+    cli_markdown = tmp_path / "resume_cli.md"
+    cli_status = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "train",
+            "inspect-resume",
+            str(run),
+            "--sft-steps",
+            "300",
+            "--dpo-steps",
+            "120",
+            "--rl-steps",
+            "120",
+            "--reuse-stage-outputs",
+            "--dpo-resume-from-checkpoint",
+            str(dpo / "checkpoint-10"),
+            "--out",
+            str(cli_json),
+            "--markdown-out",
+            str(cli_markdown),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cli_status.returncode == 0, cli_status.stderr
+    cli_report = json.loads(cli_json.read_text(encoding="utf-8"))
+    assert cli_report["decisions"]["sft"]["action"] == "reuse"
+    assert cli_report["decisions"]["dpo"]["action"] == "resume"
+    assert cli_report["decisions"]["rl"]["action"] == "run"
+    assert "full_training_eval_resume_inspection" in cli_status.stdout
+    assert cli_markdown.exists()
+
+
 def test_diff_marks_changed_units_and_preserves_context(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     out = tmp_path / "mirror-diff"
@@ -2615,16 +2691,15 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert 'DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"' in resume_inspector
     assert 'PYTHON_BIN="${PYTHON_BIN:-python}"' in resume_inspector
     assert "command -v python3" in resume_inspector
-    assert '"$PYTHON_BIN" - "$SFT_MAX_STEPS"' in resume_inspector
-    assert 'json.dumps(summary, indent=2, sort_keys=True) + "\\n"' in resume_inspector
-    assert '"sft": Path("outputs/semantic-mirror-sft")' in resume_inspector
-    assert 'manifest_max_steps == requested_steps[stage]' in resume_inspector
-    assert 'action = "reuse"' in resume_inspector
-    assert 'action = "resume"' in resume_inspector
-    assert 'action = "rerun"' in resume_inspector
-    assert 'action = "run"' in resume_inspector
-    assert '"resume_supported": stage in {"sft", "dpo"}' in resume_inspector
-    assert "stage action requested manifest checkpoint reason" in resume_inspector
+    assert "train inspect-resume outputs" in resume_inspector
+    assert "--sft-steps \"$SFT_MAX_STEPS\"" in resume_inspector
+    assert "--dpo-steps \"$DPO_MAX_STEPS\"" in resume_inspector
+    assert "--rl-steps \"$RL_MAX_STEPS\"" in resume_inspector
+    assert "--out outputs/full_training_eval_resume_inspection.json" in resume_inspector
+    assert "--markdown-out outputs/full_training_eval_resume_inspection.md" in resume_inspector
+    assert "inspect_args+=(--reuse-stage-outputs)" in resume_inspector
+    assert 'inspect_args+=(--dpo-resume-from-checkpoint "$DPO_RESUME_FROM_CHECKPOINT")' in resume_inspector
+    assert 'PYTHONPATH=src "$PYTHON_BIN" -m semantic_mirror.cli "${inspect_args[@]}"' in resume_inspector
     packaged_audit_text = (bundle_out / "audit" / "current_environment.json").read_text(
         encoding="utf-8"
     )
