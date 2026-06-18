@@ -6621,8 +6621,13 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Passed: `{windows_readiness.get('passed')}`",
             f"- Summary: {windows_readiness.get('summary')}",
             f"- Native audit path: `{windows_readiness.get('windows_audit_path')}`",
+            f"- Native audit command: `{json.dumps(windows_readiness.get('native_audit_command'), sort_keys=True)}`",
+            f"- Native Python executable: `{windows_readiness.get('native_python_executable')}`",
+            f"- Native Python version: `{windows_readiness.get('native_python_version')}`",
+            f"- Native platform: `{windows_readiness.get('native_platform')}`",
             f"- Native passed: `{windows_readiness.get('native_passed')}`",
             f"- Native blocked: `{windows_readiness.get('native_blocked')}`",
+            f"- Native blocker summary: `{'; '.join(windows_readiness.get('native_blocker_summary') or []) or 'None'}`",
             f"- WSL smoke manifest path: `{windows_readiness.get('wsl_smoke_manifest_path')}`",
             f"- WSL smoke manifest mode: `{windows_readiness.get('wsl_smoke_manifest_mode')}`",
             f"- WSL smoke complete: `{windows_readiness.get('wsl_smoke_complete')}`",
@@ -7667,6 +7672,11 @@ def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any
             "native_failed_required_checks", []
         ),
         "native_recommended_fallback": status.get("native_recommended_fallback"),
+        "native_blocker_summary": status.get("native_blocker_summary", []),
+        "native_python_executable": status.get("native_python_executable"),
+        "native_python_version": status.get("native_python_version"),
+        "native_platform": status.get("native_platform"),
+        "native_audit_command": status.get("native_audit_command"),
         "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_failed_checks": status.get("wsl_failed_checks", []),
@@ -8027,6 +8037,9 @@ def _windows_readiness_contract_status(
         and isinstance(audit.get("blocker"), dict)
         and audit["blocker"].get("blocked")
     )
+    native_blocker = audit.get("blocker", {}) if isinstance(audit, dict) else {}
+    native_environment = audit.get("environment", {}) if isinstance(audit, dict) else {}
+    native_repro = audit.get("repro", {}) if isinstance(audit, dict) else {}
     wsl_checked = isinstance(smoke, dict)
     stages = smoke.get("stages", {}) if isinstance(smoke, dict) else {}
     samples = smoke.get("samples", {}) if isinstance(smoke, dict) else {}
@@ -8085,13 +8098,38 @@ def _windows_readiness_contract_status(
         "native_passed": native_passed,
         "native_blocked": native_blocked,
         "native_failed_required_checks": (
-            audit.get("blocker", {}).get("failed_required_checks", [])
-            if isinstance(audit, dict)
+            native_blocker.get("failed_required_checks", [])
+            if isinstance(native_blocker, dict)
             else []
         ),
         "native_recommended_fallback": (
-            audit.get("blocker", {}).get("recommended_fallback")
-            if isinstance(audit, dict)
+            native_blocker.get("recommended_fallback")
+            if isinstance(native_blocker, dict)
+            else None
+        ),
+        "native_blocker_summary": (
+            native_blocker.get("summary", [])
+            if isinstance(native_blocker, dict)
+            else []
+        ),
+        "native_python_executable": (
+            native_environment.get("python_executable")
+            if isinstance(native_environment, dict)
+            else None
+        ),
+        "native_python_version": (
+            native_environment.get("python_version")
+            if isinstance(native_environment, dict)
+            else None
+        ),
+        "native_platform": (
+            native_environment.get("platform")
+            if isinstance(native_environment, dict)
+            else None
+        ),
+        "native_audit_command": (
+            native_repro.get("audit_command")
+            if isinstance(native_repro, dict)
             else None
         ),
         "wsl_checked": wsl_checked,

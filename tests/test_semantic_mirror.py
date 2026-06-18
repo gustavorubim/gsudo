@@ -1077,6 +1077,24 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
                     "blocked": True,
                     "failed_required_checks": ["torch_cuda_available"],
                     "recommended_fallback": "Use WSL CUDA.",
+                    "summary": [
+                        "PyTorch CUDA is not available for the audited runtime.",
+                    ],
+                },
+                "environment": {
+                    "platform": "Windows",
+                    "python_executable": "C:/repo/.venv/Scripts/python.exe",
+                    "python_version": "3.14.0",
+                },
+                "repro": {
+                    "audit_command": [
+                        "uv",
+                        "run",
+                        "semantic-mirror",
+                        "train",
+                        "audit",
+                        "training",
+                    ],
                 },
             },
             sort_keys=True,
@@ -1112,6 +1130,22 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert readiness_status["windows_readiness_status"]["checked"]
     assert readiness_status["windows_readiness_status"]["native_blocked"]
+    assert readiness_status["windows_readiness_status"]["native_python_executable"] == (
+        "C:/repo/.venv/Scripts/python.exe"
+    )
+    assert readiness_status["windows_readiness_status"]["native_python_version"] == "3.14.0"
+    assert readiness_status["windows_readiness_status"]["native_platform"] == "Windows"
+    assert readiness_status["windows_readiness_status"]["native_audit_command"] == [
+        "uv",
+        "run",
+        "semantic-mirror",
+        "train",
+        "audit",
+        "training",
+    ]
+    assert readiness_status["windows_readiness_status"]["native_blocker_summary"] == [
+        "PyTorch CUDA is not available for the audited runtime.",
+    ]
     assert readiness_status["windows_readiness_status"]["wsl_smoke_complete"]
     assert readiness_status["windows_readiness_status"]["wsl_failed_checks"] == []
     assert readiness_status["windows_readiness_status"]["wsl_smoke_manifest_mode"] == (
@@ -1488,6 +1522,22 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["windows_readiness_summary"][
         "native_recommended_fallback"
     ] == "Use WSL CUDA."
+    assert cli_stdout["windows_readiness_summary"]["native_python_executable"] == (
+        "C:/repo/.venv/Scripts/python.exe"
+    )
+    assert cli_stdout["windows_readiness_summary"]["native_python_version"] == "3.14.0"
+    assert cli_stdout["windows_readiness_summary"]["native_platform"] == "Windows"
+    assert cli_stdout["windows_readiness_summary"]["native_audit_command"] == [
+        "uv",
+        "run",
+        "semantic-mirror",
+        "train",
+        "audit",
+        "training",
+    ]
+    assert cli_stdout["windows_readiness_summary"]["native_blocker_summary"] == [
+        "PyTorch CUDA is not available for the audited runtime.",
+    ]
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
     assert cli_stdout["windows_readiness_summary"]["wsl_failed_checks"] == []
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
@@ -1659,6 +1709,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_status_json["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
+    assert cli_status_json["windows_readiness_status"]["native_python_version"] == "3.14.0"
+    assert cli_status_json["windows_readiness_status"]["native_blocker_summary"] == [
+        "PyTorch CUDA is not available for the audited runtime.",
+    ]
     assert cli_status_json["package_source_summary"]["passed"] is True
     assert cli_status_json["package_source_summary"]["mismatched_file_count"] == 0
     assert cli_status_json["package_source_summary"][
@@ -1724,6 +1778,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
     assert "## Windows Readiness" in contract_status_md
+    assert "Native Python executable: `C:/repo/.venv/Scripts/python.exe`" in contract_status_md
+    assert "Native Python version: `3.14.0`" in contract_status_md
+    assert "Native platform: `Windows`" in contract_status_md
+    assert "Native blocker summary: `PyTorch CUDA is not available" in contract_status_md
     assert "WSL smoke manifest mode: `smoke_chain`" in contract_status_md
     assert "WSL failed checks: `None`" in contract_status_md
     assert "WSL missing stage manifests: `None`" in contract_status_md
