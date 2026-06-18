@@ -1414,6 +1414,11 @@ def summarize_full_eval_contract_status(
         package_command_manifest_status=package_command_manifest_status,
     )
     remaining_by_area = _remaining_by_area(remaining_items)
+    ordered_execution_plan = _ordered_execution_plan_summary(
+        next_actions,
+        windows_readiness_status=windows_readiness_status,
+        resume_inspection_status=resume_inspection_status,
+    )
     report = {
         "mode": "full_eval_contract_status",
         "training_version": TRAINING_VERSION,
@@ -1462,12 +1467,11 @@ def summarize_full_eval_contract_status(
             human_usefulness_status
         ),
         "next_actions": next_actions,
-        "next_action_summary": _next_actions_contract_summary(next_actions),
-        "ordered_execution_plan": _ordered_execution_plan_summary(
+        "next_action_summary": _next_actions_contract_summary(
             next_actions,
-            windows_readiness_status=windows_readiness_status,
-            resume_inspection_status=resume_inspection_status,
+            ordered_execution_plan=ordered_execution_plan,
         ),
+        "ordered_execution_plan": ordered_execution_plan,
         "remaining_items": remaining_items,
         "remaining_by_area": remaining_by_area,
         "remaining_area_summary": _remaining_area_summary(
@@ -9071,7 +9075,11 @@ def _finalize_command_input_summary(
     }
 
 
-def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, Any]:
+def _next_actions_contract_summary(
+    actions: list[dict[str, Any]],
+    *,
+    ordered_execution_plan: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     command_counts: dict[str, int] = {}
     command_category_counts: dict[str, int] = {}
     blocked_stage_command_matrix: dict[str, dict[str, dict[str, int]]] = {}
@@ -9129,10 +9137,23 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
                 stage_command_counts["launches_training_count"] += 1
             else:
                 stage_command_counts["non_training_count"] += 1
+    ready_summary = _ready_next_action_summary(ordered_execution_plan or {})
     return {
         "total_items": len(actions),
         "launches_training_count": launches_training_count,
         "non_training_count": non_training_count,
+        "ready_action_count": ready_summary["ready_action_count"],
+        "ready_training_action_count": ready_summary["ready_training_action_count"],
+        "ready_non_training_action_count": ready_summary[
+            "ready_non_training_action_count"
+        ],
+        "ready_command_counts": ready_summary["ready_command_counts"],
+        "ready_training_command_counts": ready_summary[
+            "ready_training_command_counts"
+        ],
+        "ready_non_training_command_counts": ready_summary[
+            "ready_non_training_command_counts"
+        ],
         "missing_command_metadata_count": missing_command_metadata_count,
         "required_input_action_count": required_input_action_count,
         "optional_input_action_count": optional_input_action_count,
@@ -9156,6 +9177,56 @@ def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, A
                 for command in sorted(blocked_stage_command_matrix[stage])
             }
             for stage in sorted(blocked_stage_command_matrix)
+        },
+    }
+
+
+def _ready_next_action_summary(
+    ordered_execution_plan: dict[str, Any],
+) -> dict[str, Any]:
+    ready_command_counts: dict[str, int] = {}
+    ready_training_command_counts: dict[str, int] = {}
+    ready_non_training_command_counts: dict[str, int] = {}
+    ready_action_count = 0
+    ready_training_action_count = 0
+    ready_non_training_action_count = 0
+    items = ordered_execution_plan.get("items")
+    if not isinstance(items, list):
+        items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("execution_state") not in {"ready", "ready_after_inputs"}:
+            continue
+        command_name = str(item.get("command_name") or "unknown")
+        ready_action_count += 1
+        ready_command_counts[command_name] = (
+            ready_command_counts.get(command_name, 0) + 1
+        )
+        if item.get("launches_training") is True:
+            ready_training_action_count += 1
+            ready_training_command_counts[command_name] = (
+                ready_training_command_counts.get(command_name, 0) + 1
+            )
+        else:
+            ready_non_training_action_count += 1
+            ready_non_training_command_counts[command_name] = (
+                ready_non_training_command_counts.get(command_name, 0) + 1
+            )
+    return {
+        "ready_action_count": ready_action_count,
+        "ready_training_action_count": ready_training_action_count,
+        "ready_non_training_action_count": ready_non_training_action_count,
+        "ready_command_counts": {
+            key: ready_command_counts[key] for key in sorted(ready_command_counts)
+        },
+        "ready_training_command_counts": {
+            key: ready_training_command_counts[key]
+            for key in sorted(ready_training_command_counts)
+        },
+        "ready_non_training_command_counts": {
+            key: ready_non_training_command_counts[key]
+            for key in sorted(ready_non_training_command_counts)
         },
     }
 
