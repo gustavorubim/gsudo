@@ -2720,18 +2720,54 @@ elif not dataset.is_dir():
 manifest = dataset / "manifest.json"
 if not manifest.exists():
     issues.append(f"held_out_dataset missing manifest.json: {manifest}")
+else:
+    try:
+        manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception as exc:
+        issues.append(f"held_out_dataset manifest.json is invalid JSON: {exc}")
+        manifest_data = {}
+    files = manifest_data.get("files", {}) if isinstance(manifest_data, dict) else {}
+    for key in ("gold", "silver", "hard_negative"):
+        rel = files.get(key)
+        if not isinstance(rel, str) or not rel:
+            issues.append(f"held_out_dataset manifest missing files.{key}")
+        elif not (dataset / rel).exists():
+            issues.append(f"held_out_dataset manifest files.{key} missing path: {dataset / rel}")
+baseline_rows = []
+identifier_rows = 0
 if not baseline.exists():
     issues.append(f"baseline_candidates does not exist: {baseline}")
 elif not baseline.is_file():
     issues.append(f"baseline_candidates is not a file: {baseline}")
 elif baseline.stat().st_size == 0:
     issues.append(f"baseline_candidates is empty: {baseline}")
+else:
+    for line_number, line in enumerate(baseline.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except Exception as exc:
+            issues.append(f"baseline_candidates line {line_number} is invalid JSON: {exc}")
+            continue
+        if not isinstance(row, dict):
+            issues.append(f"baseline_candidates line {line_number} is not a JSON object")
+            continue
+        baseline_rows.append(row)
+        if any(row.get(key) for key in ("dataset_record_id", "record_id", "unit_id")):
+            identifier_rows += 1
+    if not baseline_rows:
+        issues.append(f"baseline_candidates has no JSONL records: {baseline}")
+    elif identifier_rows == 0:
+        issues.append("baseline_candidates has no dataset_record_id, record_id, or unit_id values")
 report = {
     "mode": "full_eval_input_preflight",
     "passed": not issues,
     "held_out_dataset": str(dataset),
     "held_out_manifest": str(manifest),
     "baseline_candidates": str(baseline),
+    "baseline_candidate_records": len(baseline_rows),
+    "baseline_candidate_identifier_records": identifier_rows,
     "issues": issues,
 }
 out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
@@ -2764,6 +2800,23 @@ if ($issues.Count -eq 0) {
   $manifest = Join-Path $datasetPath "manifest.json"
   if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
     $issues.Add("held_out_dataset missing manifest.json: $manifest")
+  } else {
+    try {
+      $manifestData = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+      foreach ($key in @("gold", "silver", "hard_negative")) {
+        $rel = $manifestData.files.$key
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+          $issues.Add("held_out_dataset manifest missing files.$key")
+        } else {
+          $candidatePath = Join-Path $datasetPath $rel
+          if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+            $issues.Add("held_out_dataset manifest files.$key missing path: $candidatePath")
+          }
+        }
+      }
+    } catch {
+      $issues.Add("held_out_dataset manifest.json is invalid JSON: $($_.Exception.Message)")
+    }
   }
 } else {
   $manifest = Join-Path $datasetPath "manifest.json"
@@ -2780,8 +2833,35 @@ if (Test-Path -LiteralPath $baselinePath) {
     $issues.Add("baseline_candidates is not a file: $baselinePath")
   } elseif ($baselineItem.Length -eq 0) {
     $issues.Add("baseline_candidates is empty: $baselinePath")
+  } else {
+    $baselineRecords = 0
+    $identifierRecords = 0
+    $lineNumber = 0
+    foreach ($line in Get-Content -LiteralPath $baselinePath) {
+      $lineNumber += 1
+      if ([string]::IsNullOrWhiteSpace($line)) {
+        continue
+      }
+      try {
+        $row = $line | ConvertFrom-Json
+      } catch {
+        $issues.Add("baseline_candidates line $lineNumber is invalid JSON: $($_.Exception.Message)")
+        continue
+      }
+      $baselineRecords += 1
+      if ($row.dataset_record_id -or $row.record_id -or $row.unit_id) {
+        $identifierRecords += 1
+      }
+    }
+    if ($baselineRecords -eq 0) {
+      $issues.Add("baseline_candidates has no JSONL records: $baselinePath")
+    } elseif ($identifierRecords -eq 0) {
+      $issues.Add("baseline_candidates has no dataset_record_id, record_id, or unit_id values")
+    }
   }
 }
+$baselineRecords = if ($null -eq $baselineRecords) { 0 } else { $baselineRecords }
+$identifierRecords = if ($null -eq $identifierRecords) { 0 } else { $identifierRecords }
 $outPath = Join-Path (Get-Location).Path $Out
 $outDir = Split-Path -Parent $outPath
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -2791,6 +2871,8 @@ $report = [ordered]@{
   held_out_dataset = $datasetPath
   held_out_manifest = $manifest
   baseline_candidates = $baselinePath
+  baseline_candidate_records = $baselineRecords
+  baseline_candidate_identifier_records = $identifierRecords
   issues = @($issues)
 }
 $json = $report | ConvertTo-Json -Depth 5
