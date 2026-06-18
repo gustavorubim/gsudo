@@ -2104,6 +2104,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--out outputs/audit.json" in commands["audit"]
     assert "train inspect-samples" in commands["inspect_samples"]
     assert "train report outputs" in commands["report"]
+    assert "train source-freshness ." in commands["source_freshness"]
+    assert "--out source_freshness.json" in commands["source_freshness"]
     assert "train contract-status outputs" in commands["contract_status"]
     assert "--sft-steps $SFT_MAX_STEPS" in commands["contract_status"]
     assert "--markdown-out outputs/contract_status.md" in commands["contract_status"]
@@ -2319,6 +2321,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--sft-steps \"$SFT_MAX_STEPS\"" in full_eval_script
     assert "--out outputs/contract_status.json" in full_eval_script
     assert "--markdown-out outputs/contract_status.md" in full_eval_script
+    assert "source_freshness.json" in package_readme
+    assert "train source-freshness" in package_readme
     assert "contract_status.json" in package_readme
     assert "contract_status.md" in package_readme
     assert (

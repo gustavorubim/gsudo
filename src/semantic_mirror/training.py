@@ -1989,6 +1989,10 @@ def _package_launch_commands() -> dict[str, str]:
             "--model-or-adapter-path outputs/semantic-mirror-rl"
         ),
         "report": "PYTHONPATH=src python -m semantic_mirror.cli train report outputs --out outputs/diagnostics",
+        "source_freshness": (
+            "PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . "
+            "--repo-root <repo_root> --out source_freshness.json --markdown-out source_freshness.md"
+        ),
         "contract_status": (
             "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs "
             "--sft-steps $SFT_MAX_STEPS --dpo-steps $DPO_MAX_STEPS --rl-steps $RL_MAX_STEPS "
@@ -3194,6 +3198,16 @@ bash launch/inspect_full_training_eval_resume.sh
 
 The inspector writes `outputs/full_training_eval_resume_inspection.json` and
 prints whether each stage will be reused, resumed, rerun, or started fresh.
+
+After packaging or refreshing bundled source, generate source freshness evidence
+from the package root:
+
+```bash
+PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . \
+  --repo-root /path/to/repo \
+  --out source_freshness.json \
+  --markdown-out source_freshness.md
+```
 
 This writes `outputs/baseline_eval.json`, raw and repaired eval reports for
 SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
