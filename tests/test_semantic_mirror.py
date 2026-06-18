@@ -3847,6 +3847,18 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         "outside the supported >=3.11,<3.14 range" in item
         for item in unsupported_python_audit["blocker"]["summary"]
     )
+    unsupported_evidence = unsupported_python_audit["blocker"]["evidence"]
+    assert unsupported_evidence["python"] == {
+        "actual_version": "3.14.0",
+        "supported": False,
+        "supported_range": ">=3.11,<3.14",
+    }
+    assert unsupported_evidence["audit_command"][:4] == [
+        "uv",
+        "run",
+        "semantic-mirror",
+        "train",
+    ]
 
     failed_runtime_package = package_training_bundle(
         training_out,
@@ -3869,6 +3881,20 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert failed_audit["blocker"]["blocked"]
     assert "torch_cuda_available" in failed_audit["blocker"]["failed_required_checks"]
     assert failed_audit["blocker"]["recommended_fallback"]
+    failed_evidence = failed_audit["blocker"]["evidence"]
+    assert failed_evidence["environment"]["platform"] == "Windows"
+    assert failed_evidence["modules"]["missing_required"] == [
+        "unsloth",
+        "trl",
+        "datasets",
+        "transformers",
+        "bitsandbytes",
+        "peft",
+    ]
+    assert failed_evidence["modules"]["imported_required_versions"] == {"torch": None}
+    assert failed_evidence["torch"]["required_gpu"]
+    assert failed_evidence["torch"]["importable"]
+    assert not failed_evidence["torch"]["cuda_available"]
     assert failed_audit["repro"]["audit_command"][:4] == [
         "uv",
         "run",

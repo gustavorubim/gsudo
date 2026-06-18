@@ -467,6 +467,22 @@ def audit_training_environment(
         torch_info=torch_info,
         require_gpu=require_gpu,
     )
+    blocker_evidence = _training_audit_blocker_evidence(
+        failed_required_checks,
+        audit_command=repro_command,
+        environment={
+            "python_executable": runtime_python_executable,
+            "python_version": current_python_version,
+            "platform": current_platform,
+            "platform_release": platform.release(),
+        },
+        python_supported=python_supported,
+        missing_modules=missing_modules,
+        module_details=module_details,
+        torch_info=torch_info,
+        nvidia_smi=nvidia_smi,
+        require_gpu=require_gpu,
+    )
     return {
         "mode": "training_environment_audit",
         "training_version": TRAINING_VERSION,
@@ -496,6 +512,7 @@ def audit_training_environment(
             "blocked": not passed,
             "failed_required_checks": failed_required_checks,
             "summary": blocker_summary,
+            "evidence": blocker_evidence,
             "recommended_fallback": (
                 "Use the generated Windows-hosted WSL CUDA bundle path until "
                 "this audit passes in a Windows-native Python runtime."
@@ -6381,6 +6398,55 @@ def _training_audit_blocker_summary(
     if "torch_cuda_available" in failed_required_checks and require_gpu:
         summary.append("PyTorch CUDA is not available for the audited runtime.")
     return summary
+
+
+def _training_audit_blocker_evidence(
+    failed_required_checks: list[str],
+    *,
+    audit_command: list[str],
+    environment: dict[str, Any],
+    python_supported: bool,
+    missing_modules: list[str],
+    module_details: dict[str, dict[str, Any]],
+    torch_info: dict[str, Any],
+    nvidia_smi: dict[str, Any],
+    require_gpu: bool,
+) -> dict[str, Any]:
+    failed_modules = {
+        module: module_details.get(module, {"importable": False})
+        for module in missing_modules
+    }
+    return {
+        "audit_command": audit_command,
+        "environment": environment,
+        "python": {
+            "supported": python_supported,
+            "supported_range": UNSLOTH_PYTHON_RANGE,
+            "actual_version": environment.get("python_version"),
+        },
+        "modules": {
+            "missing_required": missing_modules,
+            "failed_required_details": failed_modules,
+            "imported_required_versions": {
+                module: details.get("version")
+                for module, details in module_details.items()
+                if module in REQUIRED_TRAINING_MODULES and details.get("importable")
+            },
+        },
+        "torch": {
+            "required_gpu": require_gpu,
+            "importable": torch_info.get("importable"),
+            "version": torch_info.get("version"),
+            "cuda_available": torch_info.get("cuda_available"),
+            "cuda_version": torch_info.get("cuda_version"),
+            "device_count": torch_info.get("device_count"),
+            "devices": torch_info.get("devices", []),
+            "bf16_supported": torch_info.get("bf16_supported"),
+            "error": torch_info.get("error"),
+        },
+        "nvidia_smi": nvidia_smi,
+        "failed_required_checks": failed_required_checks,
+    }
 
 
 def _collect_training_metrics(run: Path) -> dict[str, Any]:
