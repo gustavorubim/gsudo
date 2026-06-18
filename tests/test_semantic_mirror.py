@@ -3202,9 +3202,13 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     root_readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
         encoding="utf-8"
     )
+    assert "Contract-status JSON and stdout also include package source" in root_readme
+    assert "The saved `contract_status.json` is the durable automation surface" in (
+        root_readme
+    )
+    assert "The JSON keeps full `next_actions` commands" in root_readme
     assert "generate_eval_report_after_stage" in root_readme
     assert "generate_sample_inspection_after_stage" in root_readme
-    assert "package source, command-manifest" in root_readme
     assert (
         package_manifest["files"]["full_training_eval_resume_inspector"]
         == "launch/inspect_full_training_eval_resume.sh"

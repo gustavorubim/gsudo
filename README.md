@@ -298,9 +298,9 @@ the required action, whether training is required, blocking stages, and target
 artifacts. Stale stage-derived eval rows use `generate_eval_report_after_stage`,
 sample rows use `generate_sample_inspection_after_stage`, and
 `blocked_by_stages` names the stage that must finish before those artifacts are
-current. Contract-status stdout also includes package source, command-manifest,
-and Python metadata summaries so automation can distinguish package evidence
-repairs from training work. Generated prompts include
+current. Contract-status JSON and stdout also include package source,
+command-manifest, and Python metadata summaries so automation can distinguish
+package evidence repairs from training work. Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
 model to return that object as the final JSON. The
@@ -427,16 +427,18 @@ samples, and diagnostics as stale unless the corresponding stage manifest
 matches the requested target cap; diagnostics must also cite source files from
 the current `outputs` directory.
 
-The command's stdout is a compact automation surface, not just a pass/fail
-boolean. It includes `contract_scorecard_summary`, `repo_hygiene_summary`,
+The saved `contract_status.json` is the durable automation surface, and command
+stdout is the compact pass/fail summary for callers. Both include
+`contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `human_usefulness_summary`,
-`stage_recovery_summary`, `remaining_by_area`, `remaining_recovery_plan`, and
-compact `next_actions`. Those stdout rows include current-versus-expected
-evidence for failed gates, DPO/RL resume decisions, Phase 6 failed gates, real
-timed-answer counts, package source freshness, and command-manifest safety
-checks so automation can decide whether the next step is inspection, human
-study collection, status refresh, or a training launch. Use
+`stage_recovery_summary`, `remaining_by_area`, and `remaining_recovery_plan`.
+The JSON keeps full `next_actions` commands, while stdout reports compact
+presence flags. Those rows include current-versus-expected evidence for failed
+gates, DPO/RL resume decisions, Phase 6 failed gates, real timed-answer counts,
+package source freshness, and command-manifest safety checks so automation can
+decide whether the next step is inspection, human study collection, status
+refresh, or a training launch. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired
