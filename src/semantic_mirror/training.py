@@ -3497,15 +3497,15 @@ recovery plan distinguishes stale stage-derived eval and sample artifacts from
 missing reports: eval rows use `generate_eval_report_after_stage`, sample rows
 use `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
-`train contract-status` stdout is also an automation surface: it includes
-`contract_scorecard_summary`, `repo_hygiene_summary`,
+`outputs/contract_status.json` and `train contract-status` stdout are automation
+surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
-`human_usefulness_summary`,
-`stage_recovery_summary`, `remaining_by_area`, `remaining_recovery_plan`, and
-compact `next_actions`, including current-versus-expected failed-gate evidence,
-DPO/RL resume decisions, Phase 6 failed gates, real timed-answer counts, package
-source freshness, command-manifest safety checks, and package Python metadata.
+`human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`,
+`remaining_recovery_plan`, and compact `next_actions`, including
+current-versus-expected failed-gate evidence, DPO/RL resume decisions, Phase 6
+failed gates, real timed-answer counts, package source freshness,
+command-manifest safety checks, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
