@@ -1322,6 +1322,41 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
                 "ready_to_launch": False,
                 "blocker": {
                     "blocked": True,
+                    "evidence": {
+                        "audit_command": [
+                            "uv",
+                            "run",
+                            "semantic-mirror",
+                            "train",
+                            "audit",
+                            "training",
+                        ],
+                        "environment": {
+                            "platform": "Windows",
+                            "python_executable": "C:/repo/.venv/Scripts/python.exe",
+                            "python_version": "3.14.0",
+                        },
+                        "failed_required_checks": ["torch_cuda_available"],
+                        "modules": {
+                            "imported_required_versions": {"torch": "test-torch"},
+                            "missing_required": [],
+                        },
+                        "nvidia_smi": {
+                            "available": True,
+                            "devices": [{"name": "Unit Test GPU"}],
+                        },
+                        "python": {
+                            "actual_version": "3.14.0",
+                            "supported": False,
+                            "supported_range": ">=3.11,<3.14",
+                        },
+                        "torch": {
+                            "cuda_available": False,
+                            "cuda_version": None,
+                            "error": "CUDA not available",
+                            "importable": True,
+                        },
+                    },
                     "failed_required_checks": ["torch_cuda_available"],
                     "recommended_fallback": "Use WSL CUDA.",
                     "summary": [
@@ -1393,6 +1428,30 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert readiness_status["windows_readiness_status"]["native_blocker_summary"] == [
         "PyTorch CUDA is not available for the audited runtime.",
     ]
+    assert readiness_status["windows_readiness_status"][
+        "native_blocker_evidence_summary"
+    ] == {
+        "audit_command": [
+            "uv",
+            "run",
+            "semantic-mirror",
+            "train",
+            "audit",
+            "training",
+        ],
+        "failed_required_checks": ["torch_cuda_available"],
+        "missing_required_modules": [],
+        "nvidia_smi_available": True,
+        "nvidia_smi_devices": ["Unit Test GPU"],
+        "python_executable": "C:/repo/.venv/Scripts/python.exe",
+        "python_supported": False,
+        "python_supported_range": ">=3.11,<3.14",
+        "python_version": "3.14.0",
+        "torch_cuda_available": False,
+        "torch_cuda_version": None,
+        "torch_error": "CUDA not available",
+        "torch_importable": True,
+    }
     assert readiness_status["windows_readiness_status"]["wsl_smoke_complete"]
     assert readiness_status["windows_readiness_status"]["wsl_failed_checks"] == []
     assert readiness_status["windows_readiness_status"]["wsl_smoke_manifest_mode"] == (
@@ -1817,6 +1876,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["windows_readiness_summary"]["native_blocker_summary"] == [
         "PyTorch CUDA is not available for the audited runtime.",
     ]
+    assert cli_stdout["windows_readiness_summary"][
+        "native_blocker_evidence_summary"
+    ]["nvidia_smi_devices"] == ["Unit Test GPU"]
+    assert cli_stdout["windows_readiness_summary"][
+        "native_blocker_evidence_summary"
+    ]["torch_error"] == "CUDA not available"
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
     assert cli_stdout["windows_readiness_summary"]["wsl_failed_checks"] == []
     assert cli_stdout["windows_readiness_summary"]["wsl_blocker_summary"] == []
@@ -2244,6 +2309,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Native Python version: `3.14.0`" in contract_status_md
     assert "Native platform: `Windows`" in contract_status_md
     assert "Native blocker summary: `PyTorch CUDA is not available" in contract_status_md
+    assert "Native blocker evidence:" in contract_status_md
+    assert '"nvidia_smi_devices": ["Unit Test GPU"]' in contract_status_md
+    assert '"torch_error": "CUDA not available"' in contract_status_md
     assert "WSL smoke manifest mode: `smoke_chain`" in contract_status_md
     assert "WSL failed checks: `None`" in contract_status_md
     assert "WSL blocker summary: `None`" in contract_status_md

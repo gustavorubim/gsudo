@@ -1480,6 +1480,9 @@ def _windows_readiness_summary(status: object) -> dict[str, object]:
         ),
         "native_recommended_fallback": status.get("native_recommended_fallback"),
         "native_blocker_summary": status.get("native_blocker_summary", []),
+        "native_blocker_evidence_summary": status.get(
+            "native_blocker_evidence_summary", {}
+        ),
         "native_python_executable": status.get("native_python_executable"),
         "native_python_version": status.get("native_python_version"),
         "native_platform": status.get("native_platform"),

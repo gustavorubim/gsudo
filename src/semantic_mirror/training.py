@@ -6704,6 +6704,11 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             ]
         )
     windows_readiness = report.get("windows_readiness_status") or {}
+    native_blocker_evidence = (
+        windows_readiness.get("native_blocker_evidence_summary", {})
+        if isinstance(windows_readiness, dict)
+        else {}
+    )
     lines.extend(
         [
             "",
@@ -6720,6 +6725,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Native passed: `{windows_readiness.get('native_passed')}`",
             f"- Native blocked: `{windows_readiness.get('native_blocked')}`",
             f"- Native blocker summary: `{'; '.join(windows_readiness.get('native_blocker_summary') or []) or 'None'}`",
+            f"- Native blocker evidence: `{json.dumps(native_blocker_evidence, sort_keys=True)}`",
             f"- Next action command: `{windows_readiness.get('next_action_command_name') or 'None'}`",
             f"- Next action category: `{windows_readiness.get('next_action_command_category') or 'None'}`",
             f"- Next action launches training: `{windows_readiness.get('next_action_launches_training', False)}`",
@@ -8046,6 +8052,9 @@ def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any
         ),
         "native_recommended_fallback": status.get("native_recommended_fallback"),
         "native_blocker_summary": status.get("native_blocker_summary", []),
+        "native_blocker_evidence_summary": status.get(
+            "native_blocker_evidence_summary", {}
+        ),
         "native_python_executable": status.get("native_python_executable"),
         "native_python_version": status.get("native_python_version"),
         "native_platform": status.get("native_platform"),
@@ -8600,6 +8609,9 @@ def _windows_readiness_contract_status(
         and audit["blocker"].get("blocked")
     )
     native_blocker = audit.get("blocker", {}) if isinstance(audit, dict) else {}
+    native_blocker_evidence = (
+        native_blocker.get("evidence", {}) if isinstance(native_blocker, dict) else {}
+    )
     native_environment = audit.get("environment", {}) if isinstance(audit, dict) else {}
     native_repro = audit.get("repro", {}) if isinstance(audit, dict) else {}
     wsl_checked = isinstance(smoke, dict)
@@ -8696,6 +8708,16 @@ def _windows_readiness_contract_status(
             if isinstance(native_blocker, dict)
             else []
         ),
+        "native_blocker_evidence_summary": _native_blocker_evidence_summary(
+            native_blocker_evidence,
+            native_environment=native_environment,
+            native_repro=native_repro,
+            failed_required_checks=(
+                native_blocker.get("failed_required_checks", [])
+                if isinstance(native_blocker, dict)
+                else []
+            ),
+        ),
         "native_python_executable": (
             native_environment.get("python_executable")
             if isinstance(native_environment, dict)
@@ -8778,6 +8800,57 @@ def _windows_readiness_next_action(
         "blocked_by_stages": [],
         "failed_checks": [],
         "reason": "Refresh the Windows-native training audit with exact blocker evidence.",
+    }
+
+
+def _native_blocker_evidence_summary(
+    evidence: object,
+    *,
+    native_environment: object,
+    native_repro: object,
+    failed_required_checks: list[str],
+) -> dict[str, Any]:
+    if not isinstance(evidence, dict):
+        evidence = {}
+    python_evidence = evidence.get("python") if isinstance(evidence.get("python"), dict) else {}
+    module_evidence = (
+        evidence.get("modules") if isinstance(evidence.get("modules"), dict) else {}
+    )
+    torch_evidence = evidence.get("torch") if isinstance(evidence.get("torch"), dict) else {}
+    nvidia_smi = (
+        evidence.get("nvidia_smi") if isinstance(evidence.get("nvidia_smi"), dict) else {}
+    )
+    environment = (
+        evidence.get("environment") if isinstance(evidence.get("environment"), dict) else {}
+    )
+    if not environment and isinstance(native_environment, dict):
+        environment = native_environment
+    audit_command = evidence.get("audit_command")
+    if audit_command is None and isinstance(native_repro, dict):
+        audit_command = native_repro.get("audit_command")
+    devices = nvidia_smi.get("devices", []) if isinstance(nvidia_smi, dict) else []
+    device_names = [
+        str(device.get("name"))
+        for device in devices
+        if isinstance(device, dict) and device.get("name")
+    ]
+    return {
+        "audit_command": audit_command,
+        "python_executable": environment.get("python_executable"),
+        "python_version": (
+            python_evidence.get("actual_version")
+            or environment.get("python_version")
+        ),
+        "python_supported": python_evidence.get("supported"),
+        "python_supported_range": python_evidence.get("supported_range"),
+        "missing_required_modules": module_evidence.get("missing_required", []),
+        "torch_importable": torch_evidence.get("importable"),
+        "torch_cuda_available": torch_evidence.get("cuda_available"),
+        "torch_cuda_version": torch_evidence.get("cuda_version"),
+        "torch_error": torch_evidence.get("error"),
+        "nvidia_smi_available": nvidia_smi.get("available"),
+        "nvidia_smi_devices": device_names,
+        "failed_required_checks": failed_required_checks,
     }
 
 
