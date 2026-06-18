@@ -888,6 +888,12 @@ def generate_training_package_source_freshness(
             "reason": "Generated sanitized package environment template.",
         },
     ]
+    mismatched_files = [row["relative_path"] for row in comparisons if not row["match"]]
+    missing_package_specific_docs = [
+        doc["relative_path"]
+        for doc in package_specific_docs
+        if not (package / doc["relative_path"]).exists()
+    ]
     report = {
         "mode": "semantic_mirror_package_source_freshness",
         "training_version": TRAINING_VERSION,
@@ -901,10 +907,12 @@ def generate_training_package_source_freshness(
         "all_compared_files_match": bool(source_files)
         and not any(not row["match"] for row in comparisons),
         "compared_file_count": len(comparisons),
+        "mismatched_files": mismatched_files,
         "comparisons": comparisons,
         "all_package_specific_docs_present": all(
             (package / doc["relative_path"]).exists() for doc in package_specific_docs
         ),
+        "missing_package_specific_docs": missing_package_specific_docs,
         "package_specific_docs": [
             {
                 **doc,

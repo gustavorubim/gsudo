@@ -2461,7 +2461,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         (bundle_out / "source_freshness.json").read_text(encoding="utf-8")
     )
     assert packaged_freshness["all_compared_files_match"]
+    assert packaged_freshness["mismatched_files"] == []
     assert packaged_freshness["all_package_specific_docs_present"]
+    assert packaged_freshness["missing_package_specific_docs"] == []
     assert {
         doc["relative_path"]: doc["package_exists"]
         for doc in packaged_freshness["package_specific_docs"]
@@ -2485,7 +2487,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     )
     assert freshness["mode"] == "semantic_mirror_package_source_freshness"
     assert freshness["all_compared_files_match"]
+    assert freshness["mismatched_files"] == []
     assert freshness["all_package_specific_docs_present"]
+    assert freshness["missing_package_specific_docs"] == []
     assert freshness["compared_file_count"] > 0
     assert (bundle_out / "source_freshness.json").exists()
     assert "Source Freshness Evidence" in (bundle_out / "source_freshness.md").read_text(
@@ -2511,7 +2515,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         encoding="utf-8",
     )
     assert freshness_cli.returncode == 0
-    assert json.loads(freshness_cli.stdout)["all_compared_files_match"] is True
+    freshness_cli_summary = json.loads(freshness_cli.stdout)
+    assert freshness_cli_summary["all_compared_files_match"] is True
+    assert freshness_cli_summary["mismatched_files"] == []
     assert (bundle_out / "source_freshness_cli.json").exists()
     sft_script = (bundle_out / "training" / "run_unsloth_sft.py").read_text(encoding="utf-8")
     assert "SFTConfig" in sft_script
