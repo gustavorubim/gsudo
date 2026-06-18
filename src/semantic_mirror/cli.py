@@ -1288,6 +1288,13 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 "recovery_plan_summary",
                 _recovery_plan_summary(manifest.get("remaining_recovery_plan")),
             ),
+            "training_dependency_summary": _summary_value(
+                manifest,
+                "training_dependency_summary",
+                _training_dependency_summary(
+                    manifest.get("remaining_recovery_plan")
+                ),
+            ),
             "remaining_by_area": manifest["remaining_by_area"],
             "remaining_area_summary": _summary_value(
                 manifest,
@@ -1803,6 +1810,62 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         "non_training_action_counts": {
             key: non_training_action_counts[key]
             for key in sorted(non_training_action_counts)
+        },
+    }
+
+
+def _training_dependency_summary(plan: object) -> dict[str, object]:
+    if not isinstance(plan, list):
+        plan = []
+    ready_non_training_command_counts: dict[str, int] = {}
+    waiting_non_training_command_counts: dict[str, int] = {}
+    training_launch_command_counts: dict[str, int] = {}
+    ready_non_training_count = 0
+    waiting_non_training_count = 0
+    training_launch_count = 0
+    requires_training_count = 0
+    total_items = 0
+    for item in plan:
+        if not isinstance(item, dict):
+            continue
+        total_items += 1
+        command_name = str(item.get("next_action_command_name") or "unknown")
+        requires_training = bool(item.get("requires_training"))
+        launches_training = bool(item.get("next_action_launches_training"))
+        if requires_training:
+            requires_training_count += 1
+        if launches_training:
+            training_launch_count += 1
+            training_launch_command_counts[command_name] = (
+                training_launch_command_counts.get(command_name, 0) + 1
+            )
+        elif requires_training:
+            waiting_non_training_count += 1
+            waiting_non_training_command_counts[command_name] = (
+                waiting_non_training_command_counts.get(command_name, 0) + 1
+            )
+        else:
+            ready_non_training_count += 1
+            ready_non_training_command_counts[command_name] = (
+                ready_non_training_command_counts.get(command_name, 0) + 1
+            )
+    return {
+        "total_items": total_items,
+        "requires_training_count": requires_training_count,
+        "training_launch_count": training_launch_count,
+        "waiting_non_training_count": waiting_non_training_count,
+        "ready_non_training_count": ready_non_training_count,
+        "training_launch_command_counts": {
+            key: training_launch_command_counts[key]
+            for key in sorted(training_launch_command_counts)
+        },
+        "waiting_non_training_command_counts": {
+            key: waiting_non_training_command_counts[key]
+            for key in sorted(waiting_non_training_command_counts)
+        },
+        "ready_non_training_command_counts": {
+            key: ready_non_training_command_counts[key]
+            for key in sorted(ready_non_training_command_counts)
         },
     }
 

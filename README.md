@@ -459,6 +459,9 @@ native-audit refreshes separately from WSL smoke-chain launches.
 SFT/DPO/RL stage.
 `remaining_area_summary` groups every remaining area by gate count, command
 counts, command categories, and training-launch counts.
+`training_dependency_summary` separates gates that launch training, gates whose
+non-training command is still waiting on training evidence, and gates that are
+ready for non-training refresh.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,

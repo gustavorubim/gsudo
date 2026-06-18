@@ -956,6 +956,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "requires_training_count": 12,
         "total_items": 12,
     }
+    assert status["training_dependency_summary"] == {
+        "ready_non_training_command_counts": {},
+        "ready_non_training_count": 0,
+        "requires_training_count": 12,
+        "total_items": 12,
+        "training_launch_command_counts": {"full_training_eval": 8},
+        "training_launch_count": 8,
+        "waiting_non_training_command_counts": {
+            "contract_status": 3,
+            "report": 1,
+        },
+        "waiting_non_training_count": 4,
+    }
     assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -1229,6 +1242,18 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "- Command links unchecked: `12`" in status_markdown
     assert "- Commands launching training: `8`" in status_markdown
     assert "- Commands not launching training: `4`" in status_markdown
+    assert "- Training launch gates: `8`" in status_markdown
+    assert "- Non-training commands waiting on training: `4`" in status_markdown
+    assert "- Ready non-training gates: `0`" in status_markdown
+    assert (
+        '- Training launch command counts: `{"full_training_eval": 8}`'
+        in status_markdown
+    )
+    assert (
+        '- Waiting non-training command counts: `{"contract_status": 3, "report": 1}`'
+        in status_markdown
+    )
+    assert "- Ready non-training command counts: `{}`" in status_markdown
     assert "- Missing command names: `[]`" in status_markdown
     assert (
         '- Next action command counts: `{"contract_status": 3, "full_training_eval": 8, "report": 1}`'
@@ -2243,6 +2268,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "next_action_summary",
         "stage_recovery_summary",
         "remaining_area_summary",
+        "training_dependency_summary",
     ]:
         assert cli_stdout[summary_key] == cli_status_json[summary_key]
     saved_scorecard = {
@@ -3844,6 +3870,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "contract_scorecard_summary" in package_readme
     assert "stage_recovery_summary" in package_readme
     assert "remaining_area_summary" in package_readme
+    assert "training_dependency_summary" in package_readme
     assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
@@ -3857,6 +3884,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
     assert "remaining-area command\nrollups" in package_readme
+    assert "training-dependency rollups" in package_readme
     assert "`action_category`" in package_readme
     assert "real" in package_readme
     assert "timed-answer counts" in package_readme
@@ -3886,6 +3914,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "current next-action set" in root_readme
     assert "next readiness command name" in root_readme
     assert "recovery_plan_summary" in root_readme
+    assert "training_dependency_summary" in root_readme
     assert "blocked-stage command" in root_readme
     assert "matrix" in root_readme
     assert "next_action_title" in root_readme
@@ -3898,6 +3927,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "`command_name`, `command_category`, `blocked_by_stages`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
     assert "command category rollups" in root_readme
+    assert "non-training command is still waiting on training evidence" in root_readme
     assert "`action_category`" in root_readme
     assert "generate_eval_report_after_stage" in root_readme
     assert "generate_sample_inspection_after_stage" in root_readme

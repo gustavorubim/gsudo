@@ -1451,6 +1451,9 @@ def summarize_full_eval_contract_status(
         "recovery_plan_summary": _recovery_plan_contract_summary(
             remaining_recovery_plan
         ),
+        "training_dependency_summary": _training_dependency_summary(
+            remaining_recovery_plan
+        ),
     }
     report["contract_scorecard"] = _contract_scorecard(report)
     report["contract_scorecard_summary"] = _contract_scorecard_contract_summary(
@@ -3537,7 +3540,8 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
 `human_usefulness_summary`, `next_action_summary`, `stage_recovery_summary`, `remaining_by_area`,
-`remaining_area_summary`, `remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
+`remaining_area_summary`, `remaining_recovery_plan`, `recovery_plan_summary`, and
+`training_dependency_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. `next_action_summary` also includes
 a blocked-stage command matrix for the current next-action set. `stage_recovery_summary`
@@ -3550,7 +3554,7 @@ per-action `command_name`, `command_category`, `blocked_by_stages`, and
 `next_action_command_exists`, and `next_action_command_link_valid`, native and WSL
 readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, remaining-area command
-rollups, command category rollups, and package Python metadata.
+rollups, training-dependency rollups, command category rollups, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -6940,6 +6944,9 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
         recovery_plan = report.get("remaining_recovery_plan") or []
         if recovery_plan:
             recovery_summary = report.get("recovery_plan_summary") or {}
+            training_dependency_summary = (
+                report.get("training_dependency_summary") or {}
+            )
             lines.extend(
                 [
                     "",
@@ -6954,6 +6961,12 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Command links unchecked: `{recovery_summary.get('command_link_unchecked_count', 0)}`",
                     f"- Commands launching training: `{recovery_summary.get('command_launches_training_count', 0)}`",
                     f"- Commands not launching training: `{recovery_summary.get('command_non_training_count', 0)}`",
+                    f"- Training launch gates: `{training_dependency_summary.get('training_launch_count', 0)}`",
+                    f"- Non-training commands waiting on training: `{training_dependency_summary.get('waiting_non_training_count', 0)}`",
+                    f"- Ready non-training gates: `{training_dependency_summary.get('ready_non_training_count', 0)}`",
+                    f"- Training launch command counts: `{json.dumps(training_dependency_summary.get('training_launch_command_counts', {}), sort_keys=True)}`",
+                    f"- Waiting non-training command counts: `{json.dumps(training_dependency_summary.get('waiting_non_training_command_counts', {}), sort_keys=True)}`",
+                    f"- Ready non-training command counts: `{json.dumps(training_dependency_summary.get('ready_non_training_command_counts', {}), sort_keys=True)}`",
                     f"- Missing command names: `{json.dumps(recovery_summary.get('missing_command_names', []), sort_keys=True)}`",
                     f"- Next action command counts: `{json.dumps(recovery_summary.get('next_action_command_counts', {}), sort_keys=True)}`",
                     f"- Next action command category counts: `{json.dumps(recovery_summary.get('next_action_command_category_counts', {}), sort_keys=True)}`",
@@ -7977,6 +7990,56 @@ def _recovery_plan_contract_summary(
         "non_training_action_counts": {
             key: non_training_action_counts[key]
             for key in sorted(non_training_action_counts)
+        },
+    }
+
+
+def _training_dependency_summary(recovery_plan: list[dict[str, Any]]) -> dict[str, Any]:
+    ready_non_training_command_counts: dict[str, int] = {}
+    waiting_non_training_command_counts: dict[str, int] = {}
+    training_launch_command_counts: dict[str, int] = {}
+    ready_non_training_count = 0
+    waiting_non_training_count = 0
+    training_launch_count = 0
+    requires_training_count = 0
+    for item in recovery_plan:
+        command_name = str(item.get("next_action_command_name") or "unknown")
+        requires_training = bool(item.get("requires_training"))
+        launches_training = bool(item.get("next_action_launches_training"))
+        if requires_training:
+            requires_training_count += 1
+        if launches_training:
+            training_launch_count += 1
+            training_launch_command_counts[command_name] = (
+                training_launch_command_counts.get(command_name, 0) + 1
+            )
+        elif requires_training:
+            waiting_non_training_count += 1
+            waiting_non_training_command_counts[command_name] = (
+                waiting_non_training_command_counts.get(command_name, 0) + 1
+            )
+        else:
+            ready_non_training_count += 1
+            ready_non_training_command_counts[command_name] = (
+                ready_non_training_command_counts.get(command_name, 0) + 1
+            )
+    return {
+        "total_items": len(recovery_plan),
+        "requires_training_count": requires_training_count,
+        "training_launch_count": training_launch_count,
+        "waiting_non_training_count": waiting_non_training_count,
+        "ready_non_training_count": ready_non_training_count,
+        "training_launch_command_counts": {
+            key: training_launch_command_counts[key]
+            for key in sorted(training_launch_command_counts)
+        },
+        "waiting_non_training_command_counts": {
+            key: waiting_non_training_command_counts[key]
+            for key in sorted(waiting_non_training_command_counts)
+        },
+        "ready_non_training_command_counts": {
+            key: ready_non_training_command_counts[key]
+            for key in sorted(ready_non_training_command_counts)
         },
     }
 
