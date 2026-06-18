@@ -874,6 +874,7 @@ def summarize_full_eval_contract_status(
     repo_root: Path | str | None = None,
     windows_audit_path: Path | str | None = None,
     wsl_smoke_manifest_path: Path | str | None = None,
+    package_source_freshness_path: Path | str | None = None,
     human_study_suite_path: Path | str | None = None,
     human_study_coverage_paths: Iterable[Path | str] | None = None,
     out_path: Path | str | None = None,
@@ -1062,6 +1063,10 @@ def summarize_full_eval_contract_status(
         windows_audit_path=windows_audit_path,
         wsl_smoke_manifest_path=wsl_smoke_manifest_path,
     )
+    package_source_status = _package_source_freshness_contract_status(
+        package_source_freshness_path,
+        repo_hygiene_status=repo_hygiene_status,
+    )
     human_usefulness_status = _human_usefulness_contract_status(
         human_study_suite_path,
         coverage_paths=human_study_coverage_paths,
@@ -1074,6 +1079,7 @@ def summarize_full_eval_contract_status(
         diagnostics_status,
         repo_hygiene_status,
         windows_readiness_status,
+        package_source_status,
         human_usefulness_status,
     )
     remaining_items = [
@@ -1104,6 +1110,7 @@ def summarize_full_eval_contract_status(
         "resume_inspection_status": resume_inspection_status,
         "repo_hygiene_status": repo_hygiene_status,
         "windows_readiness_status": windows_readiness_status,
+        "package_source_status": package_source_status,
         "human_usefulness_status": human_usefulness_status,
         "next_actions": next_actions,
         "remaining_items": remaining_items,
@@ -6211,6 +6218,28 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- WSL diagnostics exists: `{windows_readiness.get('wsl_diagnostics_exists')}`",
         ]
     )
+    package_source = report.get("package_source_status") or {}
+    lines.extend(
+        [
+            "",
+            "## Package Source Freshness",
+            "",
+            f"- Checked: `{package_source.get('checked', False)}`",
+            f"- Passed: `{package_source.get('passed')}`",
+            f"- Summary: {package_source.get('summary')}",
+            f"- Evidence path: `{package_source.get('path')}`",
+            f"- Freshness commit: `{package_source.get('git_commit')}`",
+            f"- Current repo commit: `{package_source.get('current_repo_commit')}`",
+            f"- Commit matches repo: `{package_source.get('git_commit_matches_repo')}`",
+            f"- Compared scope: `{package_source.get('compared_scope')}`",
+            f"- Compared files: `{package_source.get('compared_file_count')}`",
+            f"- All compared files match: `{package_source.get('all_compared_files_match')}`",
+        ]
+    )
+    mismatched_files = package_source.get("mismatched_files") or []
+    if mismatched_files:
+        lines.extend(["", "Mismatched files:"])
+        lines.extend(f"- `{path}`" for path in mismatched_files)
     human_usefulness = report.get("human_usefulness_status") or {}
     lines.extend(
         [
@@ -6376,6 +6405,7 @@ def _full_eval_next_actions(
     diagnostics_status: dict[str, Any],
     repo_hygiene_status: dict[str, Any],
     windows_readiness_status: dict[str, Any],
+    package_source_status: dict[str, Any],
     human_usefulness_status: dict[str, Any],
 ) -> list[dict[str, str]]:
     package_root = run.parent if run.name == "outputs" else run
@@ -6404,6 +6434,7 @@ def _full_eval_next_actions(
         package_root=package_root,
         repo_hygiene_status=repo_hygiene_status,
         windows_readiness_status=windows_readiness_status,
+        package_source_status=package_source_status,
         human_usefulness_status=human_usefulness_status,
     )
     status_command = (
@@ -6499,6 +6530,7 @@ def _contract_status_evidence_flags(
     package_root: Path,
     repo_hygiene_status: dict[str, Any],
     windows_readiness_status: dict[str, Any],
+    package_source_status: dict[str, Any],
     human_usefulness_status: dict[str, Any],
 ) -> str:
     flags: list[str] = []
@@ -6532,6 +6564,15 @@ def _contract_status_evidence_flags(
                         Path(windows_readiness_status["wsl_smoke_manifest_path"]),
                         package_root,
                     )
+                ),
+            ]
+        )
+    if package_source_status.get("path"):
+        flags.extend(
+            [
+                "--package-source-freshness",
+                _shell_single_quoted(
+                    _posix_relpath(Path(package_source_status["path"]), package_root)
                 ),
             ]
         )
@@ -6966,6 +7007,86 @@ def _windows_readiness_contract_status(
         else False,
         "wsl_smoke_out": smoke.get("smoke_out") if isinstance(smoke, dict) else None,
     }
+
+
+def _package_source_freshness_contract_status(
+    freshness_path: Path | str | None,
+    *,
+    repo_hygiene_status: dict[str, Any],
+) -> dict[str, Any]:
+    if freshness_path is None:
+        return {
+            "checked": False,
+            "passed": None,
+            "summary": (
+                "Package source freshness not checked; pass "
+                "--package-source-freshness with a source_freshness JSON report."
+            ),
+        }
+    path = Path(freshness_path).resolve()
+    report = _read_json_file(path)
+    if not isinstance(report, dict):
+        return {
+            "checked": True,
+            "passed": False,
+            "path": str(path),
+            "summary": "Package source freshness report is missing or not a JSON object.",
+        }
+    mode_ok = report.get("mode") == "semantic_mirror_package_source_freshness"
+    all_match = bool(report.get("all_compared_files_match"))
+    compared_count = report.get("compared_file_count")
+    compared_count_ok = isinstance(compared_count, int) and compared_count > 0
+    report_commit = report.get("git_commit")
+    current_commit = _repo_current_commit(repo_hygiene_status.get("repo_root"))
+    commit_matches = (
+        None
+        if current_commit is None or not isinstance(report_commit, str)
+        else report_commit == current_commit
+    )
+    passed = mode_ok and all_match and compared_count_ok and commit_matches is not False
+    if passed:
+        summary = "Package runtime source freshness is proven by hash comparison."
+    elif commit_matches is False:
+        summary = "Package source freshness report is for a different repo commit."
+    else:
+        summary = "Package source freshness evidence is incomplete or failing."
+    return {
+        "checked": True,
+        "passed": passed,
+        "path": str(path),
+        "summary": summary,
+        "mode": report.get("mode"),
+        "git_commit": report_commit,
+        "current_repo_commit": current_commit,
+        "git_commit_matches_repo": commit_matches,
+        "compared_scope": report.get("compared_scope"),
+        "compared_file_count": compared_count,
+        "all_compared_files_match": all_match,
+        "mismatched_files": [
+            row.get("relative_path")
+            for row in report.get("comparisons", [])
+            if isinstance(row, dict) and not row.get("match")
+        ],
+        "package_specific_docs": report.get("package_specific_docs", []),
+    }
+
+
+def _repo_current_commit(repo_root: Any) -> str | None:
+    if not repo_root:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(str(repo_root)),
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def _human_usefulness_contract_status(

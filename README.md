@@ -267,7 +267,7 @@ uv run semantic-mirror train run-sft <training_dir> --output-dir <sft_model_dir>
 uv run semantic-mirror train run-dpo <training_dir> --model-name-or-path <sft_model_dir> --output-dir <dpo_model_dir> --max-steps 120 --dry-run
 uv run semantic-mirror train run-rl <training_dir> --model-name-or-path <dpo_model_dir> --output-dir <rl_model_dir> --max-steps 120 --dry-run
 uv run semantic-mirror train report <run_outputs_dir> --out <run_outputs_dir>/diagnostics
-uv run semantic-mirror train contract-status <run_outputs_dir> --sft-steps 300 --dpo-steps 120 --rl-steps 120 --repo-root . --windows-audit <windows_audit.json> --wsl-smoke-manifest <smoke_chain_manifest.json> --human-study-coverage <coverage.json> --human-study-suite <phase6_summary.json> --out <run_outputs_dir>/contract_status.json --markdown-out <run_outputs_dir>/contract_status.md
+uv run semantic-mirror train contract-status <run_outputs_dir> --sft-steps 300 --dpo-steps 120 --rl-steps 120 --repo-root . --windows-audit <windows_audit.json> --wsl-smoke-manifest <smoke_chain_manifest.json> --package-source-freshness <source_freshness.json> --human-study-coverage <coverage.json> --human-study-suite <phase6_summary.json> --out <run_outputs_dir>/contract_status.json --markdown-out <run_outputs_dir>/contract_status.md
 uv run semantic-mirror train inspect-samples <dataset_dir> --raw-candidates <raw.jsonl> --repaired-candidates <repaired.jsonl> --out <samples_dir> --model-name <run_name>
 ```
 
@@ -399,6 +399,9 @@ are classified separately. Pass
 a Windows-native audit can pass directly, or a documented native blocker can
 pass when paired with complete Windows-hosted WSL smoke-chain evidence for
 SFT/DPO/RL stage manifests, sample manifests, and diagnostics. Pass
+`--package-source-freshness` with a source freshness JSON report to prove the
+packaged `src/semantic_mirror` runtime source matches the repo commit used for
+status evidence. Pass
 `--human-study-coverage` with one or more `review study-status` reports to
 surface answer-collection readiness, and `--human-study-suite` with an
 `eval human-study-suite` report to score the optional Phase 6 usefulness area;

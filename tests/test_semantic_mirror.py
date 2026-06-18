@@ -1054,6 +1054,41 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "answer_task_id_coverage",
         "real_timed_reviewer_logs",
     ]
+    repo_commit = _git(repo, "rev-parse", "HEAD").strip()
+    source_freshness = tmp_path / "source_freshness.json"
+    source_freshness.write_text(
+        json.dumps(
+            {
+                "mode": "semantic_mirror_package_source_freshness",
+                "git_commit": repo_commit,
+                "compared_scope": "src/semantic_mirror runtime source tree",
+                "compared_file_count": 2,
+                "all_compared_files_match": True,
+                "comparisons": [
+                    {"relative_path": "src/semantic_mirror/cli.py", "match": True},
+                    {"relative_path": "src/semantic_mirror/training.py", "match": True},
+                ],
+                "package_specific_docs": [
+                    {
+                        "relative_path": "README.md",
+                        "reason": "Generated training-bundle README.",
+                    }
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    freshness_status = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )
+    assert freshness_status["package_source_status"]["checked"]
+    assert freshness_status["package_source_status"]["passed"]
+    assert freshness_status["package_source_status"]["git_commit_matches_repo"] is True
+    assert freshness_status["package_source_status"]["compared_file_count"] == 2
 
     cli_status = subprocess.run(
         [
@@ -1075,6 +1110,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             str(windows_audit),
             "--wsl-smoke-manifest",
             str(wsl_smoke),
+            "--package-source-freshness",
+            str(source_freshness),
             "--human-study-suite",
             str(human_suite),
             "--human-study-coverage",
@@ -1101,10 +1138,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "--repo-root 'repo'" in refresh_action["command"]
     assert "--windows-audit 'windows_audit.json'" in refresh_action["command"]
     assert "--wsl-smoke-manifest 'smoke_chain_manifest.json'" in refresh_action["command"]
+    assert "--package-source-freshness 'source_freshness.json'" in refresh_action["command"]
     assert "--human-study-suite 'phase6_summary.json'" in refresh_action["command"]
     assert "--human-study-coverage 'whole_repo_coverage.json'" in refresh_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
+    assert "## Package Source Freshness" in contract_status_md
+    assert "Package runtime source freshness is proven" in contract_status_md
     assert "whole_repo_coverage.json" in contract_status_md
     assert "real_timed_reviewer_logs" in contract_status_md
 

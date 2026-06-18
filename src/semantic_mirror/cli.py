@@ -334,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
             wsl_smoke_manifest_path=Path(args.wsl_smoke_manifest)
             if args.wsl_smoke_manifest is not None
             else None,
+            package_source_freshness_path=Path(args.package_source_freshness)
+            if args.package_source_freshness is not None
+            else None,
             human_study_suite_path=Path(args.human_study_suite)
             if args.human_study_suite is not None
             else None,
@@ -803,6 +806,10 @@ def _parser() -> argparse.ArgumentParser:
     contract_status.add_argument(
         "--wsl-smoke-manifest",
         help="Optional Windows-hosted WSL smoke-chain manifest JSON for fallback readiness evidence.",
+    )
+    contract_status.add_argument(
+        "--package-source-freshness",
+        help="Optional source_freshness JSON proving bundled runtime source matches the repo.",
     )
     contract_status.add_argument(
         "--human-study-suite",
