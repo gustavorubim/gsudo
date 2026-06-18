@@ -707,6 +707,11 @@ def package_training_bundle(
         json.dumps(commands, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    command_manifest = _package_launch_command_manifest(commands)
+    (launch_target / "commands_manifest.json").write_text(
+        json.dumps(command_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     _write_launch_scripts(launch_target)
     _write_bootstrap_scripts(setup_target)
     (out / "README.md").write_text(
@@ -731,6 +736,7 @@ def package_training_bundle(
         "environment_guide": "ENVIRONMENT.md",
         "audit": "audit/current_environment.json",
         "launch_commands": "launch/commands.json",
+        "launch_command_manifest": "launch/commands_manifest.json",
         "linux_cuda_bootstrap": "setup/bootstrap_linux_cuda.sh",
         "wsl_bootstrap": "setup/bootstrap_wsl_ubuntu.ps1",
         "full_training_eval_launcher": "launch/run_full_training_eval.sh",
@@ -767,6 +773,7 @@ def package_training_bundle(
         },
         "files": files,
         "launch_commands": commands,
+        "launch_command_manifest": command_manifest,
     }
     _write_package_manifest(out, manifest)
     return manifest
@@ -2044,6 +2051,55 @@ def _package_launch_commands() -> dict[str, str]:
     }
 
 
+def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]:
+    categories = {
+        "bootstrap_linux_cuda": "setup",
+        "bootstrap_wsl_ubuntu": "setup",
+        "install": "setup",
+        "validate": "validation",
+        "audit": "validation",
+        "wsl_smoke_chain": "training",
+        "sft": "training",
+        "dpo": "training",
+        "rl": "training",
+        "full_training_eval": "training",
+        "smoke_chain": "training",
+        "inspect_full_training_eval_resume": "inspection",
+        "generate_candidates": "generation",
+        "score_candidates": "evaluation",
+        "eval_candidates": "evaluation",
+        "inspect_samples": "inspection",
+        "report": "diagnostics",
+        "source_freshness": "status",
+        "contract_status": "status",
+        "compare_sft": "evaluation",
+        "compare_sft_raw": "evaluation",
+        "compare_dpo": "evaluation",
+        "compare_dpo_raw": "evaluation",
+        "compare_rl": "evaluation",
+        "compare_rl_raw": "evaluation",
+    }
+    training_commands = {
+        "wsl_smoke_chain",
+        "sft",
+        "dpo",
+        "rl",
+        "full_training_eval",
+        "smoke_chain",
+    }
+    return {
+        "schema_version": 1,
+        "commands": {
+            name: {
+                "command": command,
+                "category": categories.get(name, "other"),
+                "launches_training": name in training_commands,
+            }
+            for name, command in commands.items()
+        },
+    }
+
+
 def _write_launch_scripts(launch_target: Path) -> None:
     scripts = {
         "run_sft.sh": """#!/usr/bin/env bash
@@ -3228,6 +3284,11 @@ bash launch/inspect_full_training_eval_resume.sh
 
 The inspector writes `outputs/full_training_eval_resume_inspection.json` and
 prints whether each stage will be reused, resumed, rerun, or started fresh.
+For automation, `launch/commands_manifest.json` classifies every packaged
+command by category and includes a `launches_training` boolean so inspection,
+status, and diagnostic commands can be selected without accidentally starting a
+training run. The older `launch/commands.json` remains a flat command lookup for
+backward compatibility.
 
 After packaging or refreshing bundled source, generate source freshness evidence
 from the package root:

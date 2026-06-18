@@ -2138,7 +2138,23 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "peft" in requirements
     assert "weave" in requirements
     commands = json.loads((bundle_out / "launch" / "commands.json").read_text(encoding="utf-8"))
+    command_manifest = json.loads(
+        (bundle_out / "launch" / "commands_manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_commands = command_manifest["commands"]
     assert "bootstrap_linux_cuda.sh" in commands["bootstrap_linux_cuda"]
+    assert command_manifest["schema_version"] == 1
+    assert manifest_commands["full_training_eval"]["command"] == commands["full_training_eval"]
+    assert manifest_commands["full_training_eval"]["category"] == "training"
+    assert manifest_commands["full_training_eval"]["launches_training"] is True
+    assert manifest_commands["smoke_chain"]["launches_training"] is True
+    assert manifest_commands["wsl_smoke_chain"]["launches_training"] is True
+    assert manifest_commands["inspect_full_training_eval_resume"]["category"] == "inspection"
+    assert manifest_commands["inspect_full_training_eval_resume"]["launches_training"] is False
+    assert manifest_commands["contract_status"]["category"] == "status"
+    assert manifest_commands["contract_status"]["launches_training"] is False
+    assert manifest_commands["report"]["category"] == "diagnostics"
+    assert manifest_commands["report"]["launches_training"] is False
     assert "run_full_training_eval.sh" in commands["full_training_eval"]
     assert "run_smoke_chain.sh" in commands["smoke_chain"]
     assert "run_wsl_smoke_chain.ps1" in commands["wsl_smoke_chain"]
@@ -2168,6 +2184,19 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "3.11" in bootstrap
     assert "3.14" in bootstrap
     assert package_manifest["files"]["wsl_smoke_chain_launcher"] == "launch/run_wsl_smoke_chain.ps1"
+    assert package_manifest["files"]["launch_command_manifest"] == "launch/commands_manifest.json"
+    assert (
+        package_manifest["launch_command_manifest"]["commands"]["full_training_eval"][
+            "launches_training"
+        ]
+        is True
+    )
+    assert (
+        package_manifest["launch_command_manifest"]["commands"]["contract_status"][
+            "launches_training"
+        ]
+        is False
+    )
     assert (bundle_out / "launch" / "run_sft.sh").exists()
     assert (bundle_out / "launch" / "run_rl.sh").exists()
     assert (bundle_out / "launch" / "run_smoke_chain.sh").exists()
@@ -2370,6 +2399,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--markdown-out outputs/contract_status.md" in full_eval_script
     assert "source_freshness.json" in package_readme
     assert "train source-freshness" in package_readme
+    assert "commands_manifest.json" in package_readme
+    assert "launches_training" in package_readme
     assert "contract_status.json" in package_readme
     assert "contract_status.md" in package_readme
     assert (
