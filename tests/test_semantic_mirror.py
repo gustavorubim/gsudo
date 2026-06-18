@@ -3219,7 +3219,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
-    assert "real timed-answer counts" in package_readme
+    assert "per-action `blocked_by_stages` and `stage_actions`" in package_readme
+    assert "real" in package_readme
+    assert "timed-answer counts" in package_readme
     assert "remaining_recovery_plan" in package_readme
     assert "Recovery Plan" in package_readme
     assert "generate_eval_report_after_stage" in package_readme
@@ -3235,7 +3237,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "The JSON keeps full `next_actions` commands" in root_readme
     assert "package_metadata_summary" in root_readme
     assert "package Python" in root_readme
-    assert "metadata so automation can decide" in root_readme
+    assert "metadata so" in root_readme
+    assert "automation can decide" in root_readme
+    assert "Next-action rows also expose" in root_readme
+    assert "`blocked_by_stages` and `stage_actions`" in root_readme
     assert "generate_eval_report_after_stage" in root_readme
     assert "generate_sample_inspection_after_stage" in root_readme
     assert (

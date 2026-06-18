@@ -300,7 +300,10 @@ sample rows use `generate_sample_inspection_after_stage`, and
 `blocked_by_stages` names the stage that must finish before those artifacts are
 current. Contract-status JSON and stdout also include package source,
 command-manifest, and Python metadata summaries so automation can distinguish
-package evidence repairs from training work. Generated prompts include
+package evidence repairs from training work. Next-action rows also expose
+`blocked_by_stages` and `stage_actions`, so callers can route WSL smoke, DPO
+resume, RL launch, diagnostics, and status-refresh work without parsing prose.
+Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
 model to return that object as the final JSON. The
@@ -436,10 +439,11 @@ stdout is the compact pass/fail summary for callers. Both include
 `remaining_recovery_plan`.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
-gates, DPO/RL resume decisions, Phase 6 failed gates, real timed-answer counts,
-package source freshness, command-manifest safety checks, and package Python
-metadata so automation can decide whether the next step is inspection, human
-study collection, status refresh, or a training launch. Use
+gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
+`stage_actions`, Phase 6 failed gates, real timed-answer counts, package source
+freshness, command-manifest safety checks, and package Python metadata so
+automation can decide whether the next step is inspection, human study
+collection, status refresh, or a training launch. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired

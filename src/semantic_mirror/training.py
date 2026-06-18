@@ -3506,9 +3506,10 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 and `remaining_recovery_plan`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
-current-versus-expected failed-gate evidence, DPO/RL resume decisions, Phase 6
-failed gates, real timed-answer counts, package source freshness,
-command-manifest safety checks, and package Python metadata.
+current-versus-expected failed-gate evidence, DPO/RL resume decisions,
+per-action `blocked_by_stages` and `stage_actions`, Phase 6 failed gates, real
+timed-answer counts, package source freshness, command-manifest safety checks,
+and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
