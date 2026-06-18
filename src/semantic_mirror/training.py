@@ -6737,6 +6737,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- WSL smoke complete: `{windows_readiness.get('wsl_smoke_complete')}`",
             f"- WSL failed checks: `{', '.join(windows_readiness.get('wsl_failed_checks') or []) or 'None'}`",
             f"- WSL blocker summary: `{'; '.join(windows_readiness.get('wsl_blocker_summary') or []) or 'None'}`",
+            f"- WSL blocker evidence: `{json.dumps(windows_readiness.get('wsl_blocker_evidence_summary', {}), sort_keys=True)}`",
             f"- WSL missing stage manifests: `{', '.join(windows_readiness.get('wsl_missing_stage_manifests') or []) or 'None'}`",
             f"- WSL missing sample manifests: `{', '.join(windows_readiness.get('wsl_missing_sample_manifests') or []) or 'None'}`",
             f"- WSL diagnostics exists: `{windows_readiness.get('wsl_diagnostics_exists')}`",
@@ -8071,6 +8072,9 @@ def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_failed_checks": status.get("wsl_failed_checks", []),
         "wsl_blocker_summary": status.get("wsl_blocker_summary", []),
+        "wsl_blocker_evidence_summary": status.get(
+            "wsl_blocker_evidence_summary", {}
+        ),
         "wsl_missing_stage_manifest_count": len(
             status.get("wsl_missing_stage_manifests", []) or []
         ),
@@ -8743,6 +8747,18 @@ def _windows_readiness_contract_status(
         "wsl_smoke_complete": wsl_complete,
         "wsl_failed_checks": wsl_failed_checks,
         "wsl_blocker_summary": wsl_blocker_summary,
+        "wsl_blocker_evidence_summary": _wsl_blocker_evidence_summary(
+            smoke_path=str(smoke_path) if smoke_path is not None else None,
+            manifest_mode=smoke.get("mode") if isinstance(smoke, dict) else None,
+            complete=wsl_complete,
+            failed_checks=wsl_failed_checks,
+            missing_stage_manifests=missing_stage_manifests,
+            missing_sample_manifests=missing_sample_manifests,
+            diagnostics_exists=bool(smoke.get("diagnostics_exists"))
+            if isinstance(smoke, dict)
+            else False,
+            smoke_out=smoke.get("smoke_out") if isinstance(smoke, dict) else None,
+        ),
         "wsl_stage_manifests": wsl_stage_manifests,
         "wsl_missing_stage_manifests": missing_stage_manifests,
         "wsl_sample_manifests": wsl_sample_manifests,
@@ -8851,6 +8867,29 @@ def _native_blocker_evidence_summary(
         "nvidia_smi_available": nvidia_smi.get("available"),
         "nvidia_smi_devices": device_names,
         "failed_required_checks": failed_required_checks,
+    }
+
+
+def _wsl_blocker_evidence_summary(
+    *,
+    smoke_path: str | None,
+    manifest_mode: str | None,
+    complete: bool,
+    failed_checks: list[str],
+    missing_stage_manifests: list[str],
+    missing_sample_manifests: list[str],
+    diagnostics_exists: bool,
+    smoke_out: str | None,
+) -> dict[str, Any]:
+    return {
+        "smoke_manifest_path": smoke_path,
+        "smoke_manifest_mode": manifest_mode,
+        "smoke_complete": complete,
+        "failed_checks": failed_checks,
+        "missing_stage_manifests": missing_stage_manifests,
+        "missing_sample_manifests": missing_sample_manifests,
+        "diagnostics_exists": diagnostics_exists,
+        "smoke_out": smoke_out,
     }
 
 

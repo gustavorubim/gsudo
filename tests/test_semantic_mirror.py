@@ -1457,6 +1457,18 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert readiness_status["windows_readiness_status"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
+    assert readiness_status["windows_readiness_status"][
+        "wsl_blocker_evidence_summary"
+    ] == {
+        "diagnostics_exists": True,
+        "failed_checks": [],
+        "missing_sample_manifests": [],
+        "missing_stage_manifests": [],
+        "smoke_complete": True,
+        "smoke_manifest_mode": "smoke_chain",
+        "smoke_manifest_path": str(wsl_smoke.resolve()),
+        "smoke_out": "/home/test/smoke",
+    }
     assert readiness_status["windows_readiness_status"]["next_action_command_name"] is None
     assert (
         readiness_status["windows_readiness_status"]["next_action_launches_training"]
@@ -1502,6 +1514,21 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "Missing WSL smoke sample manifests for: sft, dpo, rl.",
         "WSL smoke diagnostics directory was not reported.",
     ]
+    assert wrong_wsl_readiness["wsl_blocker_evidence_summary"] == {
+        "diagnostics_exists": False,
+        "failed_checks": [
+            "smoke_chain_manifest_mode",
+            "stage_manifests",
+            "sample_manifests",
+            "diagnostics",
+        ],
+        "missing_sample_manifests": ["sft", "dpo", "rl"],
+        "missing_stage_manifests": ["sft", "dpo", "rl"],
+        "smoke_complete": False,
+        "smoke_manifest_mode": "training_validate",
+        "smoke_manifest_path": str(wrong_wsl_smoke.resolve()),
+        "smoke_out": None,
+    }
     assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["next_action_command_name"] == "wsl_smoke_chain"
@@ -1885,6 +1912,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
     assert cli_stdout["windows_readiness_summary"]["wsl_failed_checks"] == []
     assert cli_stdout["windows_readiness_summary"]["wsl_blocker_summary"] == []
+    assert cli_stdout["windows_readiness_summary"][
+        "wsl_blocker_evidence_summary"
+    ]["smoke_complete"] is True
+    assert cli_stdout["windows_readiness_summary"][
+        "wsl_blocker_evidence_summary"
+    ]["smoke_out"] == "/home/test/smoke"
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
         "smoke_chain"
     )
@@ -2315,6 +2348,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "WSL smoke manifest mode: `smoke_chain`" in contract_status_md
     assert "WSL failed checks: `None`" in contract_status_md
     assert "WSL blocker summary: `None`" in contract_status_md
+    assert "WSL blocker evidence:" in contract_status_md
+    assert '"smoke_out": "/home/test/smoke"' in contract_status_md
+    assert '"smoke_complete": true' in contract_status_md
     assert "WSL missing stage manifests: `None`" in contract_status_md
     assert "WSL missing sample manifests: `None`" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
