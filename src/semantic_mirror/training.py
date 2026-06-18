@@ -6538,7 +6538,11 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Native passed: `{windows_readiness.get('native_passed')}`",
             f"- Native blocked: `{windows_readiness.get('native_blocked')}`",
             f"- WSL smoke manifest path: `{windows_readiness.get('wsl_smoke_manifest_path')}`",
+            f"- WSL smoke manifest mode: `{windows_readiness.get('wsl_smoke_manifest_mode')}`",
             f"- WSL smoke complete: `{windows_readiness.get('wsl_smoke_complete')}`",
+            f"- WSL failed checks: `{', '.join(windows_readiness.get('wsl_failed_checks') or []) or 'None'}`",
+            f"- WSL missing stage manifests: `{', '.join(windows_readiness.get('wsl_missing_stage_manifests') or []) or 'None'}`",
+            f"- WSL missing sample manifests: `{', '.join(windows_readiness.get('wsl_missing_sample_manifests') or []) or 'None'}`",
             f"- WSL diagnostics exists: `{windows_readiness.get('wsl_diagnostics_exists')}`",
         ]
     )

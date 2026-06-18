@@ -1635,6 +1635,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "eval human-study-suite" in cli_phase6_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
+    assert "## Windows Readiness" in contract_status_md
+    assert "WSL smoke manifest mode: `smoke_chain`" in contract_status_md
+    assert "WSL failed checks: `None`" in contract_status_md
+    assert "WSL missing stage manifests: `None`" in contract_status_md
+    assert "WSL missing sample manifests: `None`" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
     assert (
         "Package runtime source freshness and package-specific docs are proven"
