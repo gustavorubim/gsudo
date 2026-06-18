@@ -1234,7 +1234,6 @@ def summarize_full_eval_contract_status(
             evidence=str(run / "diagnostics"),
         ),
     ]
-    missing_or_failed = [gate for gate in gates if not gate["passed"]]
     repo_hygiene_status = _repo_hygiene_contract_status(repo_root)
     windows_readiness_status = _windows_readiness_contract_status(
         windows_audit_path=windows_audit_path,
@@ -1248,6 +1247,22 @@ def summarize_full_eval_contract_status(
         package_source_status
     )
     package_metadata_status = _package_metadata_contract_status(package_source_status)
+    gates.append(
+        _contract_gate(
+            "package_python_metadata_valid_when_checked",
+            package_metadata_status.get("passed") is not False,
+            actual={
+                "checked": package_metadata_status.get("checked"),
+                "requires_python": package_metadata_status.get("requires_python"),
+            },
+            expected={
+                "requires_python": UNSLOTH_PYTHON_RANGE,
+                "checked_failures_block_completion": True,
+            },
+            evidence=package_metadata_status.get("path"),
+        )
+    )
+    missing_or_failed = [gate for gate in gates if not gate["passed"]]
     human_usefulness_status = _human_usefulness_contract_status(
         human_study_suite_path,
         coverage_paths=human_study_coverage_paths,

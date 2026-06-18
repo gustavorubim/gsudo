@@ -1625,6 +1625,31 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         encoding="utf-8",
     )
     assert summarize_full_eval_contract_status(run)["passed"]
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "semantic-mirror-runtime"\nrequires-python = ">=3.11"\n',
+        encoding="utf-8",
+    )
+    bad_metadata_status = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )
+    bad_metadata_gates = {gate["name"]: gate for gate in bad_metadata_status["gates"]}
+    assert not bad_metadata_status["passed"]
+    assert not bad_metadata_gates["package_python_metadata_valid_when_checked"]["passed"]
+    assert bad_metadata_status["package_metadata_status"]["requires_python"] == ">=3.11"
+    assert bad_metadata_status["remaining_by_area"]["other"] == [
+        "package_python_metadata_valid_when_checked"
+    ]
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "semantic-mirror-runtime"\nrequires-python = ">=3.11,<3.14"\n',
+        encoding="utf-8",
+    )
+    assert summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )["passed"]
 
 
 def test_inspect_full_eval_resume_cli_reports_safe_stage_decisions(
