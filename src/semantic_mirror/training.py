@@ -3582,8 +3582,9 @@ SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
 `outputs/contract_status.json`, and `outputs/contract_status.md`. The contract
 status JSON includes `remaining_recovery_plan`, and the Markdown includes a
 `Recovery Plan` table mapping each failed gate to the required action, action
-category, recommended next-action row, whether training is required, blocking
-stages, command-manifest key, command-link validity, and target artifacts. Each row also includes an
+category, recommended next-action row, current and expected evidence, whether
+training is required, blocking stages, command-manifest key, command-link
+validity, command inputs, and target artifacts. Each row also includes an
 `action_category`, `next_action_title`, `next_action_category`,
 `next_action_command_name`, `next_action_launches_training`, and
 `next_action_command_link_valid` for routing
@@ -6674,6 +6675,13 @@ def _contract_gate(
     }
 
 
+def _markdown_table_code_value(value: Any, *, max_chars: int = 160) -> str:
+    text = json.dumps(value, sort_keys=True)
+    if len(text) > max_chars:
+        text = text[: max_chars - 3] + "..."
+    return "`" + text.replace("|", "\\|") + "`"
+
+
 def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Semantic Mirror Full-Eval Contract Status",
@@ -7062,8 +7070,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Blocked stage command matrix: `{json.dumps(recovery_summary.get('blocked_stage_command_matrix', {}), sort_keys=True)}`",
                     f"- Non-training action counts: `{json.dumps(recovery_summary.get('non_training_action_counts', {}), sort_keys=True)}`",
                     "",
-                    "| Gate | Action | Category | Next Action | Command | Inputs | Command Link | Requires Training | Blocked By | Artifacts |",
-                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                    "| Gate | Action | Category | Next Action | Command | Inputs | Evidence | Command Link | Requires Training | Blocked By | Artifacts |",
+                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
                 ]
             )
             for plan_item in recovery_plan:
@@ -7076,6 +7084,12 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     + (", ".join(f"`{item}`" for item in required_inputs) or "`None`")
                     + "<br>optional: "
                     + (", ".join(f"`{item}`" for item in optional_inputs) or "`None`")
+                )
+                evidence_text = (
+                    "current: "
+                    + _markdown_table_code_value(plan_item.get("current_evidence"))
+                    + "<br>expected: "
+                    + _markdown_table_code_value(plan_item.get("expected_evidence"))
                 )
                 command_link_valid = plan_item.get("next_action_command_link_valid")
                 if command_link_valid is True:
@@ -7093,6 +7107,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"`{plan_item.get('next_action_command_name') or 'inspect_full_training_eval_resume'}` "
                     f"(training: `{plan_item.get('next_action_launches_training', False)}`) | "
                     f"{input_text} | "
+                    f"{evidence_text} | "
                     f"`{command_link}` | "
                     f"`{plan_item['requires_training']}` | "
                     f"{', '.join(f'`{stage}`' for stage in blocked_by) or '`None`'} | "

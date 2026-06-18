@@ -1367,7 +1367,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert '- Blocked stage counts: `{"dpo": 7, "rl": 7}`' in status_markdown
     assert (
-        "| Gate | Action | Category | Next Action | Command | Inputs | Command Link | Requires Training | Blocked By | Artifacts |"
+        "| Gate | Action | Category | Next Action | Command | Inputs | Evidence | Command Link | Requires Training | Blocked By | Artifacts |"
         in status_markdown
     )
     assert "`unchecked`" in status_markdown
@@ -1376,15 +1376,15 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         not in status_markdown
     )
     assert (
-        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | required: `None`<br>optional: `None` | `unchecked` | `True` |"
+        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | required: `None`<br>optional: `None` | current: `10`<br>expected: `120` | `unchecked` | `True` |"
         in status_markdown
     )
     assert (
-        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | required: `None`<br>optional: `None` | `unchecked` | `True` | `dpo` |"
+        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | required: `None`<br>optional: `None` | current: `{\"complete\": true, \"stage_current_for_requested_steps\": false}`<br>expected: `true` | `unchecked` | `True` | `dpo` |"
         in status_markdown
     )
     assert (
-        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | required: `None`<br>optional: `None` | `unchecked` | `True` | `dpo`, `rl` |"
+        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | required: `None`<br>optional: `None` | current: "
         in status_markdown
     )
     assert "## Resume Inspection" in status_markdown
@@ -2573,7 +2573,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Gates with optional command inputs: `11`" in contract_status_md
     assert "Required command input counts:" in contract_status_md
     assert "Optional command input counts:" in contract_status_md
-    assert "| Gate | Action | Category | Next Action | Command | Inputs |" in contract_status_md
+    assert "| Gate | Action | Category | Next Action | Command | Inputs | Evidence |" in contract_status_md
     assert "required: `held_out_dataset`, `baseline_candidates`<br>optional: `source_freshness_repo_root`, `windows_audit`, `wsl_smoke_manifest`, `package_source_freshness`" in contract_status_md
     assert "## Package Python Metadata" in contract_status_md
     assert "Requires Python: `>=3.11,<3.14`" in contract_status_md
@@ -4184,6 +4184,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "recovery_plan_summary" in package_readme
     assert "blocked-stage command" in package_readme
     assert "matrix" in package_readme
+    assert "current and expected evidence" in package_readme
+    assert "command inputs" in package_readme
     assert "next_action_title" in package_readme
     assert "next_action_category" in package_readme
     assert "next_action_command_name" in package_readme
@@ -4212,6 +4214,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "training_dependency_summary" in root_readme
     assert "blocked-stage command" in root_readme
     assert "matrix" in root_readme
+    assert "current and\nexpected evidence" in root_readme
+    assert "command inputs" in root_readme
     assert "next_action_title" in root_readme
     assert "next_action_category" in root_readme
     assert "next_action_command_name" in root_readme
