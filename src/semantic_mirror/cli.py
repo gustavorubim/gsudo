@@ -1268,6 +1268,7 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 "package_metadata_summary",
                 _package_metadata_summary(manifest.get("package_metadata_status")),
             ),
+            "input_preflight_summary": manifest.get("input_preflight_summary", {}),
             "human_usefulness_summary": _summary_value(
                 manifest,
                 "human_usefulness_summary",

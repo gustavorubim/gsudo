@@ -1325,6 +1325,9 @@ def summarize_full_eval_contract_status(
         package_command_manifest_status,
     )
     package_metadata_status = _package_metadata_contract_status(package_source_status)
+    input_preflight_status = _input_preflight_contract_status(
+        run.parent if run.name == "outputs" else run
+    )
     gates.extend(
         [
             _contract_gate(
@@ -1448,6 +1451,10 @@ def summarize_full_eval_contract_status(
         "package_metadata_status": package_metadata_status,
         "package_metadata_summary": _package_metadata_contract_summary(
             package_metadata_status
+        ),
+        "input_preflight_status": input_preflight_status,
+        "input_preflight_summary": _input_preflight_contract_summary(
+            input_preflight_status
         ),
         "human_usefulness_status": human_usefulness_status,
         "human_usefulness_summary": _human_usefulness_contract_summary(
@@ -3909,8 +3916,8 @@ readiness prerequisite is still open.
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
-`human_usefulness_summary`, `next_action_summary`, `ordered_execution_plan`,
-`stage_recovery_summary`, `remaining_by_area`,
+`input_preflight_summary`, `human_usefulness_summary`, `next_action_summary`,
+`ordered_execution_plan`, `stage_recovery_summary`, `remaining_by_area`,
 `remaining_area_summary`, `remaining_recovery_plan`, `recovery_plan_summary`, and
 `training_dependency_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
@@ -7353,6 +7360,31 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Excludes Python 3.14: `{package_metadata.get('excludes_python_3_14')}`",
         ]
     )
+    input_preflight = report.get("input_preflight_status") or {}
+    if input_preflight:
+        lines.extend(
+            [
+                "",
+                "## Input Preflight",
+                "",
+                f"- Passed: `{input_preflight.get('passed')}`",
+                f"- Summary: {input_preflight.get('summary')}",
+                f"- Reports passed: `{input_preflight.get('passed_report_count', 0)}/{input_preflight.get('report_count', 0)}`",
+                "",
+                "| Report | Passed | Command | Required Inputs | Issues | Evidence |",
+                "| --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for name, item in (input_preflight.get("reports") or {}).items():
+            issues = item.get("issues") or []
+            required_inputs = item.get("required_inputs") or []
+            lines.append(
+                f"| `{name}` | `{item.get('passed')}` | "
+                f"`{item.get('command_name')}` | "
+                f"{', '.join(f'`{input_name}`' for input_name in required_inputs) or '`None`'} | "
+                f"{', '.join(f'`{issue}`' for issue in issues) or '`None`'} | "
+                f"`{item.get('path')}` |"
+            )
     human_usefulness = report.get("human_usefulness_status") or {}
     lines.extend(
         [
@@ -10238,6 +10270,82 @@ def _package_metadata_contract_status(
         "expected_requires_python": UNSLOTH_PYTHON_RANGE,
         "requires_python": requires_python,
         "excludes_python_3_14": requires_python == UNSLOTH_PYTHON_RANGE,
+    }
+
+
+def _input_preflight_contract_status(package_root: Path | str) -> dict[str, Any]:
+    root = Path(package_root)
+    specs = {
+        "wsl_smoke_inputs": {
+            "path": root / "outputs" / "preflight" / "wsl_smoke_inputs.json",
+            "expected_mode": "wsl_smoke_input_preflight",
+            "required_inputs": ["held_out_dataset"],
+            "command_name": "preflight_wsl_smoke_inputs",
+        },
+        "full_eval_inputs": {
+            "path": root / "outputs" / "preflight" / "full_eval_inputs.json",
+            "expected_mode": "full_eval_input_preflight",
+            "required_inputs": ["held_out_dataset", "baseline_candidates"],
+            "command_name": "preflight_full_eval_inputs",
+        },
+    }
+    reports: dict[str, dict[str, Any]] = {}
+    for name, spec in specs.items():
+        path = spec["path"]
+        report = _read_json_file(path)
+        exists = isinstance(report, dict)
+        mode_valid = exists and report.get("mode") == spec["expected_mode"]
+        passed = exists and mode_valid and report.get("passed") is True
+        issues = report.get("issues", []) if isinstance(report, dict) else []
+        reports[name] = {
+            "path": str(path),
+            "exists": exists,
+            "mode": report.get("mode") if isinstance(report, dict) else None,
+            "mode_valid": mode_valid,
+            "passed": passed,
+            "issues": issues if isinstance(issues, list) else [str(issues)],
+            "required_inputs": spec["required_inputs"],
+            "command_name": spec["command_name"],
+        }
+    passed_reports = [name for name, report in reports.items() if report["passed"]]
+    missing_reports = [name for name, report in reports.items() if not report["exists"]]
+    failed_reports = [
+        name
+        for name, report in reports.items()
+        if report["exists"] and not report["passed"]
+    ]
+    all_passed = len(passed_reports) == len(reports)
+    return {
+        "checked": True,
+        "passed": all_passed,
+        "summary": (
+            "All training input preflight reports passed."
+            if all_passed
+            else "Training input preflight reports are missing or failing."
+        ),
+        "report_count": len(reports),
+        "passed_report_count": len(passed_reports),
+        "missing_report_count": len(missing_reports),
+        "failed_report_count": len(failed_reports),
+        "passed_reports": passed_reports,
+        "missing_reports": missing_reports,
+        "failed_reports": failed_reports,
+        "reports": reports,
+    }
+
+
+def _input_preflight_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "summary": status.get("summary"),
+        "report_count": status.get("report_count", 0),
+        "passed_report_count": status.get("passed_report_count", 0),
+        "missing_report_count": status.get("missing_report_count", 0),
+        "failed_report_count": status.get("failed_report_count", 0),
+        "passed_reports": status.get("passed_reports", []),
+        "missing_reports": status.get("missing_reports", []),
+        "failed_reports": status.get("failed_reports", []),
     }
 
 

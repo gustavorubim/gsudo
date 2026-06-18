@@ -1148,6 +1148,24 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == ["dpo", "rl"]
     assert not status["repo_hygiene_status"]["checked"]
     assert not status["windows_readiness_status"]["checked"]
+    assert status["input_preflight_summary"] == {
+        "checked": True,
+        "failed_report_count": 0,
+        "missing_report_count": 2,
+        "missing_reports": ["wsl_smoke_inputs", "full_eval_inputs"],
+        "passed": False,
+        "passed_report_count": 0,
+        "passed_reports": [],
+        "report_count": 2,
+        "summary": "Training input preflight reports are missing or failing.",
+        "failed_reports": [],
+    }
+    assert status["input_preflight_status"]["reports"]["wsl_smoke_inputs"][
+        "command_name"
+    ] == "preflight_wsl_smoke_inputs"
+    assert status["input_preflight_status"]["reports"]["full_eval_inputs"][
+        "required_inputs"
+    ] == ["held_out_dataset", "baseline_candidates"]
     assert not status["human_usefulness_status"]["checked"]
     scorecard = {row["area"]: row for row in status["contract_scorecard"]}
     assert scorecard["repo_hygiene"]["passed"] is None
@@ -2738,6 +2756,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "package_source_summary",
         "package_command_manifest_summary",
         "package_metadata_summary",
+        "input_preflight_summary",
         "human_usefulness_summary",
         "next_action_summary",
         "ordered_execution_plan",
