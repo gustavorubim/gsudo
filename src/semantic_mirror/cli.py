@@ -1873,6 +1873,12 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
     ready_non_training_command_counts: dict[str, int] = {}
     waiting_non_training_command_counts: dict[str, int] = {}
     training_launch_command_counts: dict[str, int] = {}
+    ready_non_training_required_input_counts: dict[str, int] = {}
+    ready_non_training_optional_input_counts: dict[str, int] = {}
+    waiting_non_training_required_input_counts: dict[str, int] = {}
+    waiting_non_training_optional_input_counts: dict[str, int] = {}
+    training_launch_required_input_counts: dict[str, int] = {}
+    training_launch_optional_input_counts: dict[str, int] = {}
     ready_non_training_count = 0
     waiting_non_training_count = 0
     training_launch_count = 0
@@ -1885,6 +1891,8 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
         command_name = str(item.get("next_action_command_name") or "unknown")
         requires_training = bool(item.get("requires_training"))
         launches_training = bool(item.get("next_action_launches_training"))
+        required_inputs = item.get("next_action_command_required_inputs")
+        optional_inputs = item.get("next_action_command_optional_inputs")
         if requires_training:
             requires_training_count += 1
         if launches_training:
@@ -1892,15 +1900,33 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
             training_launch_command_counts[command_name] = (
                 training_launch_command_counts.get(command_name, 0) + 1
             )
+            _increment_input_counts(
+                training_launch_required_input_counts, required_inputs
+            )
+            _increment_input_counts(
+                training_launch_optional_input_counts, optional_inputs
+            )
         elif requires_training:
             waiting_non_training_count += 1
             waiting_non_training_command_counts[command_name] = (
                 waiting_non_training_command_counts.get(command_name, 0) + 1
             )
+            _increment_input_counts(
+                waiting_non_training_required_input_counts, required_inputs
+            )
+            _increment_input_counts(
+                waiting_non_training_optional_input_counts, optional_inputs
+            )
         else:
             ready_non_training_count += 1
             ready_non_training_command_counts[command_name] = (
                 ready_non_training_command_counts.get(command_name, 0) + 1
+            )
+            _increment_input_counts(
+                ready_non_training_required_input_counts, required_inputs
+            )
+            _increment_input_counts(
+                ready_non_training_optional_input_counts, optional_inputs
             )
     return {
         "total_items": total_items,
@@ -1920,7 +1946,40 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
             key: ready_non_training_command_counts[key]
             for key in sorted(ready_non_training_command_counts)
         },
+        "training_launch_required_input_counts": {
+            key: training_launch_required_input_counts[key]
+            for key in sorted(training_launch_required_input_counts)
+        },
+        "training_launch_optional_input_counts": {
+            key: training_launch_optional_input_counts[key]
+            for key in sorted(training_launch_optional_input_counts)
+        },
+        "waiting_non_training_required_input_counts": {
+            key: waiting_non_training_required_input_counts[key]
+            for key in sorted(waiting_non_training_required_input_counts)
+        },
+        "waiting_non_training_optional_input_counts": {
+            key: waiting_non_training_optional_input_counts[key]
+            for key in sorted(waiting_non_training_optional_input_counts)
+        },
+        "ready_non_training_required_input_counts": {
+            key: ready_non_training_required_input_counts[key]
+            for key in sorted(ready_non_training_required_input_counts)
+        },
+        "ready_non_training_optional_input_counts": {
+            key: ready_non_training_optional_input_counts[key]
+            for key in sorted(ready_non_training_optional_input_counts)
+        },
     }
+
+
+def _increment_input_counts(counts: dict[str, int], inputs: object) -> None:
+    if not isinstance(inputs, list):
+        return
+    for item in inputs:
+        if not isinstance(item, str):
+            continue
+        counts[item] = counts.get(item, 0) + 1
 
 
 def _next_action_summary(actions: object) -> dict[str, object]:

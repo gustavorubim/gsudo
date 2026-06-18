@@ -3622,7 +3622,8 @@ per-action `command_name`, `command_category`, `blocked_by_stages`,
 readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, recovery-plan required
 and optional input rollups, remaining-area command rollups, training-dependency
-rollups, command category rollups, and package Python metadata.
+rollups, training-dependency input rollups, command category rollups, and
+package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
 recovery actions for source freshness, command manifest, and Python metadata.
 Sample manifests and the summary include raw parseability, cap hits, repair-free
@@ -7066,6 +7067,12 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Training launch command counts: `{json.dumps(training_dependency_summary.get('training_launch_command_counts', {}), sort_keys=True)}`",
                     f"- Waiting non-training command counts: `{json.dumps(training_dependency_summary.get('waiting_non_training_command_counts', {}), sort_keys=True)}`",
                     f"- Ready non-training command counts: `{json.dumps(training_dependency_summary.get('ready_non_training_command_counts', {}), sort_keys=True)}`",
+                    f"- Training launch required input counts: `{json.dumps(training_dependency_summary.get('training_launch_required_input_counts', {}), sort_keys=True)}`",
+                    f"- Training launch optional input counts: `{json.dumps(training_dependency_summary.get('training_launch_optional_input_counts', {}), sort_keys=True)}`",
+                    f"- Waiting non-training required input counts: `{json.dumps(training_dependency_summary.get('waiting_non_training_required_input_counts', {}), sort_keys=True)}`",
+                    f"- Waiting non-training optional input counts: `{json.dumps(training_dependency_summary.get('waiting_non_training_optional_input_counts', {}), sort_keys=True)}`",
+                    f"- Ready non-training required input counts: `{json.dumps(training_dependency_summary.get('ready_non_training_required_input_counts', {}), sort_keys=True)}`",
+                    f"- Ready non-training optional input counts: `{json.dumps(training_dependency_summary.get('ready_non_training_optional_input_counts', {}), sort_keys=True)}`",
                     f"- Missing command names: `{json.dumps(recovery_summary.get('missing_command_names', []), sort_keys=True)}`",
                     f"- Next action command counts: `{json.dumps(recovery_summary.get('next_action_command_counts', {}), sort_keys=True)}`",
                     f"- Next action command category counts: `{json.dumps(recovery_summary.get('next_action_command_category_counts', {}), sort_keys=True)}`",
@@ -8229,6 +8236,12 @@ def _training_dependency_summary(recovery_plan: list[dict[str, Any]]) -> dict[st
     ready_non_training_command_counts: dict[str, int] = {}
     waiting_non_training_command_counts: dict[str, int] = {}
     training_launch_command_counts: dict[str, int] = {}
+    ready_non_training_required_input_counts: dict[str, int] = {}
+    ready_non_training_optional_input_counts: dict[str, int] = {}
+    waiting_non_training_required_input_counts: dict[str, int] = {}
+    waiting_non_training_optional_input_counts: dict[str, int] = {}
+    training_launch_required_input_counts: dict[str, int] = {}
+    training_launch_optional_input_counts: dict[str, int] = {}
     ready_non_training_count = 0
     waiting_non_training_count = 0
     training_launch_count = 0
@@ -8237,6 +8250,8 @@ def _training_dependency_summary(recovery_plan: list[dict[str, Any]]) -> dict[st
         command_name = str(item.get("next_action_command_name") or "unknown")
         requires_training = bool(item.get("requires_training"))
         launches_training = bool(item.get("next_action_launches_training"))
+        required_inputs = item.get("next_action_command_required_inputs") or []
+        optional_inputs = item.get("next_action_command_optional_inputs") or []
         if requires_training:
             requires_training_count += 1
         if launches_training:
@@ -8244,15 +8259,33 @@ def _training_dependency_summary(recovery_plan: list[dict[str, Any]]) -> dict[st
             training_launch_command_counts[command_name] = (
                 training_launch_command_counts.get(command_name, 0) + 1
             )
+            _increment_input_counts(
+                training_launch_required_input_counts, required_inputs
+            )
+            _increment_input_counts(
+                training_launch_optional_input_counts, optional_inputs
+            )
         elif requires_training:
             waiting_non_training_count += 1
             waiting_non_training_command_counts[command_name] = (
                 waiting_non_training_command_counts.get(command_name, 0) + 1
             )
+            _increment_input_counts(
+                waiting_non_training_required_input_counts, required_inputs
+            )
+            _increment_input_counts(
+                waiting_non_training_optional_input_counts, optional_inputs
+            )
         else:
             ready_non_training_count += 1
             ready_non_training_command_counts[command_name] = (
                 ready_non_training_command_counts.get(command_name, 0) + 1
+            )
+            _increment_input_counts(
+                ready_non_training_required_input_counts, required_inputs
+            )
+            _increment_input_counts(
+                ready_non_training_optional_input_counts, optional_inputs
             )
     return {
         "total_items": len(recovery_plan),
@@ -8272,7 +8305,40 @@ def _training_dependency_summary(recovery_plan: list[dict[str, Any]]) -> dict[st
             key: ready_non_training_command_counts[key]
             for key in sorted(ready_non_training_command_counts)
         },
+        "training_launch_required_input_counts": {
+            key: training_launch_required_input_counts[key]
+            for key in sorted(training_launch_required_input_counts)
+        },
+        "training_launch_optional_input_counts": {
+            key: training_launch_optional_input_counts[key]
+            for key in sorted(training_launch_optional_input_counts)
+        },
+        "waiting_non_training_required_input_counts": {
+            key: waiting_non_training_required_input_counts[key]
+            for key in sorted(waiting_non_training_required_input_counts)
+        },
+        "waiting_non_training_optional_input_counts": {
+            key: waiting_non_training_optional_input_counts[key]
+            for key in sorted(waiting_non_training_optional_input_counts)
+        },
+        "ready_non_training_required_input_counts": {
+            key: ready_non_training_required_input_counts[key]
+            for key in sorted(ready_non_training_required_input_counts)
+        },
+        "ready_non_training_optional_input_counts": {
+            key: ready_non_training_optional_input_counts[key]
+            for key in sorted(ready_non_training_optional_input_counts)
+        },
     }
+
+
+def _increment_input_counts(counts: dict[str, int], inputs: object) -> None:
+    if not isinstance(inputs, list):
+        return
+    for item in inputs:
+        if not isinstance(item, str):
+            continue
+        counts[item] = counts.get(item, 0) + 1
 
 
 def _next_actions_contract_summary(actions: list[dict[str, Any]]) -> dict[str, Any]:
