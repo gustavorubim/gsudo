@@ -3998,12 +3998,14 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
+    assert "required-input action count" in package_readme
     assert "readiness next-command routing fields" in package_readme
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
     assert "per-action `command_name`, `command_category`" in package_readme
     assert "`blocked_by_stages`" in package_readme
+    assert "`required_inputs`" in package_readme
     assert "`stage_actions`" in package_readme
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
@@ -4020,6 +4022,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "next_action_category" in package_readme
     assert "next_action_command_name" in package_readme
     assert "next_action_launches_training" in package_readme
+    assert "next_action_command_required_inputs" in package_readme
     assert "Recovery Plan" in package_readme
     assert "generate_eval_report_after_stage" in package_readme
     assert "generate_sample_inspection_after_stage" in package_readme
@@ -4036,6 +4039,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "reuse decisions can be separated from" in root_readme
     assert "next_action_summary" in root_readme
     assert "current next-action set" in root_readme
+    assert "actions with declared required inputs" in root_readme
     assert "next readiness command name" in root_readme
     assert "recovery_plan_summary" in root_readme
     assert "training_dependency_summary" in root_readme
@@ -4045,10 +4049,12 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "next_action_category" in root_readme
     assert "next_action_command_name" in root_readme
     assert "next_action_launches_training" in root_readme
+    assert "next_action_command_required_inputs" in root_readme
     assert "package Python" in root_readme
     assert "metadata so" in root_readme
     assert "Next-action rows also expose" in root_readme
     assert "`command_name`, `command_category`, `blocked_by_stages`" in root_readme
+    assert "`required_inputs`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
     assert "command category rollups" in root_readme
     assert "non-training command is still waiting on training evidence" in root_readme

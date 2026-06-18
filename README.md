@@ -450,8 +450,9 @@ stdout is the compact pass/fail summary for callers. Both include
 `remaining_by_area`, `remaining_area_summary`, and `remaining_recovery_plan`,
 plus `recovery_plan_summary` for category, blocker,
 blocked-stage command matrix, command-link, command-launch, and next-command counts.
-`next_action_summary` also includes a blocked-stage command matrix for the
-currently recommended next actions.
+`next_action_summary` also includes a blocked-stage command matrix and a count
+of actions with declared required inputs for the currently recommended next
+actions.
 `windows_readiness_summary` includes the next readiness command name, category,
 training-launch flag, blocked stages, and failed checks so automation can route
 native-audit refreshes separately from WSL smoke-chain launches.
@@ -465,15 +466,16 @@ ready for non-training refresh.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,
-`blocked_by_stages`, and `stage_actions`, recovery-plan `action_category`,
-native and WSL readiness blocker summaries, Phase 6 failed gates, real
+`blocked_by_stages`, `required_inputs`, and `stage_actions`, recovery-plan
+`action_category`, native and WSL readiness blocker summaries, Phase 6 failed gates, real
 timed-answer counts, package source freshness, command-manifest safety checks,
 command category rollups, recovery-plan `next_action_title` and
 `next_action_category`, `next_action_command_name`,
-`next_action_launches_training`, `next_action_command_exists`, and
-`next_action_command_link_valid`, plus package Python metadata so automation can
-decide whether the next step is inspection, human study collection, status
-refresh, diagnostics, package repair, evaluation, or a training launch. Use
+`next_action_launches_training`, `next_action_command_exists`,
+`next_action_command_required_inputs`, and `next_action_command_link_valid`,
+plus package Python metadata so automation can decide whether the next step is
+inspection, human study collection, status refresh, diagnostics, package repair,
+evaluation, or a training launch, and which local inputs must already exist. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired

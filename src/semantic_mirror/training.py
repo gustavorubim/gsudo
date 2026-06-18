@@ -3572,14 +3572,15 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `training_dependency_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. `next_action_summary` also includes
-a blocked-stage command matrix for the current next-action set. `stage_recovery_summary`
+a blocked-stage command matrix and required-input action count for the current next-action set. `stage_recovery_summary`
 includes per-stage next command names, categories, launch flags, and blocked
 stages so reuse decisions can be separated from training launches. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
-per-action `command_name`, `command_category`, `blocked_by_stages`, and
-`stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
+per-action `command_name`, `command_category`, `blocked_by_stages`,
+`required_inputs`, and `stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
 `next_action_command_name`, `next_action_launches_training`,
-`next_action_command_exists`, and `next_action_command_link_valid`, native and WSL
+`next_action_command_exists`, `next_action_command_required_inputs`, and
+`next_action_command_link_valid`, native and WSL
 readiness blocker summaries, readiness next-command routing fields, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, remaining-area command
 rollups, training-dependency rollups, command category rollups, and package Python metadata.
