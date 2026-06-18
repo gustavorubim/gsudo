@@ -7060,6 +7060,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- Requested step matches: `{json.dumps(resume_status.get('requested_step_matches') or {}, sort_keys=True)}`",
                 f"- Decision requested step matches: `{json.dumps(resume_status.get('decision_requested_step_matches') or {}, sort_keys=True)}`",
                 f"- Reuse enabled: `{resume_status['reuse_stage_outputs_enabled']}`",
+                f"- Action summary: `{json.dumps(resume_status.get('action_summary') or {}, sort_keys=True)}`",
                 "",
                 "| Stage | Action | Requested | Manifest | Checkpoint | Reason |",
                 "| --- | --- | ---: | ---: | --- | --- |",
@@ -9928,6 +9929,12 @@ def _resume_inspection_contract_status(
             inspection.get("reuse_stage_outputs_enabled")
             if isinstance(inspection, dict)
             else None
+        ),
+        "action_summary": (
+            inspection.get("action_summary")
+            if isinstance(inspection, dict)
+            and isinstance(inspection.get("action_summary"), dict)
+            else {}
         ),
         "decisions": {
             stage: decisions.get(stage, {}) if isinstance(decisions, dict) else {}

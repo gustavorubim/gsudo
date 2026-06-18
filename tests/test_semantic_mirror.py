@@ -784,6 +784,18 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
                 "mode": "full_training_eval_resume_inspection",
                 "requested_max_steps": requested,
                 "reuse_stage_outputs_enabled": True,
+                "action_summary": {
+                    "action_counts": {"resume": 1, "reuse": 1, "run": 1},
+                    "all_stages_reusable": False,
+                    "stage_count": 3,
+                    "stages_by_action": {
+                        "resume": ["dpo"],
+                        "reuse": ["sft"],
+                        "run": ["rl"],
+                    },
+                    "training_required": True,
+                    "training_stages": ["dpo", "rl"],
+                },
                 "decisions": {
                     "sft": {
                         "action": "reuse",
@@ -1125,6 +1137,18 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "rl": True,
         "sft": True,
     }
+    assert status["resume_inspection_status"]["action_summary"] == {
+        "action_counts": {"resume": 1, "reuse": 1, "run": 1},
+        "all_stages_reusable": False,
+        "stage_count": 3,
+        "stages_by_action": {
+            "resume": ["dpo"],
+            "reuse": ["sft"],
+            "run": ["rl"],
+        },
+        "training_required": True,
+        "training_stages": ["dpo", "rl"],
+    }
     assert status["resume_inspection_status"]["decisions"]["sft"]["action"] == "reuse"
     assert status["resume_inspection_status"]["decisions"]["dpo"]["action"] == "resume"
     assert status["resume_inspection_status"]["decisions"]["rl"]["action"] == "run"
@@ -1337,6 +1361,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert (
         '- Decision requested step matches: `{"dpo": true, "rl": true, "sft": true}`'
+        in status_markdown
+    )
+    assert (
+        '- Action summary: `{"action_counts": {"resume": 1, "reuse": 1, "run": 1}, "all_stages_reusable": false, "stage_count": 3, "stages_by_action": {"resume": ["dpo"], "reuse": ["sft"], "run": ["rl"]}, "training_required": true, "training_stages": ["dpo", "rl"]}`'
         in status_markdown
     )
     assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
