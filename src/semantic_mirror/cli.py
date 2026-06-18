@@ -1297,6 +1297,21 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "next_action_launches_training": item.get(
                         "next_action_launches_training"
                     ),
+                    "next_action_command_exists": item.get(
+                        "next_action_command_exists"
+                    ),
+                    "next_action_command_category": item.get(
+                        "next_action_command_category"
+                    ),
+                    "next_action_command_launches_training": item.get(
+                        "next_action_command_launches_training"
+                    ),
+                    "next_action_command_link_valid": item.get(
+                        "next_action_command_link_valid"
+                    ),
+                    "next_action_command_link_errors": item.get(
+                        "next_action_command_link_errors", []
+                    ),
                     "requires_training": item["requires_training"],
                     "blocked_by_stages": item["blocked_by_stages"],
                     "current_evidence": item.get("current_evidence"),
@@ -1599,6 +1614,10 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
     non_training_action_counts: dict[str, int] = {}
     requires_training_count = 0
     blocked_item_count = 0
+    command_link_valid_count = 0
+    command_link_invalid_count = 0
+    command_link_unchecked_count = 0
+    missing_command_names: set[str] = set()
     for item in plan:
         if not isinstance(item, dict):
             continue
@@ -1621,12 +1640,27 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
             blocked_stage_counts[stage_name] = (
                 blocked_stage_counts.get(stage_name, 0) + 1
             )
+        command_link_valid = item.get("next_action_command_link_valid")
+        if command_link_valid is True:
+            command_link_valid_count += 1
+        elif command_link_valid is False:
+            command_link_invalid_count += 1
+            if item.get("next_action_command_exists") is False:
+                command_name = item.get("next_action_command_name")
+                if command_name:
+                    missing_command_names.add(str(command_name))
+        else:
+            command_link_unchecked_count += 1
     total_items = sum(action_category_counts.values())
     return {
         "total_items": total_items,
         "requires_training_count": requires_training_count,
         "non_training_count": total_items - requires_training_count,
         "blocked_item_count": blocked_item_count,
+        "command_link_valid_count": command_link_valid_count,
+        "command_link_invalid_count": command_link_invalid_count,
+        "command_link_unchecked_count": command_link_unchecked_count,
+        "missing_command_names": sorted(missing_command_names),
         "action_category_counts": {
             key: action_category_counts[key] for key in sorted(action_category_counts)
         },

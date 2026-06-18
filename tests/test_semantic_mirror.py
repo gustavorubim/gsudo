@@ -859,6 +859,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         },
         "blocked_item_count": 10,
         "blocked_stage_counts": {"dpo": 7, "rl": 7},
+        "command_link_invalid_count": 0,
+        "command_link_unchecked_count": 12,
+        "command_link_valid_count": 0,
+        "missing_command_names": [],
         "non_training_action_counts": {},
         "non_training_count": 0,
         "requires_training_count": 12,
@@ -882,6 +886,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "next_action_launches_training"
     ]
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_link_valid"
+    ] is None
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_link_errors"
+    ] == ["command_manifest_not_checked"]
     assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "requires_training"
     ]
@@ -1063,25 +1073,28 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "### Recovery Plan" in status_markdown
     assert "- Total items: `12`" in status_markdown
     assert "- Requires training: `12`" in status_markdown
+    assert "- Command links unchecked: `12`" in status_markdown
+    assert "- Missing command names: `[]`" in status_markdown
     assert (
         '- Action category counts: `{"diagnostics": 1, "evaluation": 6, "status": 3, "training": 2}`'
         in status_markdown
     )
     assert '- Blocked stage counts: `{"dpo": 7, "rl": 7}`' in status_markdown
     assert (
-        "| Gate | Action | Category | Next Action | Command | Requires Training | Blocked By | Artifacts |"
+        "| Gate | Action | Category | Next Action | Command | Command Link | Requires Training | Blocked By | Artifacts |"
+        in status_markdown
+    )
+    assert "`unchecked`" in status_markdown
+    assert (
+        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `unchecked` | `True` |"
         in status_markdown
     )
     assert (
-        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `True` |"
+        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `unchecked` | `True` | `dpo` |"
         in status_markdown
     )
     assert (
-        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `True` | `dpo` |"
-        in status_markdown
-    )
-    assert (
-        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | `True` | `dpo`, `rl` |"
+        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | `unchecked` | `True` | `dpo`, `rl` |"
         in status_markdown
     )
     assert "## Resume Inspection" in status_markdown
@@ -1707,7 +1720,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     stdout_recovery_plan = {
         item["gate"]: item for item in cli_stdout["remaining_recovery_plan"]
     }
-    assert cli_stdout["recovery_plan_summary"] == status["recovery_plan_summary"]
+    assert cli_stdout["recovery_plan_summary"] == {
+        **status["recovery_plan_summary"],
+        "command_link_unchecked_count": 0,
+        "command_link_valid_count": 12,
+    }
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -1726,6 +1743,21 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "next_action_launches_training"
     ]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_exists"
+    ]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_category"
+    ] == "training"
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_launches_training"
+    ]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_link_valid"
+    ]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_link_errors"
+    ] == []
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "area"
     ] == "dpo"

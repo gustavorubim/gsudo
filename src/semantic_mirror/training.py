@@ -1377,6 +1377,7 @@ def summarize_full_eval_contract_status(
         remaining_items,
         stage_recovery_status=stage_recovery_status,
         diagnostics_status=diagnostics_status,
+        package_command_manifest_status=package_command_manifest_status,
     )
     report = {
         "mode": "full_eval_contract_status",
@@ -3497,16 +3498,17 @@ SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
 status JSON includes `remaining_recovery_plan`, and the Markdown includes a
 `Recovery Plan` table mapping each failed gate to the required action, action
 category, recommended next-action row, whether training is required, blocking
-stages, command-manifest key, and target artifacts. Each row also includes an
+stages, command-manifest key, command-link validity, and target artifacts. Each row also includes an
 `action_category`, `next_action_title`, `next_action_category`,
-`next_action_command_name`, and `next_action_launches_training` for routing
+`next_action_command_name`, `next_action_launches_training`, and
+`next_action_command_link_valid` for routing
 failed gates without parsing action names. The recovery plan distinguishes stale
 stage-derived eval and sample artifacts from missing reports: eval rows use
 `generate_eval_report_after_stage`, sample rows use
 `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
 `recovery_plan_summary` rolls the same rows up by action category, training
-requirement, and blocking stage.
+requirement, blocking stage, and command-link validity.
 `outputs/contract_status.json` and `train contract-status` stdout are automation
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
@@ -3518,7 +3520,8 @@ presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
 per-action `blocked_by_stages` and `stage_actions`, recovery-plan
 `action_category`, `next_action_title`, `next_action_category`,
-`next_action_command_name`, and `next_action_launches_training`, native and WSL
+`next_action_command_name`, `next_action_launches_training`,
+`next_action_command_exists`, and `next_action_command_link_valid`, native and WSL
 readiness blocker summaries, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, command category
 rollups, and package Python metadata.
@@ -6852,17 +6855,29 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Requires training: `{recovery_summary.get('requires_training_count', 0)}`",
                     f"- Non-training items: `{recovery_summary.get('non_training_count', 0)}`",
                     f"- Blocked items: `{recovery_summary.get('blocked_item_count', 0)}`",
+                    f"- Command links valid: `{recovery_summary.get('command_link_valid_count', 0)}`",
+                    f"- Command links invalid: `{recovery_summary.get('command_link_invalid_count', 0)}`",
+                    f"- Command links unchecked: `{recovery_summary.get('command_link_unchecked_count', 0)}`",
+                    f"- Missing command names: `{json.dumps(recovery_summary.get('missing_command_names', []), sort_keys=True)}`",
                     f"- Action category counts: `{json.dumps(recovery_summary.get('action_category_counts', {}), sort_keys=True)}`",
                     f"- Blocked stage counts: `{json.dumps(recovery_summary.get('blocked_stage_counts', {}), sort_keys=True)}`",
                     f"- Non-training action counts: `{json.dumps(recovery_summary.get('non_training_action_counts', {}), sort_keys=True)}`",
                     "",
-                    "| Gate | Action | Category | Next Action | Command | Requires Training | Blocked By | Artifacts |",
-                    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                    "| Gate | Action | Category | Next Action | Command | Command Link | Requires Training | Blocked By | Artifacts |",
+                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
                 ]
             )
             for plan_item in recovery_plan:
                 blocked_by = plan_item.get("blocked_by_stages") or []
                 artifacts = plan_item.get("artifacts") or []
+                command_link_valid = plan_item.get("next_action_command_link_valid")
+                if command_link_valid is True:
+                    command_link = "valid"
+                elif command_link_valid is False:
+                    errors = plan_item.get("next_action_command_link_errors") or []
+                    command_link = "invalid: " + ", ".join(str(error) for error in errors)
+                else:
+                    command_link = "unchecked"
                 lines.append(
                     f"| `{plan_item['gate']}` | `{plan_item['required_action']}` | "
                     f"`{plan_item.get('action_category', 'inspection')}` | "
@@ -6870,6 +6885,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"(`{plan_item.get('next_action_category') or 'inspection'}`) | "
                     f"`{plan_item.get('next_action_command_name') or 'inspect_full_training_eval_resume'}` "
                     f"(training: `{plan_item.get('next_action_launches_training', False)}`) | "
+                    f"`{command_link}` | "
                     f"`{plan_item['requires_training']}` | "
                     f"{', '.join(f'`{stage}`' for stage in blocked_by) or '`None`'} | "
                     f"{', '.join(f'`{artifact}`' for artifact in artifacts)} |"
@@ -7705,6 +7721,10 @@ def _recovery_plan_contract_summary(
     non_training_action_counts: dict[str, int] = {}
     requires_training_count = 0
     blocked_item_count = 0
+    command_link_valid_count = 0
+    command_link_invalid_count = 0
+    command_link_unchecked_count = 0
+    missing_command_names: set[str] = set()
     for item in recovery_plan:
         category = str(item.get("action_category") or "inspection")
         action_category_counts[category] = action_category_counts.get(category, 0) + 1
@@ -7718,11 +7738,26 @@ def _recovery_plan_contract_summary(
             blocked_item_count += 1
         for stage in blocked_by:
             blocked_stage_counts[stage] = blocked_stage_counts.get(stage, 0) + 1
+        command_link_valid = item.get("next_action_command_link_valid")
+        if command_link_valid is True:
+            command_link_valid_count += 1
+        elif command_link_valid is False:
+            command_link_invalid_count += 1
+            if item.get("next_action_command_exists") is False:
+                command_name = item.get("next_action_command_name")
+                if command_name:
+                    missing_command_names.add(str(command_name))
+        else:
+            command_link_unchecked_count += 1
     return {
         "total_items": len(recovery_plan),
         "requires_training_count": requires_training_count,
         "non_training_count": len(recovery_plan) - requires_training_count,
         "blocked_item_count": blocked_item_count,
+        "command_link_valid_count": command_link_valid_count,
+        "command_link_invalid_count": command_link_invalid_count,
+        "command_link_unchecked_count": command_link_unchecked_count,
+        "missing_command_names": sorted(missing_command_names),
         "action_category_counts": {
             key: action_category_counts[key] for key in sorted(action_category_counts)
         },
@@ -7927,12 +7962,14 @@ def _remaining_recovery_plan(
     *,
     stage_recovery_status: dict[str, Any],
     diagnostics_status: dict[str, Any],
+    package_command_manifest_status: dict[str, Any],
 ) -> list[dict[str, Any]]:
     return [
         _remaining_gate_recovery_item(
             item,
             stage_recovery_status=stage_recovery_status,
             diagnostics_status=diagnostics_status,
+            package_command_manifest_status=package_command_manifest_status,
         )
         for item in remaining_items
     ]
@@ -7943,6 +7980,7 @@ def _remaining_gate_recovery_item(
     *,
     stage_recovery_status: dict[str, Any],
     diagnostics_status: dict[str, Any],
+    package_command_manifest_status: dict[str, Any],
 ) -> dict[str, Any]:
     gate = str(item["gate"])
     area = _remaining_area_for_gate(gate)
@@ -7990,6 +8028,10 @@ def _remaining_gate_recovery_item(
         required_action=required_action,
         blocked_by_stages=blocked_by,
     )
+    command_link = _remaining_recovery_command_link(
+        next_action=next_action,
+        package_command_manifest_status=package_command_manifest_status,
+    )
     return {
         "gate": gate,
         "area": area,
@@ -8000,11 +8042,54 @@ def _remaining_gate_recovery_item(
         "next_action_category": next_action["category"],
         "next_action_command_name": next_action["command_name"],
         "next_action_launches_training": next_action["launches_training"],
+        **command_link,
         "requires_training": requires_training,
         "blocked_by_stages": blocked_by,
         "artifacts": artifacts,
         "current_evidence": item.get("actual"),
         "expected_evidence": item.get("expected"),
+    }
+
+
+def _remaining_recovery_command_link(
+    *,
+    next_action: dict[str, Any],
+    package_command_manifest_status: dict[str, Any],
+) -> dict[str, Any]:
+    command_name = next_action["command_name"]
+    expected_category = next_action["category"]
+    expected_launches_training = next_action["launches_training"]
+    if not package_command_manifest_status.get("checked"):
+        return {
+            "next_action_command_exists": None,
+            "next_action_command_category": None,
+            "next_action_command_launches_training": None,
+            "next_action_command_link_valid": None,
+            "next_action_command_link_errors": ["command_manifest_not_checked"],
+        }
+    commands = package_command_manifest_status.get("command_lookup")
+    command = commands.get(command_name) if isinstance(commands, dict) else None
+    if not isinstance(command, dict):
+        return {
+            "next_action_command_exists": False,
+            "next_action_command_category": None,
+            "next_action_command_launches_training": None,
+            "next_action_command_link_valid": False,
+            "next_action_command_link_errors": ["missing_command"],
+        }
+    command_category = command.get("category")
+    command_launches_training = command.get("launches_training")
+    errors = []
+    if command_category != expected_category:
+        errors.append("category_mismatch")
+    if command_launches_training != expected_launches_training:
+        errors.append("launches_training_mismatch")
+    return {
+        "next_action_command_exists": True,
+        "next_action_command_category": command_category,
+        "next_action_command_launches_training": command_launches_training,
+        "next_action_command_link_valid": not errors,
+        "next_action_command_link_errors": errors,
     }
 
 
@@ -8568,9 +8653,15 @@ def _package_command_manifest_contract_status(
         if isinstance(command, dict) and not isinstance(command.get("category"), str)
     )
     commands_by_category: dict[str, list[str]] = {}
+    command_lookup: dict[str, dict[str, Any]] = {}
     for name, command in commands.items():
         if not isinstance(command, dict) or not isinstance(command.get("category"), str):
             continue
+        command_lookup[name] = {
+            "category": command.get("category"),
+            "launches_training": command.get("launches_training"),
+            "has_command": isinstance(command.get("command"), str),
+        }
         commands_by_category.setdefault(str(command["category"]), []).append(name)
     commands_by_category = {
         category: sorted(names) for category, names in sorted(commands_by_category.items())
@@ -8610,6 +8701,7 @@ def _package_command_manifest_contract_status(
             category: len(names) for category, names in commands_by_category.items()
         },
         "commands_by_category": commands_by_category,
+        "command_lookup": command_lookup,
         "missing_training_commands": missing_training,
         "unexpected_training_commands": unexpected_training,
         "missing_non_training_commands": missing_non_training,

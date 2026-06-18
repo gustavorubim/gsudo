@@ -295,12 +295,13 @@ list any missing stage manifests, eval reports, sample inspections,
 diagnostics, or final gates. The status JSON includes `remaining_recovery_plan`,
 and the Markdown includes a `Recovery Plan` table mapping every failed gate to
 the required action, action category, recommended next-action row, whether
-training is required, command-manifest key, blocking stages, and target artifacts. Stale stage-derived eval rows use
+training is required, command-manifest key, command-link validity, blocking
+stages, and target artifacts. Stale stage-derived eval rows use
 `generate_eval_report_after_stage`, sample rows use
 `generate_sample_inspection_after_stage`, and
 `blocked_by_stages` names the stage that must finish before those artifacts are
 current. `recovery_plan_summary` rolls the same rows up by action category,
-training requirement, and blocking stage. Contract-status JSON and stdout also include package source,
+training requirement, blocking stage, and command-link validity. Contract-status JSON and stdout also include package source,
 command-manifest, and Python metadata summaries so automation can distinguish
 package evidence repairs from training work. Next-action rows also expose
 `blocked_by_stages` and `stage_actions`, so callers can route WSL smoke, DPO
@@ -438,8 +439,8 @@ stdout is the compact pass/fail summary for callers. Both include
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
 `human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`, and
-`remaining_recovery_plan`, plus `recovery_plan_summary` for category and
-blocker counts.
+`remaining_recovery_plan`, plus `recovery_plan_summary` for category, blocker,
+and command-link counts.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
@@ -447,8 +448,9 @@ gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
 native and WSL readiness blocker summaries, Phase 6 failed gates, real
 timed-answer counts, package source freshness, command-manifest safety checks,
 command category rollups, recovery-plan `next_action_title` and
-`next_action_category`, `next_action_command_name`, and
-`next_action_launches_training`, and package Python metadata so automation can
+`next_action_category`, `next_action_command_name`,
+`next_action_launches_training`, `next_action_command_exists`, and
+`next_action_command_link_valid`, plus package Python metadata so automation can
 decide whether the next step is inspection, human study collection, status
 refresh, diagnostics, package repair, evaluation, or a training launch. Use
 `train inspect-samples` after generation to
