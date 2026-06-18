@@ -639,7 +639,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             sort_keys=True,
         )
         + "\n",
-        encoding="utf-8",
+        encoding="utf-8-sig",
     )
     for stage, steps in {"sft": 300, "dpo": 10}.items():
         stage_dir = run / f"semantic-mirror-{stage}"
@@ -1078,7 +1078,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             sort_keys=True,
         )
         + "\n",
-        encoding="utf-8",
+        encoding="utf-8-sig",
     )
     freshness_status = summarize_full_eval_contract_status(
         run,

@@ -6104,7 +6104,7 @@ def _coerce_float(value: Any) -> float | None:
 
 def _read_json_file(path: Path) -> dict[str, Any] | None:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
