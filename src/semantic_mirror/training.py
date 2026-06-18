@@ -6900,13 +6900,25 @@ def _full_eval_next_actions(
     if (
         not diagnostics_status["all_required_plots_exist"]
         or not diagnostics_status["sources_current_for_run"]
+        or not diagnostics_status["stages_current_for_requested_steps"]
     ):
+        stale_stages = diagnostics_status.get("stale_or_missing_stages") or []
+        diagnostics_reason = (
+            "Diagnostic plots must be regenerated from this target outputs directory "
+            "after target-stage evidence is current."
+        )
+        if stale_stages:
+            diagnostics_reason += (
+                " Current diagnostics are blocked by stale stages: "
+                + ", ".join(f"`{stage}`" for stage in stale_stages)
+                + "."
+            )
         actions.append(
             {
                 "title": "Regenerate target diagnostics",
                 "category": "diagnostics",
                 "launches_training": False,
-                "reason": "Diagnostic plots must be regenerated from this target outputs directory after target-stage evidence is current.",
+                "reason": diagnostics_reason,
                 "command": f"# from {package_root}\n{diagnostics_command}",
                 "windows_powershell_command": _windows_wsl_command(
                     package_root, diagnostics_command

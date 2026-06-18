@@ -943,6 +943,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         action["title"] == "Regenerate target diagnostics"
         and action["category"] == "diagnostics"
         and action["launches_training"] is False
+        and "stale stages: `dpo`, `rl`" in action["reason"]
         and "train report outputs --out outputs/diagnostics" in action["command"]
         for action in status["next_actions"]
     )
@@ -1525,6 +1526,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["launches_training"] is False
         and action["has_command"] is True
         and "real timed reviewer logs" in action["reason"]
+        for action in cli_stdout["next_actions"]
+    )
+    assert any(
+        action["title"] == "Regenerate target diagnostics"
+        and action["launches_training"] is False
+        and "stale stages: `dpo`, `rl`" in action["reason"]
         for action in cli_stdout["next_actions"]
     )
     assert any(
