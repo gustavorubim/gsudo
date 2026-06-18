@@ -1133,7 +1133,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
-    assert wrong_wsl_status["remaining_by_area"]["windows_readiness"] == [
+    assert wrong_wsl_status["remaining_by_area"]["windows_unsloth_readiness"] == [
         "windows_unsloth_readiness_passed"
     ]
     wrong_wsl_recovery = {

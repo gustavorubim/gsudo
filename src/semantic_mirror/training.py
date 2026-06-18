@@ -7556,7 +7556,7 @@ def _remaining_area_for_gate(gate: str) -> str:
     if gate.startswith("diagnostic_"):
         return "diagnostics"
     if gate.startswith("windows_"):
-        return "windows_readiness"
+        return "windows_unsloth_readiness"
     if gate.startswith("package_"):
         return "package"
     if gate.startswith("training_eval_summary") or gate == "all_final_eval_gates_passed":
@@ -7623,7 +7623,7 @@ def _remaining_gate_recovery_item(
         requires_training = bool(blocked_by)
     elif area == "package":
         required_action = _package_recovery_action(gate)
-    elif area == "windows_readiness":
+    elif area == "windows_unsloth_readiness":
         required_action = "run_wsl_smoke_chain"
         requires_training = True
     return {
