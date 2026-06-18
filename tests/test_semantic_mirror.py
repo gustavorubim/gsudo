@@ -4569,12 +4569,16 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "baseline_candidates is empty" in full_eval_preflight_script
     assert "baseline_candidates line {line_number} is invalid JSON" in full_eval_preflight_script
     assert "baseline_candidate_identifier_records" in full_eval_preflight_script
+    assert "baseline_candidate_matching_identifier_count" in full_eval_preflight_script
+    assert "baseline_candidates identifiers do not match held_out_dataset records" in full_eval_preflight_script
     assert "held_out_dataset manifest missing files.{key}" in full_eval_preflight_script
     assert "outputs/preflight/full_eval_inputs.json" in full_eval_preflight_script
     assert "full_eval_input_preflight" in full_eval_preflight_ps
     assert "baseline_candidates is empty" in full_eval_preflight_ps
     assert "baseline_candidates line $lineNumber is invalid JSON" in full_eval_preflight_ps
     assert "baseline_candidate_identifier_records" in full_eval_preflight_ps
+    assert "baseline_candidate_matching_identifier_count" in full_eval_preflight_ps
+    assert "baseline_candidates identifiers do not match held_out_dataset records" in full_eval_preflight_ps
     assert "held_out_dataset manifest missing files.$key" in full_eval_preflight_ps
     assert "outputs/preflight/full_eval_inputs.json" in full_eval_preflight_ps
     assert "[string]$BaselineCandidates" in full_eval_preflight_ps

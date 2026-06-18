@@ -2713,6 +2713,7 @@ dataset = Path(sys.argv[1])
 baseline = Path(sys.argv[2])
 out = Path(sys.argv[3])
 issues = []
+dataset_ids = set()
 if not dataset.exists():
     issues.append(f"held_out_dataset does not exist: {dataset}")
 elif not dataset.is_dir():
@@ -2731,9 +2732,28 @@ else:
         rel = files.get(key)
         if not isinstance(rel, str) or not rel:
             issues.append(f"held_out_dataset manifest missing files.{key}")
-        elif not (dataset / rel).exists():
-            issues.append(f"held_out_dataset manifest files.{key} missing path: {dataset / rel}")
+            continue
+        path = dataset / rel
+        if not path.exists():
+            issues.append(f"held_out_dataset manifest files.{key} missing path: {path}")
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception as exc:
+                issues.append(f"held_out_dataset files.{key} line {line_number} is invalid JSON: {exc}")
+                continue
+            if not isinstance(row, dict):
+                issues.append(f"held_out_dataset files.{key} line {line_number} is not a JSON object")
+                continue
+            for id_key in ("record_id", "unit_id", "positive_unit_id"):
+                value = row.get(id_key)
+                if value:
+                    dataset_ids.add(value)
 baseline_rows = []
+baseline_ids = set()
 identifier_rows = 0
 if not baseline.exists():
     issues.append(f"baseline_candidates does not exist: {baseline}")
@@ -2754,12 +2774,20 @@ else:
             issues.append(f"baseline_candidates line {line_number} is not a JSON object")
             continue
         baseline_rows.append(row)
-        if any(row.get(key) for key in ("dataset_record_id", "record_id", "unit_id")):
+        row_ids = [
+            row.get(key)
+            for key in ("dataset_record_id", "record_id", "unit_id")
+            if row.get(key)
+        ]
+        baseline_ids.update(row_ids)
+        if row_ids:
             identifier_rows += 1
     if not baseline_rows:
         issues.append(f"baseline_candidates has no JSONL records: {baseline}")
     elif identifier_rows == 0:
         issues.append("baseline_candidates has no dataset_record_id, record_id, or unit_id values")
+if dataset_ids and baseline_ids and not (dataset_ids & baseline_ids):
+    issues.append("baseline_candidates identifiers do not match held_out_dataset records")
 report = {
     "mode": "full_eval_input_preflight",
     "passed": not issues,
@@ -2768,6 +2796,8 @@ report = {
     "baseline_candidates": str(baseline),
     "baseline_candidate_records": len(baseline_rows),
     "baseline_candidate_identifier_records": identifier_rows,
+    "held_out_dataset_identifier_count": len(dataset_ids),
+    "baseline_candidate_matching_identifier_count": len(dataset_ids & baseline_ids),
     "issues": issues,
 }
 out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
@@ -2786,6 +2816,8 @@ PY
 
 $ErrorActionPreference = "Stop"
 $issues = New-Object System.Collections.Generic.List[string]
+$datasetIds = New-Object System.Collections.Generic.HashSet[string]
+$baselineIds = New-Object System.Collections.Generic.HashSet[string]
 try {
   $datasetPath = (Resolve-Path $HeldOutDataset -ErrorAction Stop).Path
 } catch {
@@ -2811,6 +2843,26 @@ if ($issues.Count -eq 0) {
           $candidatePath = Join-Path $datasetPath $rel
           if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
             $issues.Add("held_out_dataset manifest files.$key missing path: $candidatePath")
+          } else {
+            $lineNumber = 0
+            foreach ($line in Get-Content -LiteralPath $candidatePath) {
+              $lineNumber += 1
+              if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+              }
+              try {
+                $row = $line | ConvertFrom-Json
+              } catch {
+                $issues.Add("held_out_dataset files.$key line $lineNumber is invalid JSON: $($_.Exception.Message)")
+                continue
+              }
+              foreach ($idKey in @("record_id", "unit_id", "positive_unit_id")) {
+                $value = $row.$idKey
+                if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+                  [void]$datasetIds.Add([string]$value)
+                }
+              }
+            }
           }
         }
       }
@@ -2849,7 +2901,15 @@ if (Test-Path -LiteralPath $baselinePath) {
         continue
       }
       $baselineRecords += 1
-      if ($row.dataset_record_id -or $row.record_id -or $row.unit_id) {
+      $rowHasIdentifier = $false
+      foreach ($idKey in @("dataset_record_id", "record_id", "unit_id")) {
+        $value = $row.$idKey
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+          [void]$baselineIds.Add([string]$value)
+          $rowHasIdentifier = $true
+        }
+      }
+      if ($rowHasIdentifier) {
         $identifierRecords += 1
       }
     }
@@ -2859,6 +2919,19 @@ if (Test-Path -LiteralPath $baselinePath) {
       $issues.Add("baseline_candidates has no dataset_record_id, record_id, or unit_id values")
     }
   }
+}
+if (($datasetIds.Count -gt 0) -and ($baselineIds.Count -gt 0)) {
+  $matchingIds = 0
+  foreach ($value in $baselineIds) {
+    if ($datasetIds.Contains($value)) {
+      $matchingIds += 1
+    }
+  }
+  if ($matchingIds -eq 0) {
+    $issues.Add("baseline_candidates identifiers do not match held_out_dataset records")
+  }
+} else {
+  $matchingIds = 0
 }
 $baselineRecords = if ($null -eq $baselineRecords) { 0 } else { $baselineRecords }
 $identifierRecords = if ($null -eq $identifierRecords) { 0 } else { $identifierRecords }
@@ -2873,6 +2946,8 @@ $report = [ordered]@{
   baseline_candidates = $baselinePath
   baseline_candidate_records = $baselineRecords
   baseline_candidate_identifier_records = $identifierRecords
+  held_out_dataset_identifier_count = $datasetIds.Count
+  baseline_candidate_matching_identifier_count = $matchingIds
   issues = @($issues)
 }
 $json = $report | ConvertTo-Json -Depth 5
