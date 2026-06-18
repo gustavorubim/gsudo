@@ -1251,6 +1251,9 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "package_command_manifest_summary": _package_command_manifest_summary(
                 manifest.get("package_command_manifest_status")
             ),
+            "package_metadata_summary": _package_metadata_summary(
+                manifest.get("package_metadata_status")
+            ),
             "human_usefulness_summary": _human_usefulness_summary(
                 manifest.get("human_usefulness_status")
             ),
@@ -1340,6 +1343,19 @@ def _package_command_manifest_summary(status: object) -> dict[str, object]:
         "training_command_count": status.get("training_command_count"),
         "non_training_command_count": status.get("non_training_command_count"),
         "failed_checks": status.get("failed_checks", []),
+    }
+
+
+def _package_metadata_summary(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        return {"checked": False, "passed": None}
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "requires_python": status.get("requires_python"),
+        "expected_requires_python": status.get("expected_requires_python"),
+        "excludes_python_3_14": status.get("excludes_python_3_14"),
+        "summary": status.get("summary"),
     }
 
 

@@ -1247,6 +1247,7 @@ def summarize_full_eval_contract_status(
     package_command_manifest_status = _package_command_manifest_contract_status(
         package_source_status
     )
+    package_metadata_status = _package_metadata_contract_status(package_source_status)
     human_usefulness_status = _human_usefulness_contract_status(
         human_study_suite_path,
         coverage_paths=human_study_coverage_paths,
@@ -1298,6 +1299,7 @@ def summarize_full_eval_contract_status(
         "windows_readiness_status": windows_readiness_status,
         "package_source_status": package_source_status,
         "package_command_manifest_status": package_command_manifest_status,
+        "package_metadata_status": package_metadata_status,
         "human_usefulness_status": human_usefulness_status,
         "next_actions": next_actions,
         "remaining_items": remaining_items,
@@ -6513,6 +6515,21 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
     if command_manifest.get("failed_checks"):
         lines.extend(["", "Failed command-manifest checks:"])
         lines.extend(f"- `{check}`" for check in command_manifest["failed_checks"])
+    package_metadata = report.get("package_metadata_status") or {}
+    lines.extend(
+        [
+            "",
+            "## Package Python Metadata",
+            "",
+            f"- Checked: `{package_metadata.get('checked', False)}`",
+            f"- Passed: `{package_metadata.get('passed')}`",
+            f"- Summary: {package_metadata.get('summary')}",
+            f"- Evidence path: `{package_metadata.get('path')}`",
+            f"- Requires Python: `{package_metadata.get('requires_python')}`",
+            f"- Expected training range: `{package_metadata.get('expected_requires_python')}`",
+            f"- Excludes Python 3.14: `{package_metadata.get('excludes_python_3_14')}`",
+        ]
+    )
     human_usefulness = report.get("human_usefulness_status") or {}
     lines.extend(
         [
@@ -7789,6 +7806,59 @@ def _package_command_manifest_contract_status(
         "missing_category": missing_category,
         "failed_checks": failed_checks,
     }
+
+
+def _package_metadata_contract_status(
+    package_source_status: dict[str, Any],
+) -> dict[str, Any]:
+    package_root = package_source_status.get("package_root")
+    if not package_root:
+        return {
+            "checked": False,
+            "passed": None,
+            "summary": (
+                "Package Python metadata not checked; package source freshness "
+                "evidence did not include a package_root."
+            ),
+        }
+    path = Path(str(package_root)) / "pyproject.toml"
+    if not path.exists():
+        return {
+            "checked": True,
+            "passed": False,
+            "path": str(path),
+            "summary": "Package pyproject.toml is missing.",
+            "expected_requires_python": UNSLOTH_PYTHON_RANGE,
+            "requires_python": None,
+        }
+    requires_python = _pyproject_requires_python(path)
+    passed = requires_python == UNSLOTH_PYTHON_RANGE
+    return {
+        "checked": True,
+        "passed": passed,
+        "path": str(path),
+        "summary": (
+            "Package Python metadata matches the Unsloth training runtime range."
+            if passed
+            else "Package Python metadata does not match the Unsloth training runtime range."
+        ),
+        "expected_requires_python": UNSLOTH_PYTHON_RANGE,
+        "requires_python": requires_python,
+        "excludes_python_3_14": requires_python == UNSLOTH_PYTHON_RANGE,
+    }
+
+
+def _pyproject_requires_python(path: Path) -> str | None:
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("requires-python"):
+            continue
+        _, _, value = stripped.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            return value[1:-1]
+        return value or None
+    return None
 
 
 def _repo_current_commit(repo_root: Any) -> str | None:

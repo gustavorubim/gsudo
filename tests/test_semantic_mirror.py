@@ -1273,6 +1273,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         + "\n",
         encoding="utf-8",
     )
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "semantic-mirror-runtime"\nrequires-python = ">=3.11,<3.14"\n',
+        encoding="utf-8",
+    )
     source_freshness.write_text(
         json.dumps(
             {
@@ -1318,6 +1322,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "full_training_eval" in freshness_status["package_command_manifest_status"][
         "training_commands"
     ]
+    assert freshness_status["package_metadata_status"]["checked"]
+    assert freshness_status["package_metadata_status"]["passed"]
+    assert freshness_status["package_metadata_status"]["requires_python"] == ">=3.11,<3.14"
+    assert freshness_status["package_metadata_status"]["excludes_python_3_14"]
     freshness_run_action = next(
         action
         for action in freshness_status["next_actions"]
@@ -1392,6 +1400,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["package_source_summary"]["compared_file_count"] == 2
     assert cli_stdout["package_command_manifest_summary"]["passed"] is True
     assert cli_stdout["package_command_manifest_summary"]["training_command_count"] == 6
+    assert cli_stdout["package_metadata_summary"]["passed"] is True
+    assert cli_stdout["package_metadata_summary"]["requires_python"] == ">=3.11,<3.14"
+    assert cli_stdout["package_metadata_summary"]["excludes_python_3_14"] is True
     assert cli_stdout["human_usefulness_summary"]["passed"] is True
     assert cli_stdout["human_usefulness_summary"]["collection_plan"]["passed"] is False
     assert cli_stdout["human_usefulness_summary"]["collection_plan"][
@@ -1507,6 +1518,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "smoke_chain",
         "wsl_smoke_chain",
     ]
+    assert cli_status_json["package_metadata_status"]["passed"]
+    assert cli_status_json["package_metadata_status"]["requires_python"] == ">=3.11,<3.14"
     assert cli_status_json["human_usefulness_status"]["collection_plan_status"][
         "answer_record_count"
     ] == 1
@@ -1548,6 +1561,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "## Package Command Manifest" in contract_status_md
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
+    assert "## Package Python Metadata" in contract_status_md
+    assert "Requires Python: `>=3.11,<3.14`" in contract_status_md
     assert "Run real Phase 6 collection and eval sequence" in contract_status_md
     assert "### Collection Plan" in contract_status_md
     assert "Answer records: `1/108`" in contract_status_md
