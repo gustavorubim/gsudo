@@ -1374,6 +1374,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["repo_hygiene_summary"]["unexpected_ignored_count"] == 1
     assert cli_stdout["windows_readiness_summary"]["passed"] is True
     assert cli_stdout["windows_readiness_summary"]["native_blocked"] is True
+    assert cli_stdout["windows_readiness_summary"][
+        "native_failed_required_checks"
+    ] == ["torch_cuda_available"]
+    assert cli_stdout["windows_readiness_summary"][
+        "native_recommended_fallback"
+    ] == "Use WSL CUDA."
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
     assert cli_stdout["package_source_summary"]["passed"] is True
     assert cli_stdout["package_source_summary"]["git_commit_matches_repo"] is True

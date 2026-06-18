@@ -1384,6 +1384,10 @@ def _windows_readiness_summary(status: object) -> dict[str, object]:
         "passed": status.get("passed"),
         "native_passed": status.get("native_passed"),
         "native_blocked": status.get("native_blocked"),
+        "native_failed_required_checks": status.get(
+            "native_failed_required_checks", []
+        ),
+        "native_recommended_fallback": status.get("native_recommended_fallback"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
         "wsl_diagnostics_exists": status.get("wsl_diagnostics_exists"),
         "summary": status.get("summary"),
