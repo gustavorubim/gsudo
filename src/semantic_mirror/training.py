@@ -874,6 +874,20 @@ def generate_training_package_source_freshness(
         )
         for relative_path in source_files
     ]
+    package_specific_docs = [
+        {
+            "relative_path": "README.md",
+            "reason": "Generated training-bundle README, intentionally not the repository README.",
+        },
+        {
+            "relative_path": "ENVIRONMENT.md",
+            "reason": "Generated package environment/runbook documentation.",
+        },
+        {
+            "relative_path": ".env.training.example",
+            "reason": "Generated sanitized package environment template.",
+        },
+    ]
     report = {
         "mode": "semantic_mirror_package_source_freshness",
         "training_version": TRAINING_VERSION,
@@ -888,19 +902,20 @@ def generate_training_package_source_freshness(
         and not any(not row["match"] for row in comparisons),
         "compared_file_count": len(comparisons),
         "comparisons": comparisons,
+        "all_package_specific_docs_present": all(
+            (package / doc["relative_path"]).exists() for doc in package_specific_docs
+        ),
         "package_specific_docs": [
             {
-                "relative_path": "README.md",
-                "reason": "Generated training-bundle README, intentionally not the repository README.",
-            },
-            {
-                "relative_path": "ENVIRONMENT.md",
-                "reason": "Generated package environment/runbook documentation.",
-            },
-            {
-                "relative_path": ".env.training.example",
-                "reason": "Generated sanitized package environment template.",
-            },
+                **doc,
+                "package_exists": (package / doc["relative_path"]).exists(),
+                "package_sha256": (
+                    _sha256_file(package / doc["relative_path"])
+                    if (package / doc["relative_path"]).exists()
+                    else None
+                ),
+            }
+            for doc in package_specific_docs
         ],
         "git_status_short_branch_ignored": _repo_git_status_short(repo),
         "files": {},
@@ -7741,11 +7756,25 @@ def _package_source_freshness_contract_status(
         if current_commit is None or not isinstance(report_commit, str)
         else report_commit == current_commit
     )
-    passed = mode_ok and all_match and compared_count_ok and commit_matches is not False
+    package_docs = _package_specific_docs_status(
+        report.get("package_specific_docs"),
+        package_root=report.get("package_root"),
+    )
+    passed = (
+        mode_ok
+        and all_match
+        and compared_count_ok
+        and package_docs["all_present"]
+        and commit_matches is not False
+    )
     if passed:
-        summary = "Package runtime source freshness is proven by hash comparison."
+        summary = (
+            "Package runtime source freshness and package-specific docs are proven."
+        )
     elif commit_matches is False:
         summary = "Package source freshness report is for a different repo commit."
+    elif not package_docs["all_present"]:
+        summary = "Package source freshness evidence is missing package-specific docs."
     else:
         summary = "Package source freshness evidence is incomplete or failing."
     return {
@@ -7767,7 +7796,54 @@ def _package_source_freshness_contract_status(
             for row in report.get("comparisons", [])
             if isinstance(row, dict) and not row.get("match")
         ],
-        "package_specific_docs": report.get("package_specific_docs", []),
+        "all_package_specific_docs_present": package_docs["all_present"],
+        "missing_package_specific_docs": package_docs["missing"],
+        "package_specific_docs": package_docs["docs"],
+    }
+
+
+def _package_specific_docs_status(
+    docs: object,
+    *,
+    package_root: object,
+) -> dict[str, Any]:
+    if not isinstance(docs, list):
+        return {"all_present": False, "missing": ["package_specific_docs"], "docs": []}
+    package = Path(str(package_root)) if package_root else None
+    checked_docs = []
+    missing = []
+    for doc in docs:
+        if not isinstance(doc, dict):
+            missing.append("malformed_doc_entry")
+            continue
+        relative_path = doc.get("relative_path")
+        if not isinstance(relative_path, str) or not relative_path:
+            missing.append("missing_relative_path")
+            checked_docs.append(dict(doc))
+            continue
+        package_file = package / relative_path if package is not None else None
+        package_exists = doc.get("package_exists")
+        if not isinstance(package_exists, bool):
+            package_exists = package_file.exists() if package_file is not None else False
+        package_sha256 = doc.get("package_sha256")
+        if (
+            package_exists
+            and not isinstance(package_sha256, str)
+            and package_file is not None
+        ):
+            package_sha256 = _sha256_file(package_file)
+        checked_doc = {
+            **doc,
+            "package_exists": package_exists,
+            "package_sha256": package_sha256 if isinstance(package_sha256, str) else None,
+        }
+        checked_docs.append(checked_doc)
+        if not package_exists:
+            missing.append(relative_path)
+    return {
+        "all_present": bool(checked_docs) and not missing,
+        "missing": missing,
+        "docs": checked_docs,
     }
 
 
@@ -8041,11 +8117,14 @@ def _source_freshness_markdown(report: dict[str, Any]) -> str:
         "",
         "## Package-Specific Docs",
         "",
-        "| File | Reason |",
-        "| --- | --- |",
+        "| File | Exists | Package SHA256 | Reason |",
+        "| --- | --- | --- | --- |",
     ]
     for doc in report["package_specific_docs"]:
-        lines.append(f"| {doc['relative_path']} | {doc['reason']} |")
+        lines.append(
+            f"| {doc['relative_path']} | {doc.get('package_exists')} | "
+            f"{doc.get('package_sha256')} | {doc['reason']} |"
+        )
     lines.extend(
         [
             "",

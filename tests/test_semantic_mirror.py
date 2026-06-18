@@ -1290,6 +1290,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         '[project]\nname = "semantic-mirror-runtime"\nrequires-python = ">=3.11,<3.14"\n',
         encoding="utf-8",
     )
+    (package_root / "README.md").write_text("package runbook\n", encoding="utf-8")
     source_freshness.write_text(
         json.dumps(
             {
@@ -1326,6 +1327,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert freshness_status["package_source_status"]["git_commit_matches_repo"] is True
     assert freshness_status["package_source_status"]["compared_file_count"] == 2
     assert freshness_status["package_source_status"]["repo_root"] == str(tmp_path)
+    assert freshness_status["package_source_status"]["all_package_specific_docs_present"]
+    assert freshness_status["package_source_status"]["package_specific_docs"][0][
+        "package_exists"
+    ]
     assert freshness_status["package_command_manifest_status"]["checked"]
     assert freshness_status["package_command_manifest_status"]["passed"]
     assert freshness_status["package_command_manifest_status"]["training_command_count"] == 6
@@ -1591,7 +1596,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
-    assert "Package runtime source freshness is proven" in contract_status_md
+    assert (
+        "Package runtime source freshness and package-specific docs are proven"
+        in contract_status_md
+    )
     assert "## Package Command Manifest" in contract_status_md
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
@@ -1684,6 +1692,31 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == "regenerate_package_source_freshness"
     assert not stale_source_recovery["package_source_freshness_valid_when_checked"][
         "requires_training"
+    ]
+    missing_docs_freshness = {
+        **good_source_freshness,
+        "package_specific_docs": [
+            {
+                "relative_path": "missing-runbook.md",
+                "reason": "Synthetic missing package doc.",
+            }
+        ],
+    }
+    source_freshness.write_text(
+        json.dumps(missing_docs_freshness, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    missing_docs_status = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )
+    assert not missing_docs_status["passed"]
+    assert not missing_docs_status["package_source_status"][
+        "all_package_specific_docs_present"
+    ]
+    assert missing_docs_status["package_source_status"]["missing_package_specific_docs"] == [
+        "missing-runbook.md"
     ]
     source_freshness.write_text(
         json.dumps(good_source_freshness, sort_keys=True) + "\n",
@@ -2360,6 +2393,19 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         (bundle_out / "source_freshness.json").read_text(encoding="utf-8")
     )
     assert packaged_freshness["all_compared_files_match"]
+    assert packaged_freshness["all_package_specific_docs_present"]
+    assert {
+        doc["relative_path"]: doc["package_exists"]
+        for doc in packaged_freshness["package_specific_docs"]
+    } == {
+        "README.md": True,
+        "ENVIRONMENT.md": True,
+        ".env.training.example": True,
+    }
+    assert all(
+        isinstance(doc["package_sha256"], str)
+        for doc in packaged_freshness["package_specific_docs"]
+    )
     assert "Source Freshness Evidence" in (bundle_out / "source_freshness.md").read_text(
         encoding="utf-8"
     )
@@ -2371,6 +2417,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     )
     assert freshness["mode"] == "semantic_mirror_package_source_freshness"
     assert freshness["all_compared_files_match"]
+    assert freshness["all_package_specific_docs_present"]
     assert freshness["compared_file_count"] > 0
     assert (bundle_out / "source_freshness.json").exists()
     assert "Source Freshness Evidence" in (bundle_out / "source_freshness.md").read_text(
