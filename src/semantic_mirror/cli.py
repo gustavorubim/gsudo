@@ -1879,6 +1879,9 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
     waiting_non_training_optional_input_counts: dict[str, int] = {}
     training_launch_required_input_counts: dict[str, int] = {}
     training_launch_optional_input_counts: dict[str, int] = {}
+    ready_non_training_command_inputs: dict[str, dict[str, object]] = {}
+    waiting_non_training_command_inputs: dict[str, dict[str, object]] = {}
+    training_launch_command_inputs: dict[str, dict[str, object]] = {}
     ready_non_training_count = 0
     waiting_non_training_count = 0
     training_launch_count = 0
@@ -1906,6 +1909,12 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
             _increment_input_counts(
                 training_launch_optional_input_counts, optional_inputs
             )
+            _merge_command_input_summary(
+                training_launch_command_inputs,
+                command_name,
+                required_inputs,
+                optional_inputs,
+            )
         elif requires_training:
             waiting_non_training_count += 1
             waiting_non_training_command_counts[command_name] = (
@@ -1917,6 +1926,12 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
             _increment_input_counts(
                 waiting_non_training_optional_input_counts, optional_inputs
             )
+            _merge_command_input_summary(
+                waiting_non_training_command_inputs,
+                command_name,
+                required_inputs,
+                optional_inputs,
+            )
         else:
             ready_non_training_count += 1
             ready_non_training_command_counts[command_name] = (
@@ -1927,6 +1942,12 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
             )
             _increment_input_counts(
                 ready_non_training_optional_input_counts, optional_inputs
+            )
+            _merge_command_input_summary(
+                ready_non_training_command_inputs,
+                command_name,
+                required_inputs,
+                optional_inputs,
             )
     return {
         "total_items": total_items,
@@ -1970,6 +1991,15 @@ def _training_dependency_summary(plan: object) -> dict[str, object]:
             key: ready_non_training_optional_input_counts[key]
             for key in sorted(ready_non_training_optional_input_counts)
         },
+        "training_launch_command_inputs": _finalize_command_input_summary(
+            training_launch_command_inputs
+        ),
+        "waiting_non_training_command_inputs": _finalize_command_input_summary(
+            waiting_non_training_command_inputs
+        ),
+        "ready_non_training_command_inputs": _finalize_command_input_summary(
+            ready_non_training_command_inputs
+        ),
     }
 
 
@@ -1980,6 +2010,48 @@ def _increment_input_counts(counts: dict[str, int], inputs: object) -> None:
         if not isinstance(item, str):
             continue
         counts[item] = counts.get(item, 0) + 1
+
+
+def _merge_command_input_summary(
+    summary: dict[str, dict[str, object]],
+    command_name: str,
+    required_inputs: object,
+    optional_inputs: object,
+) -> None:
+    command_summary = summary.setdefault(
+        command_name,
+        {
+            "gate_count": 0,
+            "required_inputs": set(),
+            "optional_inputs": set(),
+        },
+    )
+    command_summary["gate_count"] = int(command_summary["gate_count"]) + 1
+    required_set = command_summary["required_inputs"]
+    optional_set = command_summary["optional_inputs"]
+    if isinstance(required_inputs, list) and isinstance(required_set, set):
+        required_set.update(item for item in required_inputs if isinstance(item, str))
+    if isinstance(optional_inputs, list) and isinstance(optional_set, set):
+        optional_set.update(item for item in optional_inputs if isinstance(item, str))
+
+
+def _finalize_command_input_summary(
+    summary: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    finalized: dict[str, dict[str, object]] = {}
+    for command_name in sorted(summary):
+        required_inputs = summary[command_name].get("required_inputs")
+        optional_inputs = summary[command_name].get("optional_inputs")
+        finalized[command_name] = {
+            "gate_count": summary[command_name].get("gate_count", 0),
+            "required_inputs": sorted(required_inputs)
+            if isinstance(required_inputs, set)
+            else [],
+            "optional_inputs": sorted(optional_inputs)
+            if isinstance(optional_inputs, set)
+            else [],
+        }
+    return finalized
 
 
 def _next_action_summary(actions: object) -> dict[str, object]:

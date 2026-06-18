@@ -464,7 +464,7 @@ counts, command categories, and training-launch counts.
 `training_dependency_summary` separates gates that launch training, gates whose
 non-training command is still waiting on training evidence, and gates that are
 ready for non-training refresh, with required and optional input counts for
-each bucket.
+each bucket plus per-command input maps.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,

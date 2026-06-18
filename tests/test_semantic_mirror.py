@@ -1026,18 +1026,38 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     }
     assert status["training_dependency_summary"] == {
         "ready_non_training_command_counts": {},
+        "ready_non_training_command_inputs": {},
         "ready_non_training_count": 0,
         "ready_non_training_optional_input_counts": {},
         "ready_non_training_required_input_counts": {},
         "requires_training_count": 12,
         "total_items": 12,
         "training_launch_command_counts": {"full_training_eval": 8},
+        "training_launch_command_inputs": {
+            "full_training_eval": {
+                "gate_count": 8,
+                "optional_inputs": [],
+                "required_inputs": [],
+            }
+        },
         "training_launch_count": 8,
         "training_launch_optional_input_counts": {},
         "training_launch_required_input_counts": {},
         "waiting_non_training_command_counts": {
             "contract_status": 3,
             "report": 1,
+        },
+        "waiting_non_training_command_inputs": {
+            "contract_status": {
+                "gate_count": 3,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
+            "report": {
+                "gate_count": 1,
+                "optional_inputs": [],
+                "required_inputs": [],
+            },
         },
         "waiting_non_training_count": 4,
         "waiting_non_training_optional_input_counts": {},
@@ -1358,6 +1378,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         in status_markdown
     )
     assert "- Ready non-training command counts: `{}`" in status_markdown
+    assert "- Training launch command inputs:" in status_markdown
+    assert "- Waiting non-training command inputs:" in status_markdown
+    assert "- Ready non-training command inputs:" in status_markdown
     assert "- Missing command names: `[]`" in status_markdown
     assert (
         '- Next action command counts: `{"contract_status": 3, "full_training_eval": 8, "report": 1}`'
@@ -2284,6 +2307,20 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "held_out_dataset": 8,
     }
     assert cli_stdout["training_dependency_summary"][
+        "training_launch_command_inputs"
+    ] == {
+        "full_training_eval": {
+            "gate_count": 8,
+            "optional_inputs": [
+                "package_source_freshness",
+                "source_freshness_repo_root",
+                "windows_audit",
+                "wsl_smoke_manifest",
+            ],
+            "required_inputs": ["baseline_candidates", "held_out_dataset"],
+        }
+    }
+    assert cli_stdout["training_dependency_summary"][
         "training_launch_optional_input_counts"
     ] == {
         "package_source_freshness": 8,
@@ -2294,6 +2331,27 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["training_dependency_summary"][
         "waiting_non_training_required_input_counts"
     ] == {"outputs_dir": 4}
+    assert cli_stdout["training_dependency_summary"][
+        "waiting_non_training_command_inputs"
+    ] == {
+        "contract_status": {
+            "gate_count": 3,
+            "optional_inputs": [
+                "human_study_coverage",
+                "human_study_suite",
+                "package_source_freshness",
+                "repo_root",
+                "windows_audit",
+                "wsl_smoke_manifest",
+            ],
+            "required_inputs": ["outputs_dir"],
+        },
+        "report": {
+            "gate_count": 1,
+            "optional_inputs": [],
+            "required_inputs": ["outputs_dir"],
+        },
+    }
     assert cli_stdout["training_dependency_summary"][
         "waiting_non_training_optional_input_counts"
     ] == {
@@ -2306,6 +2364,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     }
     assert cli_stdout["training_dependency_summary"][
         "ready_non_training_required_input_counts"
+    ] == {}
+    assert cli_stdout["training_dependency_summary"][
+        "ready_non_training_command_inputs"
     ] == {}
     assert cli_stdout["training_dependency_summary"][
         "ready_non_training_optional_input_counts"
@@ -4256,6 +4317,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "remaining_area_summary" in package_readme
     assert "training_dependency_summary" in package_readme
     assert "training-dependency input rollups" in package_readme
+    assert "per-command dependency input maps" in package_readme
     assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
@@ -4311,6 +4373,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "training_dependency_summary" in root_readme
     assert "required and optional input counts" in root_readme
     assert "each bucket" in root_readme
+    assert "per-command input maps" in root_readme
     assert "blocked-stage command" in root_readme
     assert "matrix" in root_readme
     assert "current and\nexpected evidence" in root_readme
