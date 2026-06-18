@@ -2108,6 +2108,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--out source_freshness.json" in commands["source_freshness"]
     assert "train contract-status outputs" in commands["contract_status"]
     assert "--sft-steps $SFT_MAX_STEPS" in commands["contract_status"]
+    assert "--package-source-freshness source_freshness.json" in commands["contract_status"]
     assert "--markdown-out outputs/contract_status.md" in commands["contract_status"]
     assert "run_unsloth_sft.py" in commands["sft"]
     assert "run_reward_rl.py" in commands["rl"]
@@ -2319,6 +2320,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "training_eval_summary.json" in full_eval_script
     assert "train contract-status outputs" in full_eval_script
     assert "--sft-steps \"$SFT_MAX_STEPS\"" in full_eval_script
+    assert "SOURCE_FRESHNESS_REPO_ROOT" in full_eval_script
+    assert "train source-freshness ." in full_eval_script
+    assert "--package-source-freshness \"$PACKAGE_SOURCE_FRESHNESS\"" in full_eval_script
     assert "--out outputs/contract_status.json" in full_eval_script
     assert "--markdown-out outputs/contract_status.md" in full_eval_script
     assert "source_freshness.json" in package_readme

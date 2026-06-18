@@ -1996,6 +1996,7 @@ def _package_launch_commands() -> dict[str, str]:
         "contract_status": (
             "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs "
             "--sft-steps $SFT_MAX_STEPS --dpo-steps $DPO_MAX_STEPS --rl-steps $RL_MAX_STEPS "
+            "--package-source-freshness source_freshness.json "
             "--out outputs/contract_status.json --markdown-out outputs/contract_status.md"
         ),
         "compare_sft": (
@@ -2397,6 +2398,14 @@ FAITHFULNESS_REPAIR_MODE="${FAITHFULNESS_REPAIR_MODE:-schema-only}"
 REUSE_STAGE_OUTPUTS="${REUSE_STAGE_OUTPUTS:-0}"
 SFT_RESUME_FROM_CHECKPOINT="${SFT_RESUME_FROM_CHECKPOINT:-}"
 DPO_RESUME_FROM_CHECKPOINT="${DPO_RESUME_FROM_CHECKPOINT:-}"
+PACKAGE_SOURCE_FRESHNESS="${PACKAGE_SOURCE_FRESHNESS:-source_freshness.json}"
+
+if [[ -n "${SOURCE_FRESHNESS_REPO_ROOT:-}" ]]; then
+  PYTHONPATH=src python -m semantic_mirror.cli train source-freshness . \
+    --repo-root "$SOURCE_FRESHNESS_REPO_ROOT" \
+    --out "$PACKAGE_SOURCE_FRESHNESS" \
+    --markdown-out "${PACKAGE_SOURCE_FRESHNESS%.json}.md"
+fi
 
 PYTHONPATH=src python -m semantic_mirror.cli train validate training --out outputs/validation_report.json > outputs/validate_summary.json
 PYTHONPATH=src python -m semantic_mirror.cli train audit training --out outputs/audit.json > outputs/audit_summary.json
@@ -2896,12 +2905,18 @@ Path("outputs/training_eval_summary.json").write_text(
 )
 PY
 
-PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs \
-  --sft-steps "$SFT_MAX_STEPS" \
-  --dpo-steps "$DPO_MAX_STEPS" \
-  --rl-steps "$RL_MAX_STEPS" \
-  --out outputs/contract_status.json \
+contract_status_args=(
+  train contract-status outputs
+  --sft-steps "$SFT_MAX_STEPS"
+  --dpo-steps "$DPO_MAX_STEPS"
+  --rl-steps "$RL_MAX_STEPS"
+  --out outputs/contract_status.json
   --markdown-out outputs/contract_status.md
+)
+if [[ -f "$PACKAGE_SOURCE_FRESHNESS" ]]; then
+  contract_status_args+=(--package-source-freshness "$PACKAGE_SOURCE_FRESHNESS")
+fi
+PYTHONPATH=src python -m semantic_mirror.cli "${contract_status_args[@]}"
 """,
         "inspect_full_training_eval_resume.sh": """#!/usr/bin/env bash
 set -euo pipefail
