@@ -3502,7 +3502,9 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
 `human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`,
-`remaining_recovery_plan`, and compact `next_actions`, including
+and `remaining_recovery_plan`. The JSON keeps full `next_actions` commands,
+including Windows PowerShell variants; stdout compacts those actions into
+presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions, Phase 6
 failed gates, real timed-answer counts, package source freshness,
 command-manifest safety checks, and package Python metadata.

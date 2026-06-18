@@ -3171,6 +3171,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "`outputs/contract_status.json` and `train contract-status` stdout" in (
         package_readme
     )
+    assert "The JSON keeps full `next_actions` commands" in package_readme
+    assert "stdout compacts those actions into" in package_readme
     assert "--windows-audit audit/current_environment.json" in package_readme
     assert "--wsl-smoke-manifest outputs/smoke-chain-wsl/smoke_chain_manifest.json" in package_readme
     assert "train inspect-resume outputs" in package_readme
