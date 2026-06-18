@@ -1399,6 +1399,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     assert collection_studies["whole_repo"]["answer_records"] == 1
     assert collection_studies["whole_repo"]["required_answer_records"] == 108
+    assert collection_studies["whole_repo"]["remaining_answer_records"] == 107
+    assert collection_studies["whole_repo"]["complete"] is False
     assert collection_studies["whole_repo"]["answer_target_exists"] is True
     assert collection_studies["whole_repo"]["answer_target"].endswith(
         "whole_answers.jsonl"

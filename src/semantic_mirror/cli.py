@@ -1456,21 +1456,32 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
             ),
             "missing_answer_targets": collection_plan.get("missing_answer_targets", []),
             "studies": {
-                str(label): {
-                    "answer_records": study.get("answer_records"),
-                    "required_answer_records": study.get(
-                        "required_answer_records"
-                    ),
-                    "answer_target_exists": study.get("answer_target_exists"),
-                    "answer_target": study.get("answer_target"),
-                    "coverage_report": study.get("coverage_report"),
-                    "eval_report": study.get("eval_report"),
-                }
+                str(label): _phase6_collection_study_summary(study)
                 for label, study in collection_studies.items()
                 if isinstance(study, dict)
             },
         },
     }
+
+
+def _phase6_collection_study_summary(study: dict[str, object]) -> dict[str, object]:
+    answer_records = _int_or_zero(study.get("answer_records"))
+    required_answer_records = _int_or_zero(study.get("required_answer_records"))
+    remaining_answer_records = max(required_answer_records - answer_records, 0)
+    return {
+        "answer_records": answer_records,
+        "required_answer_records": required_answer_records,
+        "remaining_answer_records": remaining_answer_records,
+        "complete": remaining_answer_records == 0,
+        "answer_target_exists": study.get("answer_target_exists"),
+        "answer_target": study.get("answer_target"),
+        "coverage_report": study.get("coverage_report"),
+        "eval_report": study.get("eval_report"),
+    }
+
+
+def _int_or_zero(value: object) -> int:
+    return value if isinstance(value, int) else 0
 
 
 def _stage_recovery_summary(status: object) -> dict[str, dict[str, object]]:
