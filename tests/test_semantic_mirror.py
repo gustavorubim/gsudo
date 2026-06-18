@@ -840,6 +840,31 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "dpo_stage_manifest_matches_requested_steps" in status["remaining_by_area"]["dpo"]
     assert "rl_eval_exists_and_passed" in status["remaining_by_area"]["rl"]
     assert "diagnostic_plots_exist" in status["remaining_by_area"]["diagnostics"]
+    recovery_plan = {
+        item["gate"]: item for item in status["remaining_recovery_plan"]
+    }
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "required_action"
+    ] == "resume"
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "requires_training"
+    ]
+    assert recovery_plan["rl_stage_manifest_matches_requested_steps"][
+        "required_action"
+    ] == "run"
+    assert recovery_plan["rl_stage_manifest_matches_requested_steps"][
+        "requires_training"
+    ]
+    assert recovery_plan["diagnostic_plots_exist"]["required_action"] == (
+        "regenerate_diagnostics"
+    )
+    assert recovery_plan["diagnostic_plots_exist"]["blocked_by_stages"] == [
+        "dpo",
+        "rl",
+    ]
+    assert recovery_plan["training_eval_summary_matches_requested_steps"][
+        "blocked_by_stages"
+    ] == ["dpo", "rl"]
     assert not status["repo_hygiene_status"]["checked"]
     assert not status["windows_readiness_status"]["checked"]
     assert not status["human_usefulness_status"]["checked"]
@@ -949,6 +974,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "### By Area" in status_markdown
     assert "| `dpo` |" in status_markdown
     assert "| `diagnostics` |" in status_markdown
+    assert "### Recovery Plan" in status_markdown
+    assert "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `True` |" in status_markdown
+    assert "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `True` | `dpo`, `rl` |" in status_markdown
     assert "## Resume Inspection" in status_markdown
     assert "| `dpo` | `resume` | 120 | 10 |" in status_markdown
     assert "## Next Actions" in status_markdown

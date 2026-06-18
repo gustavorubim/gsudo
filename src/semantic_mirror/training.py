@@ -1271,6 +1271,11 @@ def summarize_full_eval_contract_status(
         }
         for gate in missing_or_failed
     ]
+    remaining_recovery_plan = _remaining_recovery_plan(
+        remaining_items,
+        stage_recovery_status=stage_recovery_status,
+        diagnostics_status=diagnostics_status,
+    )
     report = {
         "mode": "full_eval_contract_status",
         "training_version": TRAINING_VERSION,
@@ -1297,6 +1302,7 @@ def summarize_full_eval_contract_status(
         "next_actions": next_actions,
         "remaining_items": remaining_items,
         "remaining_by_area": _remaining_by_area(remaining_items),
+        "remaining_recovery_plan": remaining_recovery_plan,
     }
     report["contract_scorecard"] = _contract_scorecard(report)
     report["contract_reward_summary"] = _contract_reward_summary(report["contract_scorecard"])
@@ -6592,6 +6598,26 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"| `{item['gate']}` | `{json.dumps(item['actual'], sort_keys=True)}` | "
                 f"`{json.dumps(item['expected'], sort_keys=True)}` | `{item['evidence']}` |"
             )
+        recovery_plan = report.get("remaining_recovery_plan") or []
+        if recovery_plan:
+            lines.extend(
+                [
+                    "",
+                    "### Recovery Plan",
+                    "",
+                    "| Gate | Action | Requires Training | Blocked By | Artifacts |",
+                    "| --- | --- | --- | --- | --- |",
+                ]
+            )
+            for plan_item in recovery_plan:
+                blocked_by = plan_item.get("blocked_by_stages") or []
+                artifacts = plan_item.get("artifacts") or []
+                lines.append(
+                    f"| `{plan_item['gate']}` | `{plan_item['required_action']}` | "
+                    f"`{plan_item['requires_training']}` | "
+                    f"{', '.join(f'`{stage}`' for stage in blocked_by) or '`None`'} | "
+                    f"{', '.join(f'`{artifact}`' for artifact in artifacts)} |"
+                )
     else:
         lines.append("All full-eval contract gates are currently proven.")
     resume_status = report.get("resume_inspection_status")
@@ -7302,6 +7328,68 @@ def _remaining_area_for_gate(gate: str) -> str:
     if gate.startswith("training_eval_summary") or gate == "all_final_eval_gates_passed":
         return "final_summary"
     return "other"
+
+
+def _remaining_recovery_plan(
+    remaining_items: list[dict[str, Any]],
+    *,
+    stage_recovery_status: dict[str, Any],
+    diagnostics_status: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        _remaining_gate_recovery_item(
+            item,
+            stage_recovery_status=stage_recovery_status,
+            diagnostics_status=diagnostics_status,
+        )
+        for item in remaining_items
+    ]
+
+
+def _remaining_gate_recovery_item(
+    item: dict[str, Any],
+    *,
+    stage_recovery_status: dict[str, Any],
+    diagnostics_status: dict[str, Any],
+) -> dict[str, Any]:
+    gate = str(item["gate"])
+    area = _remaining_area_for_gate(gate)
+    stage = area if area in {"sft", "dpo", "rl"} else None
+    stage_recovery = stage_recovery_status.get(stage, {}) if stage else {}
+    artifacts = [str(item.get("evidence"))] if item.get("evidence") else []
+    requires_training = False
+    required_action = "inspect"
+    blocked_by: list[str] = []
+    if stage:
+        required_action = str(stage_recovery.get("action") or "run")
+        requires_training = required_action in {"resume", "run", "rerun"}
+        if gate.endswith("_sample_inspection_complete"):
+            artifacts = [str(item.get("evidence")), f"{item.get('evidence')}/sample_manifest.json"]
+        elif "_eval_" in gate or "_vs_" in gate:
+            required_action = "generate_eval_report_after_stage"
+    elif area == "diagnostics":
+        required_action = "regenerate_diagnostics"
+        blocked_by = list(diagnostics_status.get("stale_or_missing_stages") or [])
+        requires_training = bool(blocked_by)
+    elif area == "final_summary":
+        required_action = "rerun_full_eval_summary"
+        blocked_by = [
+            stage_name
+            for stage_name, recovery in stage_recovery_status.items()
+            if recovery.get("missing_current_artifacts")
+        ]
+        requires_training = bool(blocked_by)
+    return {
+        "gate": gate,
+        "area": area,
+        "stage": stage,
+        "required_action": required_action,
+        "requires_training": requires_training,
+        "blocked_by_stages": blocked_by,
+        "artifacts": artifacts,
+        "current_evidence": item.get("actual"),
+        "expected_evidence": item.get("expected"),
+    }
 
 
 def _repo_hygiene_contract_status(repo_root: Path | str | None) -> dict[str, Any]:
