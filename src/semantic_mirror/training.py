@@ -7180,6 +7180,8 @@ def _ordered_execution_plan_summary(
                 "blocked_by_stages": action.get("blocked_by_stages", []) or [],
                 "missing_answer_targets": action.get("missing_answer_targets"),
                 "remaining_answer_records": action.get("remaining_answer_records"),
+                "answer_collection_progress": action.get("answer_collection_progress")
+                or {},
                 "reason": action.get("reason"),
             }
         )
@@ -7814,6 +7816,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Stage actions: `{json.dumps(action.get('stage_actions') or {}, sort_keys=True)}`",
                     f"- Missing answer targets: `{', '.join(action.get('missing_answer_targets') or []) or 'None'}`",
                     f"- Remaining answer records: `{action.get('remaining_answer_records') if action.get('remaining_answer_records') is not None else 'None'}`",
+                    f"- Answer collection progress: `{_phase6_answer_collection_progress_text(action.get('answer_collection_progress'))}`",
                     "",
                     action["reason"],
                     "",
@@ -7845,6 +7848,25 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
         lines.append(f"| `{gate['name']}` | `{gate['passed']}` | `{gate.get('evidence')}` |")
     lines.append("")
     return "\n".join(lines)
+
+
+def _phase6_answer_collection_progress_text(progress: object) -> str:
+    if not isinstance(progress, dict) or not progress:
+        return "None"
+    parts: list[str] = []
+    for label, status in sorted(progress.items()):
+        if not isinstance(status, dict):
+            continue
+        remaining = status.get("remaining_answer_records")
+        required = status.get("required_answer_records")
+        answered = status.get("answer_records")
+        sessions = status.get("sessions_remaining_at_batch_size")
+        batch_size = status.get("batch_size")
+        parts.append(
+            f"{label}: {answered}/{required} answered, "
+            f"{remaining} remaining, {sessions} sessions at batch {batch_size}"
+        )
+    return "; ".join(parts) or "None"
 
 
 def _full_eval_next_actions(
@@ -8202,6 +8224,10 @@ def _phase6_collection_next_action(
         if command_sequence:
             command = "\n".join(command_sequence)
             plan_path = _posix_relpath(Path(collection_plan["path"]), package_root)
+            answer_progress = _phase6_answer_collection_progress(
+                collection_plan,
+                collection_plan_status=collection_plan_status,
+            )
             return {
                 "title": "Run real Phase 6 collection and eval sequence",
                 "category": "human_study",
@@ -8219,6 +8245,7 @@ def _phase6_collection_next_action(
                 "optional_inputs": [],
                 "missing_answer_targets": missing_answer_targets,
                 "remaining_answer_records": remaining_answer_records,
+                "answer_collection_progress": answer_progress,
                 "command": f"# plan: {plan_path}\n{command}",
                 "windows_powershell_command": command,
             }
@@ -8252,9 +8279,50 @@ def _phase6_collection_next_action(
         "optional_inputs": [],
         "missing_answer_targets": missing_answer_targets,
         "remaining_answer_records": remaining_answer_records,
+        "answer_collection_progress": {},
         "command": f"# from {package_root}\n{command}",
         "windows_powershell_command": _windows_wsl_command(package_root, command),
     }
+
+
+def _phase6_answer_collection_progress(
+    plan: dict[str, Any],
+    *,
+    collection_plan_status: dict[str, Any],
+) -> dict[str, Any]:
+    studies = plan.get("studies")
+    if not isinstance(studies, dict):
+        return {}
+    status_studies = collection_plan_status.get("studies")
+    if not isinstance(status_studies, dict):
+        status_studies = {}
+    batch_size = _contract_summary_int(plan.get("batch_size"))
+    study_progress: dict[str, Any] = {}
+    for label, study in sorted(studies.items()):
+        if not isinstance(study, dict):
+            continue
+        status = status_studies.get(label)
+        if not isinstance(status, dict):
+            status = {}
+        required = _contract_summary_int(
+            status.get("required_answer_records", study.get("answer_template_records"))
+        )
+        answered = _contract_summary_int(status.get("answer_records"))
+        remaining = max(required - answered, 0)
+        sessions_remaining = (
+            (remaining + batch_size - 1) // batch_size
+            if batch_size > 0 and remaining > 0
+            else 0
+        )
+        study_progress[label] = {
+            "answer_target": status.get("answer_target") or study.get("answer_target"),
+            "answer_records": answered,
+            "required_answer_records": required,
+            "remaining_answer_records": remaining,
+            "batch_size": batch_size,
+            "sessions_remaining_at_batch_size": sessions_remaining,
+        }
+    return study_progress
 
 
 def _find_phase6_collection_plan(coverage_parent: Path | None) -> dict[str, Any] | None:

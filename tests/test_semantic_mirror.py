@@ -1939,6 +1939,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "--study whole_repo=" in phase6_action["command"]
     collection_plan = {
         "mode": "phase6_real_human_study_collection_plan",
+        "batch_size": 20,
         "studies": {
             "whole_repo": {
                 "answer_target": str(tmp_path / "whole_answers.jsonl"),
@@ -2004,6 +2005,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert conduct_action["optional_inputs"] == []
     assert conduct_action["missing_answer_targets"] == []
     assert conduct_action["remaining_answer_records"] == 107
+    assert conduct_action["answer_collection_progress"]["whole_repo"] == {
+        "answer_target": str(tmp_path / "whole_answers.jsonl"),
+        "answer_records": 1,
+        "required_answer_records": 108,
+        "remaining_answer_records": 107,
+        "batch_size": 20,
+        "sessions_remaining_at_batch_size": 6,
+    }
     assert "phase6_collection_manifest.json" in conduct_action["command"]
     assert "review conduct-study" in conduct_action["command"]
     assert "review study-status" in conduct_action["command"]
@@ -2968,6 +2977,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert "- Missing answer targets: `None`" in contract_status_md
     assert "- Remaining answer records: `107`" in contract_status_md
+    assert (
+        "- Answer collection progress: `whole_repo: 1/108 answered, "
+        "107 remaining, 6 sessions at batch 20`"
+        in contract_status_md
+    )
     assert "## Windows Readiness" in contract_status_md
     assert "Native Python executable: `C:/repo/.venv/Scripts/python.exe`" in contract_status_md
     assert "Native Python version: `3.14.0`" in contract_status_md
