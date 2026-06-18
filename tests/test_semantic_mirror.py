@@ -24,6 +24,7 @@ from semantic_mirror.review import (
     create_review_pack,
     evaluate_human_usefulness_study,
     evaluate_review_pack,
+    summarize_human_study_answer_coverage,
     summarize_human_usefulness_studies,
 )
 from semantic_mirror.schema import validate_ir_document, validate_manifest, validate_unit
@@ -341,6 +342,75 @@ def test_build_generates_path_preserving_ir_with_data_ml_details(tmp_path: Path)
     assert not untimed_gates["real_timed_reviewer_logs"]["passed"]
     assert not untimed_gates["reviewer_identity_present"]["passed"]
     assert not untimed_gates["answer_text_present"]["passed"]
+
+
+def test_human_study_answer_coverage_reports_pending_and_ready_state(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    mirror = tmp_path / "mirror"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "train.py").write_text(SAMPLE_TRAIN, encoding="utf-8")
+    build_repository(repo, mirror, profile="data_ml", zoom="L4")
+    create_review_pack(mirror, tmp_path / "review_pack", max_questions=2)
+    create_human_usefulness_study(tmp_path / "review_pack", tmp_path / "study")
+
+    missing = summarize_human_study_answer_coverage(tmp_path / "study")
+    assert not missing["passed"]
+    missing_gates = {gate["name"]: gate for gate in missing["gates"]}
+    assert not missing_gates["answers_file_present"]["passed"]
+    assert missing["counts"]["pending_task_records"] == missing["counts"]["task_records"]
+
+    completed_answers = _completed_study_answers(tmp_path / "study")
+    partial_path = tmp_path / "partial_answers.jsonl"
+    partial_answers = completed_answers[:1] + [
+        {**completed_answers[1], "study_task_id": "unknown-task"},
+        completed_answers[0],
+    ]
+    _write_jsonl(partial_path, partial_answers)
+    partial = summarize_human_study_answer_coverage(tmp_path / "study", partial_path)
+    partial_gates = {gate["name"]: gate for gate in partial["gates"]}
+    assert not partial["passed"]
+    assert not partial_gates["answer_task_id_coverage"]["passed"]
+    assert not partial_gates["unknown_answer_ids"]["passed"]
+    assert not partial_gates["duplicate_answer_ids"]["passed"]
+    assert partial["counts"]["known_answer_records"] == 2
+    assert partial["unknown_answer_ids"] == ["unknown-task"]
+    assert partial["duplicate_answer_ids"] == [completed_answers[0]["study_task_id"]]
+
+    answers_path = tmp_path / "answers.jsonl"
+    _write_jsonl(answers_path, completed_answers)
+    report_path = tmp_path / "coverage.json"
+    ready = summarize_human_study_answer_coverage(
+        tmp_path / "study",
+        answers_path,
+        out_path=report_path,
+    )
+    assert ready["passed"]
+    assert ready["counts"]["pending_task_records"] == 0
+    assert json.loads(report_path.read_text(encoding="utf-8"))["passed"]
+
+    cli_report = tmp_path / "cli_coverage.json"
+    cli_status = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "semantic_mirror.cli",
+            "review",
+            "study-status",
+            str(tmp_path / "study"),
+            "--answers",
+            str(answers_path),
+            "--out",
+            str(cli_report),
+        ],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    cli_summary = json.loads(cli_status.stdout)
+    assert cli_summary["passed"]
+    assert json.loads(cli_report.read_text(encoding="utf-8"))["counts"][
+        "pending_task_records"
+    ] == 0
 
 
 def test_semantic_zoom_levels_control_detail_budget(tmp_path: Path) -> None:

@@ -23,6 +23,7 @@ from semantic_mirror.review import (
     create_review_pack,
     evaluate_human_usefulness_study,
     evaluate_review_pack,
+    summarize_human_study_answer_coverage,
     summarize_human_usefulness_studies,
 )
 from semantic_mirror.schema import SUPPORTED_PROFILES, SUPPORTED_ZOOMS
@@ -193,6 +194,14 @@ def main(argv: list[str] | None = None) -> int:
             append=args.append,
             overwrite=args.overwrite,
         )
+    elif args.command == "review" and args.review_command == "study-status":
+        report = summarize_human_study_answer_coverage(
+            Path(args.study),
+            Path(args.answers) if args.answers is not None else None,
+            out_path=Path(args.out) if args.out is not None else None,
+        )
+        print(json.dumps(_eval_summary(report), indent=2, sort_keys=True))
+        return 0 if report["passed"] else 1
     elif args.command == "train" and args.train_command == "prepare":
         manifest = prepare_training_data(
             Path(args.dataset),
@@ -629,6 +638,13 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite an existing answers file instead of refusing to run.",
     )
+    review_status = review_subparsers.add_parser(
+        "study-status",
+        help="Report Phase 6 human-study answer coverage before evaluation.",
+    )
+    review_status.add_argument("study", help="Human usefulness study directory.")
+    review_status.add_argument("--answers", help="Completed answers JSONL path.")
+    review_status.add_argument("--out", help="Optional JSON coverage report path.")
 
     train = subparsers.add_parser("train", help="Prepare SFT and RL training artifacts.")
     train_subparsers = train.add_subparsers(dest="train_command", required=True)

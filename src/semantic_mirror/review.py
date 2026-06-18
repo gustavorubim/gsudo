@@ -428,6 +428,136 @@ def evaluate_human_usefulness_study(
     return report
 
 
+def summarize_human_study_answer_coverage(
+    study_path: Path | str,
+    answers_path: Path | str | None = None,
+    *,
+    out_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Report Phase 6 answer collection coverage before running full evaluation."""
+
+    study = Path(study_path).resolve()
+    manifest = _read_json(study / "manifest.json")
+    mirror_tasks = _read_jsonl(study / manifest["files"]["mirror_tasks"])
+    source_tasks = _read_jsonl(study / manifest["files"]["source_tasks"])
+    visibility_tasks = _read_jsonl(study / manifest["files"]["visibility_tasks"])
+    tasks = [*mirror_tasks, *source_tasks, *visibility_tasks]
+    tasks_by_id = {task["study_task_id"]: task for task in tasks}
+
+    answers_file = Path(answers_path).resolve() if answers_path is not None else None
+    answers = _read_jsonl(answers_file) if answers_file is not None else []
+    answer_ids = [answer.get("study_task_id") for answer in answers]
+    known_answers = [
+        _normalise_answer(answer, tasks_by_id[answer["study_task_id"]])
+        for answer in answers
+        if answer.get("study_task_id") in tasks_by_id
+    ]
+    known_answer_ids = {answer["study_task_id"] for answer in known_answers}
+    duplicate_answer_ids = sorted(
+        answer_id
+        for answer_id in set(answer_ids)
+        if answer_id is not None and answer_ids.count(answer_id) > 1
+    )
+    unknown_answer_ids = sorted(
+        str(answer_id)
+        for answer_id in answer_ids
+        if answer_id is not None and answer_id not in tasks_by_id
+    )
+    pending_tasks = [task for task in tasks if task["study_task_id"] not in known_answer_ids]
+    source_mirror_answers = [
+        answer for answer in known_answers if answer.get("condition") in {"mirror", "source"}
+    ]
+    visibility_answers = [
+        answer for answer in known_answers if answer.get("task_type") == "visibility_marker"
+    ]
+    real_timed_answers = [answer for answer in known_answers if _has_real_timed_log(answer)]
+    reviewer_answers = [answer for answer in known_answers if _has_reviewer_identity(answer)]
+    text_answers = [
+        answer for answer in source_mirror_answers if _has_answer_text(answer)
+    ]
+    visibility_acknowledged = [
+        answer
+        for answer in visibility_answers
+        if bool(answer.get("acknowledged")) or bool(answer.get("correct"))
+    ]
+    paired_groups = sorted({task["task_group_id"] for task in [*mirror_tasks, *source_tasks]})
+    answered_groups = [
+        group_id
+        for group_id in paired_groups
+        if _group_answer(group_id, "mirror", mirror_tasks, {a["study_task_id"]: a for a in known_answers})
+        is not None
+        and _group_answer(
+            group_id,
+            "source",
+            source_tasks,
+            {a["study_task_id"]: a for a in known_answers},
+        )
+        is not None
+    ]
+
+    gates = [
+        _gate("study_manifest_mode", manifest.get("mode"), expected="human_usefulness_study"),
+        _gate("answers_file_present", answers_file is not None and answers_file.exists(), expected=True),
+        _gate("answer_task_id_coverage", _ratio(len(known_answer_ids), len(tasks)), minimum=1.0),
+        _gate("paired_answer_coverage", _ratio(len(answered_groups), len(paired_groups)), minimum=1.0),
+        _gate("unknown_answer_ids", len(unknown_answer_ids), expected=0),
+        _gate("duplicate_answer_ids", len(duplicate_answer_ids), expected=0),
+        _gate(
+            "real_timed_reviewer_logs",
+            _ratio(len(real_timed_answers), len(known_answers)),
+            minimum=1.0,
+        ),
+        _gate(
+            "reviewer_identity_present",
+            _ratio(len(reviewer_answers), len(known_answers)),
+            minimum=1.0,
+        ),
+        _gate(
+            "answer_text_present",
+            _ratio(len(text_answers), len(source_mirror_answers)),
+            minimum=1.0,
+        ),
+        _gate(
+            "visibility_items_acknowledged",
+            _ratio(len(visibility_acknowledged), len(visibility_tasks)),
+            minimum=1.0,
+        ),
+    ]
+    report = {
+        "mode": "human_usefulness_study_answer_coverage",
+        "study": str(study),
+        "answers": str(answers_file) if answers_file is not None else None,
+        "generated_at": _now(),
+        "passed": all(gate["passed"] for gate in gates),
+        "gates": gates,
+        "counts": {
+            "task_records": len(tasks),
+            "answer_records": len(answers),
+            "known_answer_records": len(known_answers),
+            "pending_task_records": len(pending_tasks),
+            "mirror_tasks": len(mirror_tasks),
+            "source_tasks": len(source_tasks),
+            "visibility_tasks": len(visibility_tasks),
+            "paired_task_groups": len(paired_groups),
+            "answered_paired_task_groups": len(answered_groups),
+            "source_mirror_answer_records": len(source_mirror_answers),
+            "source_mirror_answer_text_records": len(text_answers),
+            "visibility_answer_records": len(visibility_answers),
+            "visibility_acknowledged": len(visibility_acknowledged),
+            "real_timed_answer_records": len(real_timed_answers),
+            "reviewer_identity_records": len(reviewer_answers),
+        },
+        "pending_task_ids": [task["study_task_id"] for task in pending_tasks],
+        "unknown_answer_ids": unknown_answer_ids,
+        "duplicate_answer_ids": duplicate_answer_ids,
+    }
+    if out_path is not None:
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
+
+
 def summarize_human_usefulness_studies(
     report_paths: Iterable[Path | str],
     *,
