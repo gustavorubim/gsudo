@@ -1418,6 +1418,7 @@ def summarize_full_eval_contract_status(
         next_actions,
         windows_readiness_status=windows_readiness_status,
         resume_inspection_status=resume_inspection_status,
+        input_preflight_status=input_preflight_status,
     )
     report = {
         "mode": "full_eval_contract_status",
@@ -7121,6 +7122,7 @@ def _ordered_execution_plan_summary(
     *,
     windows_readiness_status: dict[str, Any],
     resume_inspection_status: dict[str, Any],
+    input_preflight_status: dict[str, Any],
 ) -> dict[str, Any]:
     smoke_prerequisite_open = (
         windows_readiness_status.get("checked")
@@ -7155,6 +7157,10 @@ def _ordered_execution_plan_summary(
         required_inputs = [
             item for item in action.get("required_inputs", []) or [] if isinstance(item, str)
         ]
+        input_preflight = _ordered_plan_input_preflight_status(
+            command_name,
+            input_preflight_status,
+        )
         if (
             command_name == "inspect_full_training_eval_resume"
             and resume_inspection_status.get("current_for_requested_steps") is True
@@ -7162,6 +7168,8 @@ def _ordered_execution_plan_summary(
             execution_state = "completed"
         elif preconditions:
             execution_state = "blocked_by_preconditions"
+        elif required_inputs and input_preflight.get("passed") is True:
+            execution_state = "ready"
         elif required_inputs:
             execution_state = "ready_after_inputs"
         else:
@@ -7176,6 +7184,8 @@ def _ordered_execution_plan_summary(
                 "execution_state": execution_state,
                 "blocked_by_preconditions": preconditions,
                 "required_inputs": required_inputs,
+                "required_inputs_preflight_passed": input_preflight.get("passed"),
+                "input_preflight_report": input_preflight.get("report"),
                 "optional_inputs": action.get("optional_inputs", []) or [],
                 "blocked_by_stages": action.get("blocked_by_stages", []) or [],
                 "missing_answer_targets": action.get("missing_answer_targets"),
@@ -7234,6 +7244,28 @@ def _ordered_execution_plan_summary(
             first_ready_non_training["title"] if first_ready_non_training else None
         ),
         "items": rows,
+    }
+
+
+def _ordered_plan_input_preflight_status(
+    command_name: str,
+    input_preflight_status: dict[str, Any],
+) -> dict[str, Any]:
+    report_by_command = {
+        "full_training_eval": "full_eval_inputs",
+        "wsl_smoke_chain": "wsl_smoke_inputs",
+    }
+    report_name = report_by_command.get(command_name)
+    if report_name is None:
+        return {"report": None, "passed": None}
+    reports = input_preflight_status.get("reports")
+    report = reports.get(report_name) if isinstance(reports, dict) else None
+    if not isinstance(report, dict):
+        return {"report": report_name, "passed": False}
+    return {
+        "report": report_name,
+        "passed": report.get("passed") is True,
+        "path": report.get("path"),
     }
 
 
@@ -7757,13 +7789,20 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"- First ready non-training command: `{ordered_execution_plan.get('first_ready_non_training_command') or 'None'}`",
                 f"- State counts: `{json.dumps(ordered_execution_plan.get('state_counts', {}), sort_keys=True)}`",
                 "",
-                "| Order | Action | Command | State | Preconditions | Required Inputs | Launches Training | Missing Answer Targets | Remaining Answer Records |",
-                "| ---: | --- | --- | --- | --- | --- | --- | --- | ---: |",
+                "| Order | Action | Command | State | Preconditions | Required Inputs | Inputs Preflight | Launches Training | Missing Answer Targets | Remaining Answer Records |",
+                "| ---: | --- | --- | --- | --- | --- | --- | --- | --- | ---: |",
             ]
         )
         for item in ordered_execution_plan["items"]:
             preconditions = item.get("blocked_by_preconditions") or []
             required_inputs = item.get("required_inputs") or []
+            input_preflight_report = item.get("input_preflight_report")
+            input_preflight_passed = item.get("required_inputs_preflight_passed")
+            input_preflight = (
+                f"`{input_preflight_report}`: `{input_preflight_passed}`"
+                if input_preflight_report
+                else "`None`"
+            )
             missing_answer_targets = item.get("missing_answer_targets") or []
             remaining_answer_records = item.get("remaining_answer_records")
             lines.append(
@@ -7771,6 +7810,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 f"`{item.get('command_name')}` | `{item.get('execution_state')}` | "
                 f"{', '.join(f'`{precondition}`' for precondition in preconditions) or '`None`'} | "
                 f"{', '.join(f'`{input_name}`' for input_name in required_inputs) or '`None`'} | "
+                f"{input_preflight} | "
                 f"`{item.get('launches_training', False)}` | "
                 f"{', '.join(f'`{target}`' for target in missing_answer_targets) or '`None`'} | "
                 f"{remaining_answer_records if remaining_answer_records is not None else '`None`'} |"

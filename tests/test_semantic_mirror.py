@@ -1166,6 +1166,32 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert status["input_preflight_status"]["reports"]["full_eval_inputs"][
         "required_inputs"
     ] == ["held_out_dataset", "baseline_candidates"]
+    preflight_dir = run / "preflight"
+    preflight_dir.mkdir()
+    (preflight_dir / "wsl_smoke_inputs.json").write_text(
+        json.dumps(
+            {
+                "mode": "wsl_smoke_input_preflight",
+                "passed": True,
+                "issues": [],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (preflight_dir / "full_eval_inputs.json").write_text(
+        json.dumps(
+            {
+                "mode": "full_eval_input_preflight",
+                "passed": True,
+                "issues": [],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     assert not status["human_usefulness_status"]["checked"]
     scorecard = {row["area"]: row for row in status["contract_scorecard"]}
     assert scorecard["repo_hygiene"]["passed"] is None
@@ -2525,8 +2551,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert ordered_plan["state_counts"] == {
         "blocked_by_preconditions": 2,
         "completed": 1,
-        "ready": 1,
-        "ready_after_inputs": 1,
+        "ready": 2,
     }
     ordered_by_command = {
         item["command_name"]: item for item in ordered_plan["items"]
@@ -2534,8 +2559,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert ordered_by_command["inspect_full_training_eval_resume"][
         "execution_state"
     ] == "completed"
-    assert ordered_by_command["full_training_eval"]["execution_state"] == (
-        "ready_after_inputs"
+    assert ordered_by_command["full_training_eval"]["execution_state"] == "ready"
+    assert ordered_by_command["full_training_eval"][
+        "required_inputs_preflight_passed"
+    ] is True
+    assert ordered_by_command["full_training_eval"]["input_preflight_report"] == (
+        "full_eval_inputs"
     )
     assert ordered_by_command["full_training_eval"]["blocked_by_preconditions"] == []
     assert ordered_by_command["full_training_eval"]["required_inputs"] == [
@@ -2969,9 +2998,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         in contract_status_md
     )
     assert "Missing Answer Targets | Remaining Answer Records" in contract_status_md
+    assert "Inputs Preflight | Launches Training" in contract_status_md
     assert (
         "| 5 | `Run real Phase 6 collection and eval sequence` | "
-        "`phase6_collection_sequence` | `ready` | `None` | `None` | `False` | "
+        "`phase6_collection_sequence` | `ready` | `None` | `None` | `None` | `False` | "
         "`None` | 107 |"
         in contract_status_md
     )
