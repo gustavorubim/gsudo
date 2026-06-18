@@ -1235,6 +1235,26 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "run_dir": manifest["run_dir"],
             "passed": manifest["passed"],
             "requested_max_steps": manifest["requested_max_steps"],
+            "contract_reward_summary": manifest["contract_reward_summary"],
+            "remaining_by_area": manifest["remaining_by_area"],
+            "remaining_recovery_plan": [
+                {
+                    "gate": item["gate"],
+                    "required_action": item["required_action"],
+                    "requires_training": item["requires_training"],
+                    "blocked_by_stages": item["blocked_by_stages"],
+                    "artifacts": item["artifacts"],
+                }
+                for item in manifest["remaining_recovery_plan"]
+            ],
+            "next_actions": [
+                {
+                    "title": action["title"],
+                    "category": action.get("category", "unspecified"),
+                    "launches_training": action.get("launches_training", False),
+                }
+                for action in manifest["next_actions"]
+            ],
             "remaining_items": manifest["remaining_items"],
             "gates": manifest["gates"],
         }

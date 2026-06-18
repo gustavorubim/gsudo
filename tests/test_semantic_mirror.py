@@ -1355,7 +1355,29 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         encoding="utf-8",
     )
     assert cli_status.returncode == 1
-    assert json.loads(cli_status.stdout)["passed"] is False
+    cli_stdout = json.loads(cli_status.stdout)
+    assert cli_stdout["passed"] is False
+    assert cli_stdout["contract_reward_summary"]["completion_eligible"] is False
+    assert cli_stdout["remaining_by_area"]["dpo"] == [
+        "dpo_stage_manifest_matches_requested_steps",
+        "dpo_eval_exists_and_passed",
+        "dpo_vs_sft_exists_and_passed",
+        "dpo_sample_inspection_complete",
+    ]
+    stdout_recovery_plan = {
+        item["gate"]: item for item in cli_stdout["remaining_recovery_plan"]
+    }
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "required_action"
+    ] == "resume"
+    assert stdout_recovery_plan["diagnostic_plots_exist"][
+        "blocked_by_stages"
+    ] == ["dpo", "rl"]
+    assert any(
+        action["title"] == "Inspect resume plan"
+        and action["launches_training"] is False
+        for action in cli_stdout["next_actions"]
+    )
     cli_status_json = json.loads(
         (tmp_path / "contract_status_cli.json").read_text(encoding="utf-8")
     )
