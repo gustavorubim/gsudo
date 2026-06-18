@@ -1941,6 +1941,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
                     f"{tmp_path / 'study'} --answers {tmp_path / 'whole_answers.jsonl'} "
                     f"--out {tmp_path / 'whole_coverage.json'}"
                 ),
+                "coverage_report": str(tmp_path / "whole_real_coverage.json"),
                 "eval_command": (
                     "uv run semantic-mirror eval human-study "
                     f"{tmp_path / 'study'} --answers {tmp_path / 'whole_answers.jsonl'} "
@@ -1955,6 +1956,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "required_total_answer_records": 108,
     }
     _write_jsonl(tmp_path / "whole_answers.jsonl", [{"task_id": "one"}])
+    (tmp_path / "whole_real_coverage.json").write_text(
+        json.dumps({"mode": "human_usefulness_study_answer_coverage"}) + "\n",
+        encoding="utf-8",
+    )
     (tmp_path / "phase6_collection_manifest.json").write_text(
         json.dumps(collection_plan, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1986,6 +1991,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "review study-status" in conduct_action["command"]
     assert "eval human-study" in conduct_action["command"]
     assert "eval human-study-suite" in conduct_action["command"]
+    planned_refresh_action = next(
+        action
+        for action in planned_status["next_actions"]
+        if action["title"] == "Regenerate contract status"
+    )
+    assert "--human-study-coverage 'whole_real_coverage.json'" in planned_refresh_action[
+        "command"
+    ]
+    assert "--human-study-coverage 'whole_coverage.json'" not in planned_refresh_action[
+        "command"
+    ]
     repo_commit = _git(repo, "rev-parse", "HEAD").strip()
     source_freshness = tmp_path / "source_freshness.json"
     package_root = tmp_path / "package"
@@ -2290,7 +2306,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert collection_studies["whole_repo"]["answer_target"].endswith(
         "whole_answers.jsonl"
     )
-    assert collection_studies["whole_repo"]["coverage_report"] is None
+    assert collection_studies["whole_repo"]["coverage_report"].endswith(
+        "whole_real_coverage.json"
+    )
     assert collection_studies["whole_repo"]["eval_report"] is None
     assert cli_stdout["human_usefulness_summary"]["failed_phase6_gates"] == []
     assert cli_stdout["human_usefulness_summary"]["coverage_reports"][0][
@@ -2863,7 +2881,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "--wsl-smoke-manifest 'smoke_chain_manifest.json'" in refresh_action["command"]
     assert "--package-source-freshness 'source_freshness.json'" in refresh_action["command"]
     assert "--human-study-suite 'phase6_summary.json'" in refresh_action["command"]
-    assert "--human-study-coverage 'whole_repo_coverage.json'" in refresh_action["command"]
+    assert "--human-study-coverage 'whole_real_coverage.json'" in refresh_action[
+        "command"
+    ]
+    assert "--human-study-coverage 'whole_repo_coverage.json'" not in refresh_action[
+        "command"
+    ]
     resume_action = next(
         action
         for action in cli_status_json["next_actions"]

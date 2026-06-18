@@ -8333,17 +8333,42 @@ def _contract_status_evidence_flags(
                 ),
             ]
         )
-    for coverage in human_usefulness_status.get("coverage_reports") or []:
-        if coverage.get("path"):
+    for coverage_path in _human_study_coverage_paths_for_status(
+        human_usefulness_status
+    ):
+        if coverage_path:
             flags.extend(
                 [
                     "--human-study-coverage",
                     _shell_single_quoted(
-                        _posix_relpath(Path(coverage["path"]), package_root)
+                        _posix_relpath(Path(coverage_path), package_root)
                     ),
                 ]
             )
     return " ".join(flags) + (" " if flags else "")
+
+
+def _human_study_coverage_paths_for_status(
+    human_usefulness_status: dict[str, Any],
+) -> list[str]:
+    collection_plan = human_usefulness_status.get("collection_plan_status")
+    if isinstance(collection_plan, dict):
+        studies = collection_plan.get("studies")
+        if isinstance(studies, dict):
+            real_paths = [
+                str(study["coverage_report"])
+                for _, study in sorted(studies.items())
+                if isinstance(study, dict)
+                and isinstance(study.get("coverage_report"), str)
+                and Path(study["coverage_report"]).exists()
+            ]
+            if real_paths:
+                return real_paths
+    return [
+        str(coverage["path"])
+        for coverage in human_usefulness_status.get("coverage_reports") or []
+        if isinstance(coverage, dict) and coverage.get("path")
+    ]
 
 
 def _shell_single_quoted(value: str) -> str:
