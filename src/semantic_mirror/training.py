@@ -6902,6 +6902,42 @@ def _full_eval_next_actions(
             "windows_powershell_command": _windows_wsl_command(package_root, inspect_command),
         }
     )
+    if (
+        windows_readiness_status.get("checked")
+        and not windows_readiness_status.get("passed")
+        and windows_readiness_status.get("native_blocked")
+        and not windows_readiness_status.get("wsl_smoke_complete")
+    ):
+        wsl_failed = windows_readiness_status.get("wsl_failed_checks") or []
+        wsl_reason = (
+            "Windows-native audit is blocked, and WSL smoke-chain evidence is "
+            "missing or incomplete."
+        )
+        if wsl_failed:
+            wsl_reason += " Failed WSL checks: " + ", ".join(
+                f"`{check}`" for check in wsl_failed
+            ) + "."
+        wsl_smoke_command = (
+            "powershell -ExecutionPolicy Bypass -File "
+            "launch/run_wsl_smoke_chain.ps1 -HeldOutDataset <windows_dataset_dir>"
+        )
+        wsl_smoke_powershell = "\n".join(
+            [
+                f"$package = {_powershell_single_quoted(str(package_root))}",
+                "Set-Location $package",
+                wsl_smoke_command,
+            ]
+        )
+        actions.append(
+            {
+                "title": "Run Windows-hosted WSL smoke chain",
+                "category": "training",
+                "launches_training": True,
+                "reason": wsl_reason,
+                "command": f"# from {package_root}\n{wsl_smoke_command}",
+                "windows_powershell_command": wsl_smoke_powershell,
+            }
+        )
     if not stage_status["dpo"]["manifest_matches_requested_max_steps"]:
         rl_incomplete = (
             not stage_status["rl"]["manifest_matches_requested_max_steps"]

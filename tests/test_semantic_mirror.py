@@ -1133,6 +1133,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
+    wsl_smoke_action = next(
+        action
+        for action in wrong_wsl_status["next_actions"]
+        if action["title"] == "Run Windows-hosted WSL smoke chain"
+    )
+    assert wsl_smoke_action["category"] == "training"
+    assert wsl_smoke_action["launches_training"] is True
+    assert "smoke_chain_manifest_mode" in wsl_smoke_action["reason"]
+    assert "run_wsl_smoke_chain.ps1" in wsl_smoke_action["command"]
+    assert "Set-Location $package" in wsl_smoke_action["windows_powershell_command"]
+    assert "-HeldOutDataset <windows_dataset_dir>" in wsl_smoke_action[
+        "windows_powershell_command"
+    ]
     human_suite = tmp_path / "phase6_summary.json"
     human_suite.write_text(
         json.dumps(
