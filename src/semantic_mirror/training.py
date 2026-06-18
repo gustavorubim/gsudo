@@ -6726,6 +6726,9 @@ def _full_eval_next_actions(
                 ),
             }
         )
+    phase6_action = _phase6_collection_next_action(package_root, human_usefulness_status)
+    if phase6_action is not None:
+        actions.append(phase6_action)
     actions.append(
         {
             "title": "Regenerate contract status",
@@ -6737,6 +6740,66 @@ def _full_eval_next_actions(
         }
     )
     return actions
+
+
+def _phase6_collection_next_action(
+    package_root: Path,
+    human_usefulness_status: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not human_usefulness_status.get("checked"):
+        return None
+    coverage_reports = [
+        coverage
+        for coverage in human_usefulness_status.get("coverage_reports") or []
+        if coverage.get("study")
+    ]
+    failed_coverage_reports = [
+        coverage for coverage in coverage_reports if coverage.get("passed") is False
+    ]
+    if human_usefulness_status.get("passed") and not failed_coverage_reports:
+        return None
+    if not coverage_reports:
+        return None
+    coverage_parent = None
+    first_coverage_path = coverage_reports[0].get("path")
+    if first_coverage_path:
+        coverage_parent = Path(first_coverage_path).resolve().parent
+    answers_dir = (coverage_parent or package_root) / "phase6_real_answers"
+    out_path = answers_dir / "phase6_real_collection_plan.json"
+    study_flags = []
+    for coverage in coverage_reports:
+        label = _phase6_collection_study_label(coverage)
+        study_path = _posix_relpath(Path(coverage["study"]), package_root)
+        study_flags.append(f"--study {label}={_shell_single_quoted(study_path)}")
+    command = (
+        "PYTHONPATH=src python -m semantic_mirror.cli review study-collection-plan "
+        + " ".join(study_flags)
+        + f" --answers-dir {_shell_single_quoted(_posix_relpath(answers_dir, package_root))}"
+        + " --reviewer 'REPLACE_WITH_REVIEWER'"
+        + f" --out {_shell_single_quoted(_posix_relpath(out_path, package_root))}"
+    )
+    return {
+        "title": "Create real Phase 6 answer collection plan",
+        "category": "human_study",
+        "launches_training": False,
+        "reason": (
+            "Human usefulness evidence is checked but failing; create a real timed "
+            "reviewer-answer plan before re-running study-status and eval human-study."
+        ),
+        "command": f"# from {package_root}\n{command}",
+        "windows_powershell_command": _windows_wsl_command(package_root, command),
+    }
+
+
+def _phase6_collection_study_label(coverage: dict[str, Any]) -> str:
+    path_text = " ".join(
+        str(coverage.get(key) or "").lower() for key in ("path", "study", "answers")
+    )
+    if "diff" in path_text:
+        return "diff_mode"
+    if "whole" in path_text:
+        return "whole_repo"
+    return "study"
 
 
 def _windows_wsl_command(package_root: Path, bash_command: str, *, distro: str = "Ubuntu") -> str:

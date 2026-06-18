@@ -1114,6 +1114,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "answer_task_id_coverage",
         "real_timed_reviewer_logs",
     ]
+    phase6_action = next(
+        action
+        for action in coverage_status["next_actions"]
+        if action["title"] == "Create real Phase 6 answer collection plan"
+    )
+    assert phase6_action["category"] == "human_study"
+    assert phase6_action["launches_training"] is False
+    assert "review study-collection-plan" in phase6_action["command"]
+    assert "--reviewer 'REPLACE_WITH_REVIEWER'" in phase6_action["command"]
+    assert "--study whole_repo=" in phase6_action["command"]
     repo_commit = _git(repo, "rev-parse", "HEAD").strip()
     source_freshness = tmp_path / "source_freshness.json"
     package_root = tmp_path / "package"
@@ -1276,6 +1286,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert resume_action["category"] == "training"
     assert resume_action["launches_training"] is True
     assert "SOURCE_FRESHNESS_REPO_ROOT='repo'" in resume_action["command"]
+    cli_phase6_action = next(
+        action
+        for action in cli_status_json["next_actions"]
+        if action["title"] == "Create real Phase 6 answer collection plan"
+    )
+    assert cli_phase6_action["category"] == "human_study"
+    assert cli_phase6_action["launches_training"] is False
+    assert "phase6_real_collection_plan.json" in cli_phase6_action["command"]
     contract_status_md = (tmp_path / "contract_status_cli.md").read_text(encoding="utf-8")
     assert "training_eval_summary_matches_requested_steps" in contract_status_md
     assert "## Package Source Freshness" in contract_status_md
@@ -1283,6 +1301,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "## Package Command Manifest" in contract_status_md
     assert "Package command manifest classifies training and non-training commands" in contract_status_md
     assert "Training command count: `6`" in contract_status_md
+    assert "Create real Phase 6 answer collection plan" in contract_status_md
     assert "whole_repo_coverage.json" in contract_status_md
     assert "real_timed_reviewer_logs" in contract_status_md
 
