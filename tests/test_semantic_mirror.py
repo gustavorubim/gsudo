@@ -850,6 +850,20 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     recovery_plan = {
         item["gate"]: item for item in status["remaining_recovery_plan"]
     }
+    assert status["recovery_plan_summary"] == {
+        "action_category_counts": {
+            "diagnostics": 1,
+            "evaluation": 6,
+            "status": 3,
+            "training": 2,
+        },
+        "blocked_item_count": 10,
+        "blocked_stage_counts": {"dpo": 7, "rl": 7},
+        "non_training_action_counts": {},
+        "non_training_count": 0,
+        "requires_training_count": 12,
+        "total_items": 12,
+    }
     assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -1014,6 +1028,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "| `dpo` |" in status_markdown
     assert "| `diagnostics` |" in status_markdown
     assert "### Recovery Plan" in status_markdown
+    assert "- Total items: `12`" in status_markdown
+    assert "- Requires training: `12`" in status_markdown
+    assert (
+        '- Action category counts: `{"diagnostics": 1, "evaluation": 6, "status": 3, "training": 2}`'
+        in status_markdown
+    )
+    assert '- Blocked stage counts: `{"dpo": 7, "rl": 7}`' in status_markdown
     assert (
         "| Gate | Action | Category | Requires Training | Blocked By | Artifacts |"
         in status_markdown
@@ -1653,6 +1674,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     stdout_recovery_plan = {
         item["gate"]: item for item in cli_stdout["remaining_recovery_plan"]
     }
+    assert cli_stdout["recovery_plan_summary"] == status["recovery_plan_summary"]
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "required_action"
     ] == "resume"
@@ -3345,6 +3367,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "real" in package_readme
     assert "timed-answer counts" in package_readme
     assert "remaining_recovery_plan" in package_readme
+    assert "recovery_plan_summary" in package_readme
     assert "Recovery Plan" in package_readme
     assert "generate_eval_report_after_stage" in package_readme
     assert "generate_sample_inspection_after_stage" in package_readme
@@ -3358,6 +3381,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     )
     assert "The JSON keeps full `next_actions` commands" in root_readme
     assert "package_metadata_summary" in root_readme
+    assert "recovery_plan_summary" in root_readme
     assert "package Python" in root_readme
     assert "metadata so" in root_readme
     assert "automation can decide" in root_readme

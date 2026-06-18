@@ -1278,6 +1278,11 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 "stage_recovery_summary",
                 _stage_recovery_summary(manifest.get("stage_recovery_status")),
             ),
+            "recovery_plan_summary": _summary_value(
+                manifest,
+                "recovery_plan_summary",
+                _recovery_plan_summary(manifest.get("remaining_recovery_plan")),
+            ),
             "remaining_by_area": manifest["remaining_by_area"],
             "remaining_recovery_plan": [
                 {
@@ -1578,6 +1583,55 @@ def _stage_recovery_summary(status: object) -> dict[str, dict[str, object]]:
             ),
         }
     return summary
+
+
+def _recovery_plan_summary(plan: object) -> dict[str, object]:
+    if not isinstance(plan, list):
+        plan = []
+    action_category_counts: dict[str, int] = {}
+    blocked_stage_counts: dict[str, int] = {}
+    non_training_action_counts: dict[str, int] = {}
+    requires_training_count = 0
+    blocked_item_count = 0
+    for item in plan:
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("action_category") or "inspection")
+        action_category_counts[category] = action_category_counts.get(category, 0) + 1
+        if item.get("requires_training"):
+            requires_training_count += 1
+        else:
+            action = str(item.get("required_action") or "inspect")
+            non_training_action_counts[action] = (
+                non_training_action_counts.get(action, 0) + 1
+            )
+        blocked_by = item.get("blocked_by_stages")
+        if not isinstance(blocked_by, list):
+            blocked_by = []
+        if blocked_by:
+            blocked_item_count += 1
+        for stage in blocked_by:
+            stage_name = str(stage)
+            blocked_stage_counts[stage_name] = (
+                blocked_stage_counts.get(stage_name, 0) + 1
+            )
+    total_items = sum(action_category_counts.values())
+    return {
+        "total_items": total_items,
+        "requires_training_count": requires_training_count,
+        "non_training_count": total_items - requires_training_count,
+        "blocked_item_count": blocked_item_count,
+        "action_category_counts": {
+            key: action_category_counts[key] for key in sorted(action_category_counts)
+        },
+        "blocked_stage_counts": {
+            key: blocked_stage_counts[key] for key in sorted(blocked_stage_counts)
+        },
+        "non_training_action_counts": {
+            key: non_training_action_counts[key]
+            for key in sorted(non_training_action_counts)
+        },
+    }
 
 
 def _eval_summary(report: dict[str, object]) -> dict[str, object]:

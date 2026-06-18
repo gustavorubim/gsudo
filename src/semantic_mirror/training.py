@@ -1425,6 +1425,9 @@ def summarize_full_eval_contract_status(
         "remaining_items": remaining_items,
         "remaining_by_area": _remaining_by_area(remaining_items),
         "remaining_recovery_plan": remaining_recovery_plan,
+        "recovery_plan_summary": _recovery_plan_contract_summary(
+            remaining_recovery_plan
+        ),
     }
     report["contract_scorecard"] = _contract_scorecard(report)
     report["contract_scorecard_summary"] = _contract_scorecard_contract_summary(
@@ -3500,12 +3503,14 @@ and sample artifacts from missing reports: eval rows use
 `generate_eval_report_after_stage`, sample rows use
 `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
+`recovery_plan_summary` rolls the same rows up by action category, training
+requirement, and blocking stage.
 `outputs/contract_status.json` and `train contract-status` stdout are automation
 surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `windows_readiness_summary`, `package_source_summary`,
 `package_command_manifest_summary`, `package_metadata_summary`,
 `human_usefulness_summary`, `stage_recovery_summary`, `remaining_by_area`,
-and `remaining_recovery_plan`. The JSON keeps full `next_actions` commands,
+`remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
@@ -6833,10 +6838,19 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             )
         recovery_plan = report.get("remaining_recovery_plan") or []
         if recovery_plan:
+            recovery_summary = report.get("recovery_plan_summary") or {}
             lines.extend(
                 [
                     "",
                     "### Recovery Plan",
+                    "",
+                    f"- Total items: `{recovery_summary.get('total_items', len(recovery_plan))}`",
+                    f"- Requires training: `{recovery_summary.get('requires_training_count', 0)}`",
+                    f"- Non-training items: `{recovery_summary.get('non_training_count', 0)}`",
+                    f"- Blocked items: `{recovery_summary.get('blocked_item_count', 0)}`",
+                    f"- Action category counts: `{json.dumps(recovery_summary.get('action_category_counts', {}), sort_keys=True)}`",
+                    f"- Blocked stage counts: `{json.dumps(recovery_summary.get('blocked_stage_counts', {}), sort_keys=True)}`",
+                    f"- Non-training action counts: `{json.dumps(recovery_summary.get('non_training_action_counts', {}), sort_keys=True)}`",
                     "",
                     "| Gate | Action | Category | Requires Training | Blocked By | Artifacts |",
                     "| --- | --- | --- | --- | --- | --- |",
@@ -7673,6 +7687,45 @@ def _stage_recovery_contract_summary(
             ),
         }
     return summary
+
+
+def _recovery_plan_contract_summary(
+    recovery_plan: list[dict[str, Any]],
+) -> dict[str, Any]:
+    action_category_counts: dict[str, int] = {}
+    blocked_stage_counts: dict[str, int] = {}
+    non_training_action_counts: dict[str, int] = {}
+    requires_training_count = 0
+    blocked_item_count = 0
+    for item in recovery_plan:
+        category = str(item.get("action_category") or "inspection")
+        action_category_counts[category] = action_category_counts.get(category, 0) + 1
+        if item.get("requires_training"):
+            requires_training_count += 1
+        else:
+            action = str(item.get("required_action") or "inspect")
+            non_training_action_counts[action] = non_training_action_counts.get(action, 0) + 1
+        blocked_by = [str(stage) for stage in item.get("blocked_by_stages", []) or []]
+        if blocked_by:
+            blocked_item_count += 1
+        for stage in blocked_by:
+            blocked_stage_counts[stage] = blocked_stage_counts.get(stage, 0) + 1
+    return {
+        "total_items": len(recovery_plan),
+        "requires_training_count": requires_training_count,
+        "non_training_count": len(recovery_plan) - requires_training_count,
+        "blocked_item_count": blocked_item_count,
+        "action_category_counts": {
+            key: action_category_counts[key] for key in sorted(action_category_counts)
+        },
+        "blocked_stage_counts": {
+            key: blocked_stage_counts[key] for key in sorted(blocked_stage_counts)
+        },
+        "non_training_action_counts": {
+            key: non_training_action_counts[key]
+            for key in sorted(non_training_action_counts)
+        },
+    }
 
 
 def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any]:
