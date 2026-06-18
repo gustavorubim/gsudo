@@ -7428,6 +7428,8 @@ def _remaining_area_for_gate(gate: str) -> str:
         return "rl"
     if gate.startswith("diagnostic_"):
         return "diagnostics"
+    if gate.startswith("package_"):
+        return "package"
     if gate.startswith("training_eval_summary") or gate == "all_final_eval_gates_passed":
         return "final_summary"
     return "other"
@@ -7482,6 +7484,8 @@ def _remaining_gate_recovery_item(
             if recovery.get("missing_current_artifacts")
         ]
         requires_training = bool(blocked_by)
+    elif area == "package":
+        required_action = _package_recovery_action(gate)
     return {
         "gate": gate,
         "area": area,
@@ -7493,6 +7497,16 @@ def _remaining_gate_recovery_item(
         "current_evidence": item.get("actual"),
         "expected_evidence": item.get("expected"),
     }
+
+
+def _package_recovery_action(gate: str) -> str:
+    if gate == "package_source_freshness_valid_when_checked":
+        return "regenerate_package_source_freshness"
+    if gate == "package_command_manifest_valid_when_checked":
+        return "regenerate_package_command_manifest"
+    if gate == "package_python_metadata_valid_when_checked":
+        return "fix_package_python_metadata"
+    return "inspect_package_evidence"
 
 
 def _repo_hygiene_contract_status(repo_root: Path | str | None) -> dict[str, Any]:

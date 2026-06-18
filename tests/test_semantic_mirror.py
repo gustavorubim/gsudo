@@ -1639,8 +1639,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     stale_source_gates = {gate["name"]: gate for gate in stale_source_status["gates"]}
     assert not stale_source_status["passed"]
     assert not stale_source_gates["package_source_freshness_valid_when_checked"]["passed"]
-    assert stale_source_status["remaining_by_area"]["other"] == [
+    assert stale_source_status["remaining_by_area"]["package"] == [
         "package_source_freshness_valid_when_checked"
+    ]
+    stale_source_recovery = {
+        item["gate"]: item for item in stale_source_status["remaining_recovery_plan"]
+    }
+    assert stale_source_recovery["package_source_freshness_valid_when_checked"][
+        "required_action"
+    ] == "regenerate_package_source_freshness"
+    assert not stale_source_recovery["package_source_freshness_valid_when_checked"][
+        "requires_training"
     ]
     source_freshness.write_text(
         json.dumps(good_source_freshness, sort_keys=True) + "\n",
@@ -1663,8 +1672,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert bad_command_status["package_command_manifest_status"]["failed_checks"] == [
         "schema_version"
     ]
-    assert bad_command_status["remaining_by_area"]["other"] == [
+    assert bad_command_status["remaining_by_area"]["package"] == [
         "package_command_manifest_valid_when_checked"
+    ]
+    bad_command_recovery = {
+        item["gate"]: item for item in bad_command_status["remaining_recovery_plan"]
+    }
+    assert bad_command_recovery["package_command_manifest_valid_when_checked"][
+        "required_action"
+    ] == "regenerate_package_command_manifest"
+    assert not bad_command_recovery["package_command_manifest_valid_when_checked"][
+        "requires_training"
     ]
     command_manifest_path.write_text(
         json.dumps(good_command_manifest, sort_keys=True) + "\n",
@@ -1683,8 +1701,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert not bad_metadata_status["passed"]
     assert not bad_metadata_gates["package_python_metadata_valid_when_checked"]["passed"]
     assert bad_metadata_status["package_metadata_status"]["requires_python"] == ">=3.11"
-    assert bad_metadata_status["remaining_by_area"]["other"] == [
+    assert bad_metadata_status["remaining_by_area"]["package"] == [
         "package_python_metadata_valid_when_checked"
+    ]
+    bad_metadata_recovery = {
+        item["gate"]: item for item in bad_metadata_status["remaining_recovery_plan"]
+    }
+    assert bad_metadata_recovery["package_python_metadata_valid_when_checked"][
+        "required_action"
+    ] == "fix_package_python_metadata"
+    assert not bad_metadata_recovery["package_python_metadata_valid_when_checked"][
+        "requires_training"
     ]
     (package_root / "pyproject.toml").write_text(
         '[project]\nname = "semantic-mirror-runtime"\nrequires-python = ">=3.11,<3.14"\n',
