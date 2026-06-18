@@ -3497,10 +3497,11 @@ SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
 status JSON includes `remaining_recovery_plan`, and the Markdown includes a
 `Recovery Plan` table mapping each failed gate to the required action, action
 category, recommended next-action row, whether training is required, blocking
-stages, and target artifacts. Each row also includes an `action_category`,
-`next_action_title`, and `next_action_category` for routing failed gates without
-parsing action names. The recovery plan distinguishes stale stage-derived eval
-and sample artifacts from missing reports: eval rows use
+stages, command-manifest key, and target artifacts. Each row also includes an
+`action_category`, `next_action_title`, `next_action_category`,
+`next_action_command_name`, and `next_action_launches_training` for routing
+failed gates without parsing action names. The recovery plan distinguishes stale
+stage-derived eval and sample artifacts from missing reports: eval rows use
 `generate_eval_report_after_stage`, sample rows use
 `generate_sample_inspection_after_stage`, and `blocked_by_stages` names the
 stage that must be completed before those artifacts are current.
@@ -3516,8 +3517,9 @@ including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
 per-action `blocked_by_stages` and `stage_actions`, recovery-plan
-`action_category`, `next_action_title`, and `next_action_category`, native and
-WSL readiness blocker summaries, Phase 6 failed gates, real timed-answer counts,
+`action_category`, `next_action_title`, `next_action_category`,
+`next_action_command_name`, and `next_action_launches_training`, native and WSL
+readiness blocker summaries, Phase 6 failed gates, real timed-answer counts,
 package source freshness, command-manifest safety checks, command category
 rollups, and package Python metadata.
 Checked package evidence failures surface as package-area gates with non-training
@@ -6854,8 +6856,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"- Blocked stage counts: `{json.dumps(recovery_summary.get('blocked_stage_counts', {}), sort_keys=True)}`",
                     f"- Non-training action counts: `{json.dumps(recovery_summary.get('non_training_action_counts', {}), sort_keys=True)}`",
                     "",
-                    "| Gate | Action | Category | Next Action | Requires Training | Blocked By | Artifacts |",
-                    "| --- | --- | --- | --- | --- | --- | --- |",
+                    "| Gate | Action | Category | Next Action | Command | Requires Training | Blocked By | Artifacts |",
+                    "| --- | --- | --- | --- | --- | --- | --- | --- |",
                 ]
             )
             for plan_item in recovery_plan:
@@ -6866,6 +6868,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"`{plan_item.get('action_category', 'inspection')}` | "
                     f"`{plan_item.get('next_action_title') or 'Inspect resume plan'}` "
                     f"(`{plan_item.get('next_action_category') or 'inspection'}`) | "
+                    f"`{plan_item.get('next_action_command_name') or 'inspect_full_training_eval_resume'}` "
+                    f"(training: `{plan_item.get('next_action_launches_training', False)}`) | "
                     f"`{plan_item['requires_training']}` | "
                     f"{', '.join(f'`{stage}`' for stage in blocked_by) or '`None`'} | "
                     f"{', '.join(f'`{artifact}`' for artifact in artifacts)} |"
@@ -7994,6 +7998,8 @@ def _remaining_gate_recovery_item(
         "action_category": action_category,
         "next_action_title": next_action["title"],
         "next_action_category": next_action["category"],
+        "next_action_command_name": next_action["command_name"],
+        "next_action_launches_training": next_action["launches_training"],
         "requires_training": requires_training,
         "blocked_by_stages": blocked_by,
         "artifacts": artifacts,
@@ -8024,18 +8030,27 @@ def _remaining_recovery_next_action(
     area: str,
     required_action: str,
     blocked_by_stages: list[str],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if required_action == "run_wsl_smoke_chain":
         return {
             "title": "Run Windows-hosted WSL smoke chain",
             "category": "training",
+            "command_name": "wsl_smoke_chain",
+            "launches_training": True,
         }
     if required_action in {"resume", "run", "rerun"}:
         if area == "rl" and blocked_by_stages == ["rl"]:
-            return {"title": "Run RL and final eval", "category": "training"}
+            return {
+                "title": "Run RL and final eval",
+                "category": "training",
+                "command_name": "full_training_eval",
+                "launches_training": True,
+            }
         return {
             "title": "Resume full eval through DPO and RL",
             "category": "training",
+            "command_name": "full_training_eval",
+            "launches_training": True,
         }
     if required_action in {
         "generate_eval_report_after_stage",
@@ -8044,12 +8059,29 @@ def _remaining_recovery_next_action(
         return {
             "title": "Resume full eval through DPO and RL",
             "category": "training",
+            "command_name": "full_training_eval",
+            "launches_training": True,
         }
     if required_action == "regenerate_diagnostics":
-        return {"title": "Regenerate target diagnostics", "category": "diagnostics"}
+        return {
+            "title": "Regenerate target diagnostics",
+            "category": "diagnostics",
+            "command_name": "report",
+            "launches_training": False,
+        }
     if required_action == "rerun_full_eval_summary":
-        return {"title": "Regenerate contract status", "category": "status"}
-    return {"title": "Inspect resume plan", "category": "inspection"}
+        return {
+            "title": "Regenerate contract status",
+            "category": "status",
+            "command_name": "contract_status",
+            "launches_training": False,
+        }
+    return {
+        "title": "Inspect resume plan",
+        "category": "inspection",
+        "command_name": "inspect_full_training_eval_resume",
+        "launches_training": False,
+    }
 
 
 def _package_recovery_action(gate: str) -> str:

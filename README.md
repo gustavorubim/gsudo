@@ -295,7 +295,7 @@ list any missing stage manifests, eval reports, sample inspections,
 diagnostics, or final gates. The status JSON includes `remaining_recovery_plan`,
 and the Markdown includes a `Recovery Plan` table mapping every failed gate to
 the required action, action category, recommended next-action row, whether
-training is required, blocking stages, and target artifacts. Stale stage-derived eval rows use
+training is required, command-manifest key, blocking stages, and target artifacts. Stale stage-derived eval rows use
 `generate_eval_report_after_stage`, sample rows use
 `generate_sample_inspection_after_stage`, and
 `blocked_by_stages` names the stage that must finish before those artifacts are
@@ -447,9 +447,10 @@ gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
 native and WSL readiness blocker summaries, Phase 6 failed gates, real
 timed-answer counts, package source freshness, command-manifest safety checks,
 command category rollups, recovery-plan `next_action_title` and
-`next_action_category`, and package Python metadata so automation can decide
-whether the next step is inspection, human study collection, status refresh,
-diagnostics, package repair, evaluation, or a training launch. Use
+`next_action_category`, `next_action_command_name`, and
+`next_action_launches_training`, and package Python metadata so automation can
+decide whether the next step is inspection, human study collection, status
+refresh, diagnostics, package repair, evaluation, or a training launch. Use
 `train inspect-samples` after generation to
 keep raw parseability, raw schema validity, raw generation cap hits, raw
 repair-free contract validity, repaired schema validity, and repaired

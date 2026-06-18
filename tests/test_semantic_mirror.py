@@ -877,6 +877,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "next_action_category"
     ] == "training"
     assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_name"
+    ] == "full_training_eval"
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_launches_training"
+    ]
+    assert recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "requires_training"
     ]
     assert recovery_plan["rl_stage_manifest_matches_requested_steps"][
@@ -894,6 +900,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert recovery_plan["dpo_eval_exists_and_passed"]["next_action_title"] == (
         "Resume full eval through DPO and RL"
     )
+    assert recovery_plan["dpo_eval_exists_and_passed"]["next_action_command_name"] == (
+        "full_training_eval"
+    )
     assert recovery_plan["dpo_eval_exists_and_passed"]["blocked_by_stages"] == ["dpo"]
     assert recovery_plan["dpo_sample_inspection_complete"]["required_action"] == (
         "generate_sample_inspection_after_stage"
@@ -906,9 +915,18 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert recovery_plan["diagnostic_plots_exist"]["next_action_title"] == (
         "Regenerate target diagnostics"
     )
+    assert recovery_plan["diagnostic_plots_exist"]["next_action_command_name"] == (
+        "report"
+    )
+    assert not recovery_plan["diagnostic_plots_exist"][
+        "next_action_launches_training"
+    ]
     assert recovery_plan["training_eval_summary_matches_requested_steps"][
         "next_action_title"
     ] == "Regenerate contract status"
+    assert recovery_plan["training_eval_summary_matches_requested_steps"][
+        "next_action_command_name"
+    ] == "contract_status"
     assert recovery_plan["diagnostic_plots_exist"]["blocked_by_stages"] == [
         "dpo",
         "rl",
@@ -1051,19 +1069,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert '- Blocked stage counts: `{"dpo": 7, "rl": 7}`' in status_markdown
     assert (
-        "| Gate | Action | Category | Next Action | Requires Training | Blocked By | Artifacts |"
+        "| Gate | Action | Category | Next Action | Command | Requires Training | Blocked By | Artifacts |"
         in status_markdown
     )
     assert (
-        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `True` |"
+        "| `dpo_stage_manifest_matches_requested_steps` | `resume` | `training` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `True` |"
         in status_markdown
     )
     assert (
-        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `True` | `dpo` |"
+        "| `dpo_sample_inspection_complete` | `generate_sample_inspection_after_stage` | `evaluation` | `Resume full eval through DPO and RL` (`training`) | `full_training_eval` (training: `True`) | `True` | `dpo` |"
         in status_markdown
     )
     assert (
-        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `True` | `dpo`, `rl` |"
+        "| `diagnostic_plots_exist` | `regenerate_diagnostics` | `diagnostics` | `Regenerate target diagnostics` (`diagnostics`) | `report` (training: `False`) | `True` | `dpo`, `rl` |"
         in status_markdown
     )
     assert "## Resume Inspection" in status_markdown
@@ -1703,6 +1721,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "next_action_category"
     ] == "training"
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_command_name"
+    ] == "full_training_eval"
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
+        "next_action_launches_training"
+    ]
+    assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "area"
     ] == "dpo"
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
@@ -1724,6 +1748,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "Resume full eval through DPO and RL"
     )
     assert stdout_recovery_plan["dpo_eval_exists_and_passed"][
+        "next_action_command_name"
+    ] == "full_training_eval"
+    assert stdout_recovery_plan["dpo_eval_exists_and_passed"][
         "blocked_by_stages"
     ] == ["dpo"]
     assert stdout_recovery_plan["dpo_sample_inspection_complete"][
@@ -1744,6 +1771,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert stdout_recovery_plan["diagnostic_plots_exist"]["next_action_title"] == (
         "Regenerate target diagnostics"
     )
+    assert stdout_recovery_plan["diagnostic_plots_exist"][
+        "next_action_command_name"
+    ] == "report"
+    assert not stdout_recovery_plan["diagnostic_plots_exist"][
+        "next_action_launches_training"
+    ]
     assert stdout_recovery_plan["diagnostic_plots_exist"]["area"] == "diagnostics"
     assert stdout_recovery_plan["diagnostic_plots_exist"]["stage"] is None
     assert stdout_recovery_plan["diagnostic_plots_exist"]["current_evidence"][
@@ -3387,7 +3420,6 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
     assert "per-action `blocked_by_stages` and `stage_actions`" in package_readme
-    assert "WSL readiness" in package_readme
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
     assert "`action_category`" in package_readme
@@ -3397,6 +3429,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "recovery_plan_summary" in package_readme
     assert "next_action_title" in package_readme
     assert "next_action_category" in package_readme
+    assert "next_action_command_name" in package_readme
+    assert "next_action_launches_training" in package_readme
     assert "Recovery Plan" in package_readme
     assert "generate_eval_report_after_stage" in package_readme
     assert "generate_sample_inspection_after_stage" in package_readme
@@ -3413,9 +3447,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "recovery_plan_summary" in root_readme
     assert "next_action_title" in root_readme
     assert "next_action_category" in root_readme
+    assert "next_action_command_name" in root_readme
+    assert "next_action_launches_training" in root_readme
     assert "package Python" in root_readme
     assert "metadata so" in root_readme
-    assert "automation can decide" in root_readme
     assert "Next-action rows also expose" in root_readme
     assert "`blocked_by_stages` and `stage_actions`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
