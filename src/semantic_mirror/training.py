@@ -1466,6 +1466,7 @@ def summarize_full_eval_contract_status(
         "ordered_execution_plan": _ordered_execution_plan_summary(
             next_actions,
             windows_readiness_status=windows_readiness_status,
+            resume_inspection_status=resume_inspection_status,
         ),
         "remaining_items": remaining_items,
         "remaining_by_area": remaining_by_area,
@@ -7115,6 +7116,7 @@ def _ordered_execution_plan_summary(
     next_actions: list[dict[str, Any]],
     *,
     windows_readiness_status: dict[str, Any],
+    resume_inspection_status: dict[str, Any],
 ) -> dict[str, Any]:
     smoke_prerequisite_open = (
         windows_readiness_status.get("checked")
@@ -7149,7 +7151,12 @@ def _ordered_execution_plan_summary(
         required_inputs = [
             item for item in action.get("required_inputs", []) or [] if isinstance(item, str)
         ]
-        if preconditions:
+        if (
+            command_name == "inspect_full_training_eval_resume"
+            and resume_inspection_status.get("current_for_requested_steps") is True
+        ):
+            execution_state = "completed"
+        elif preconditions:
             execution_state = "blocked_by_preconditions"
         elif required_inputs:
             execution_state = "ready_after_inputs"

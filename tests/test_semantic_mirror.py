@@ -1823,10 +1823,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ]
     wrong_ordered_plan = wrong_wsl_status["ordered_execution_plan"]
     assert wrong_ordered_plan["smoke_prerequisite_open"] is True
-    assert wrong_ordered_plan["first_ready_command"] == "inspect_full_training_eval_resume"
+    assert wrong_ordered_plan["first_ready_command"] == "wsl_smoke_chain"
     wrong_ordered_by_command = {
         item["command_name"]: item for item in wrong_ordered_plan["items"]
     }
+    assert wrong_ordered_by_command["inspect_full_training_eval_resume"][
+        "execution_state"
+    ] == "completed"
     assert wrong_ordered_by_command["wsl_smoke_chain"]["execution_state"] == "ready"
     assert wrong_ordered_by_command["full_training_eval"]["execution_state"] == (
         "blocked_by_preconditions"
@@ -2466,15 +2469,19 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == ["contract_status", "full_training_eval"]
     ordered_plan = cli_stdout["ordered_execution_plan"]
     assert ordered_plan["smoke_prerequisite_open"] is False
-    assert ordered_plan["first_ready_command"] == "inspect_full_training_eval_resume"
+    assert ordered_plan["first_ready_command"] == "full_training_eval"
     assert ordered_plan["state_counts"] == {
         "blocked_by_preconditions": 2,
+        "completed": 1,
         "ready": 1,
-        "ready_after_inputs": 2,
+        "ready_after_inputs": 1,
     }
     ordered_by_command = {
         item["command_name"]: item for item in ordered_plan["items"]
     }
+    assert ordered_by_command["inspect_full_training_eval_resume"][
+        "execution_state"
+    ] == "completed"
     assert ordered_by_command["full_training_eval"]["execution_state"] == (
         "ready_after_inputs"
     )
