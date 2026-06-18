@@ -3126,6 +3126,18 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "dpo-checkpoint-path" in dpo_dry_run["command"]
     assert "--seed" in dpo_dry_run["command"]
     assert "102" in dpo_dry_run["command"]
+    dpo_missing_model = launch_training_job(
+        training_out,
+        stage="dpo",
+        output_dir=tmp_path / "dpo-missing-model-output",
+        dry_run=True,
+        audit_report=audit_report,
+    )
+    assert not dpo_missing_model["passed"]
+    assert not dpo_missing_model["would_launch"]
+    assert dpo_missing_model["reason"] == "command_unavailable"
+    assert dpo_missing_model["command"] is None
+    assert "--model-name-or-path" in dpo_missing_model["command_error"]
 
     rl_dry_run = launch_training_job(
         training_out,
@@ -3153,6 +3165,18 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "identity" in rl_dry_run["command"]
     assert "--seed" in rl_dry_run["command"]
     assert "103" in rl_dry_run["command"]
+    rl_missing_model = launch_training_job(
+        training_out,
+        stage="rl",
+        output_dir=tmp_path / "rl-missing-model-output",
+        dry_run=True,
+        audit_report=audit_report,
+    )
+    assert not rl_missing_model["passed"]
+    assert not rl_missing_model["would_launch"]
+    assert rl_missing_model["reason"] == "command_unavailable"
+    assert rl_missing_model["command"] is None
+    assert "--model-name-or-path" in rl_missing_model["command_error"]
 
     package_manifest = package_training_bundle(
         training_out,

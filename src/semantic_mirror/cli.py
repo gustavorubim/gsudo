@@ -1968,6 +1968,7 @@ def _training_runtime_summary(report: dict[str, object]) -> dict[str, object]:
             "would_launch": report["would_launch"],
             "reason": report.get("reason"),
             "command": report["command"],
+            "command_error": report.get("command_error"),
             "failed_checks": _failed_training_checks(report["audit"]),
             "logs": report.get("logs"),
         }

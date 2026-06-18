@@ -590,7 +590,7 @@ def launch_training_job(
         "generated_at": _now(),
         "dry_run": dry_run,
         "launched": False,
-        "would_launch": audit["passed"],
+        "would_launch": audit["passed"] and command is not None,
         "passed": audit["passed"] if dry_run else False,
         "command": command,
         "command_error": command_error,
@@ -602,6 +602,7 @@ def launch_training_job(
         return report
     if command is None:
         report["reason"] = "command_unavailable"
+        report["would_launch"] = False
         report["passed"] = False
         _write_optional_report(report, report_out)
         return report
@@ -6250,16 +6251,18 @@ def _training_launch_command(
         str(output_dir),
     ]
     if stage == "dpo":
-        if model_name_or_path:
-            command.extend(["--model-name-or-path", model_name_or_path])
+        if not model_name_or_path:
+            raise ValueError("DPO launch requires --model-name-or-path from SFT output.")
+        command.extend(["--model-name-or-path", model_name_or_path])
         command.extend(["--beta", str(beta)])
         if max_steps is not None:
             command.extend(["--max-steps", str(max_steps)])
         if resume_from_checkpoint:
             command.extend(["--resume-from-checkpoint", resume_from_checkpoint])
     if stage == "rl":
-        if model_name_or_path:
-            command.extend(["--model-name-or-path", model_name_or_path])
+        if not model_name_or_path:
+            raise ValueError("RL launch requires --model-name-or-path from DPO or SFT output.")
+        command.extend(["--model-name-or-path", model_name_or_path])
         command.extend(["--kl-coef", str(kl_coef)])
         command.extend(["--schema-prefix-mode", schema_prefix_mode])
     if stage in {"sft", "rl"} and max_steps is not None:
