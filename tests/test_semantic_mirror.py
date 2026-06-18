@@ -73,6 +73,8 @@ def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, obje
         "inspect_resume": "inspection",
         "contract_status": "status",
         "source_freshness": "status",
+        "preflight_full_eval_inputs": "validation",
+        "preflight_wsl_smoke_inputs": "validation",
         "report": "diagnostics",
         "validate": "validation",
         "audit": "validation",
@@ -94,10 +96,12 @@ def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, obje
         "validate": ["training_dir"],
         "audit": ["training_dir"],
         "wsl_smoke_chain": ["held_out_dataset"],
+        "preflight_wsl_smoke_inputs": ["held_out_dataset"],
         "sft": ["training_dir", "output_dir"],
         "dpo": ["training_dir", "sft_model_or_adapter", "output_dir"],
         "rl": ["training_dir", "dpo_or_sft_model_or_adapter", "output_dir"],
         "full_training_eval": ["held_out_dataset", "baseline_candidates"],
+        "preflight_full_eval_inputs": ["held_out_dataset", "baseline_candidates"],
         "smoke_chain": ["held_out_dataset"],
         "inspect_full_training_eval_resume": ["outputs_dir"],
         "inspect_resume": ["outputs_dir"],
@@ -1965,12 +1969,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     launch_dir = package_root / "launch"
     launch_dir.mkdir(parents=True)
     commands = {
-        "wsl_smoke_chain": "powershell -File launch/run_wsl_smoke_chain.ps1",
-        "sft": "bash launch/run_sft.sh",
+            "wsl_smoke_chain": "powershell -File launch/run_wsl_smoke_chain.ps1",
+            "preflight_wsl_smoke_inputs": (
+                "powershell -File launch/preflight_wsl_smoke_inputs.ps1"
+            ),
+            "sft": "bash launch/run_sft.sh",
         "dpo": "bash launch/run_dpo.sh",
         "rl": "bash launch/run_rl.sh",
-        "full_training_eval": "bash launch/run_full_training_eval.sh",
-        "smoke_chain": "bash launch/run_smoke_chain.sh",
+            "full_training_eval": "bash launch/run_full_training_eval.sh",
+            "preflight_full_eval_inputs": "bash launch/preflight_full_eval_inputs.sh",
+            "smoke_chain": "bash launch/run_smoke_chain.sh",
         "inspect_full_training_eval_resume": "bash launch/inspect_full_training_eval_resume.sh",
         "inspect_resume": "PYTHONPATH=src python -m semantic_mirror.cli train inspect-resume outputs",
         "contract_status": "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs",
@@ -2200,7 +2208,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["package_command_manifest_summary"]["training_command_count"] == 6
     assert cli_stdout["package_command_manifest_summary"][
         "required_input_command_count"
-    ] == 23
+    ] == 25
     assert cli_stdout["package_command_manifest_summary"][
         "optional_input_command_count"
     ] == 5
@@ -2221,7 +2229,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "setup": 3,
         "status": 2,
         "training": 6,
-        "validation": 2,
+        "validation": 4,
     }
     assert cli_stdout["package_command_manifest_summary"]["commands_by_category"][
         "status"
@@ -2411,13 +2419,25 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["command_input_reference"]["held_out_dataset"] == {
         "purpose": "Held-out Semantic Mirror dataset directory used for smoke or full eval.",
         "example": "outputs/heldout_eval_dataset",
-        "required_by": ["eval_candidates", "full_training_eval", "smoke_chain", "wsl_smoke_chain"],
+        "required_by": [
+            "eval_candidates",
+            "full_training_eval",
+            "preflight_full_eval_inputs",
+            "preflight_wsl_smoke_inputs",
+            "smoke_chain",
+            "wsl_smoke_chain",
+        ],
         "optional_by": [],
     }
     assert cli_stdout["command_input_reference"]["baseline_candidates"] == {
         "purpose": "JSONL candidates for the baseline model over the held-out units.",
         "example": "outputs/baseline_candidates_eval.jsonl",
-        "required_by": ["compare_sft", "compare_sft_raw", "full_training_eval"],
+        "required_by": [
+            "compare_sft",
+            "compare_sft_raw",
+            "full_training_eval",
+            "preflight_full_eval_inputs",
+        ],
         "optional_by": [],
     }
     assert cli_stdout["command_input_reference"]["outputs_dir"]["example"] == "outputs"
@@ -2752,7 +2772,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_status_json["package_command_manifest_summary"]["training_command_count"] == 6
     assert (
         cli_status_json["package_command_manifest_summary"]["required_input_command_count"]
-        == 23
+        == 25
     )
     assert (
         cli_status_json["package_command_manifest_summary"]["optional_input_command_count"]
@@ -4136,6 +4156,17 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert manifest_commands["smoke_chain"]["launches_training"] is True
     assert manifest_commands["wsl_smoke_chain"]["launches_training"] is True
     assert manifest_commands["wsl_smoke_chain"]["required_inputs"] == ["held_out_dataset"]
+    assert manifest_commands["preflight_wsl_smoke_inputs"]["category"] == "validation"
+    assert manifest_commands["preflight_wsl_smoke_inputs"]["launches_training"] is False
+    assert manifest_commands["preflight_wsl_smoke_inputs"]["required_inputs"] == [
+        "held_out_dataset"
+    ]
+    assert manifest_commands["preflight_full_eval_inputs"]["category"] == "validation"
+    assert manifest_commands["preflight_full_eval_inputs"]["launches_training"] is False
+    assert manifest_commands["preflight_full_eval_inputs"]["required_inputs"] == [
+        "held_out_dataset",
+        "baseline_candidates",
+    ]
     assert manifest_commands["inspect_full_training_eval_resume"]["category"] == "inspection"
     assert manifest_commands["inspect_full_training_eval_resume"]["launches_training"] is False
     assert manifest_commands["inspect_resume"]["category"] == "inspection"
@@ -4145,8 +4176,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert manifest_commands["report"]["category"] == "diagnostics"
     assert manifest_commands["report"]["launches_training"] is False
     assert "run_full_training_eval.sh" in commands["full_training_eval"]
+    assert "preflight_full_eval_inputs.sh" in commands["preflight_full_eval_inputs"]
     assert "run_smoke_chain.sh" in commands["smoke_chain"]
     assert "run_wsl_smoke_chain.ps1" in commands["wsl_smoke_chain"]
+    assert "preflight_wsl_smoke_inputs.ps1" in commands["preflight_wsl_smoke_inputs"]
     assert "-HeldOutDataset <windows_dataset_dir>" in commands["wsl_smoke_chain"]
     assert "--out outputs/validation_report.json" in commands["validate"]
     assert "--out outputs/audit.json" in commands["audit"]
@@ -4202,7 +4235,14 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert package_manifest["command_input_reference"]["held_out_dataset"] == {
         "purpose": "Held-out Semantic Mirror dataset directory used for smoke or full eval.",
         "example": "outputs/heldout_eval_dataset",
-        "required_by": ["eval_candidates", "full_training_eval", "smoke_chain", "wsl_smoke_chain"],
+        "required_by": [
+            "eval_candidates",
+            "full_training_eval",
+            "preflight_full_eval_inputs",
+            "preflight_wsl_smoke_inputs",
+            "smoke_chain",
+            "wsl_smoke_chain",
+        ],
         "optional_by": [],
     }
     assert package_manifest["command_input_reference"]["windows_audit"] == {
@@ -4224,6 +4264,14 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "3.11" in bootstrap
     assert "3.14" in bootstrap
     assert package_manifest["files"]["wsl_smoke_chain_launcher"] == "launch/run_wsl_smoke_chain.ps1"
+    assert (
+        package_manifest["files"]["wsl_smoke_input_preflight"]
+        == "launch/preflight_wsl_smoke_inputs.ps1"
+    )
+    assert (
+        package_manifest["files"]["full_training_eval_input_preflight"]
+        == "launch/preflight_full_eval_inputs.sh"
+    )
     assert package_manifest["files"]["launch_command_manifest"] == "launch/commands_manifest.json"
     assert (
         package_manifest["launch_command_manifest"]["commands"]["full_training_eval"][
@@ -4246,7 +4294,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert (bundle_out / "launch" / "run_sft.sh").exists()
     assert (bundle_out / "launch" / "run_rl.sh").exists()
     assert (bundle_out / "launch" / "run_smoke_chain.sh").exists()
+    assert (bundle_out / "launch" / "preflight_wsl_smoke_inputs.ps1").exists()
     assert (bundle_out / "launch" / "run_wsl_smoke_chain.ps1").exists()
+    assert (bundle_out / "launch" / "preflight_full_eval_inputs.sh").exists()
     assert (bundle_out / "launch" / "run_full_training_eval.sh").exists()
     for shell_script in [
         bundle_out / "setup" / "bootstrap_linux_cuda.sh",
@@ -4255,6 +4305,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         bundle_out / "launch" / "run_rl.sh",
         bundle_out / "launch" / "generate_candidates.sh",
         bundle_out / "launch" / "score_candidates.sh",
+        bundle_out / "launch" / "preflight_full_eval_inputs.sh",
         bundle_out / "launch" / "run_smoke_chain.sh",
         bundle_out / "launch" / "run_full_training_eval.sh",
     ]:
@@ -4295,7 +4346,14 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert '"output_path"' in wsl_smoke_script
     assert "HELD_OUT_DATASET='__HELD_OUT_WSL__'" in wsl_smoke_script
     assert "bash launch/run_smoke_chain.sh" in wsl_smoke_script
+    wsl_preflight_script = (
+        bundle_out / "launch" / "preflight_wsl_smoke_inputs.ps1"
+    ).read_text(encoding="utf-8")
+    assert "wsl_smoke_input_preflight" in wsl_preflight_script
+    assert "manifest.json" in wsl_preflight_script
+    assert "outputs/preflight/wsl_smoke_inputs.json" in wsl_preflight_script
     package_readme = (bundle_out / "README.md").read_text(encoding="utf-8")
+    assert "preflight_wsl_smoke_inputs.ps1" in package_readme
     assert "run_wsl_smoke_chain.ps1" in package_readme
     assert "wsl_smoke_environment.json" in package_readme
     assert "CUDA device" in package_readme
@@ -4327,6 +4385,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     full_eval_script = (bundle_out / "launch" / "run_full_training_eval.sh").read_text(
         encoding="utf-8"
     )
+    full_eval_preflight_script = (
+        bundle_out / "launch" / "preflight_full_eval_inputs.sh"
+    ).read_text(encoding="utf-8")
     resume_inspector = (
         bundle_out / "launch" / "inspect_full_training_eval_resume.sh"
     ).read_text(encoding="utf-8")
@@ -4334,6 +4395,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         (bundle_out / "launch" / "commands.json").read_text(encoding="utf-8")
     )
     package_readme = (bundle_out / "README.md").read_text(encoding="utf-8")
+    assert "full_eval_input_preflight" in full_eval_preflight_script
+    assert "baseline_candidates is empty" in full_eval_preflight_script
+    assert "outputs/preflight/full_eval_inputs.json" in full_eval_preflight_script
     assert "eval candidates" in full_eval_script
     assert "eval model-compare" in full_eval_script
     assert "train validate training --out outputs/validation_report.json" in full_eval_script
@@ -4452,12 +4516,17 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--markdown-out outputs/contract_status.md" in full_eval_script
     assert "source_freshness.json" in package_readme
     assert "train source-freshness" in package_readme
+    assert "preflight_full_eval_inputs.sh" in package_readme
     assert "commands_manifest.json" in package_readme
     assert "launches_training" in package_readme
     assert "## Command Input Reference" in package_readme
     assert "| `held_out_dataset` | Held-out Semantic Mirror dataset directory" in package_readme
     assert "`outputs/heldout_eval_dataset`" in package_readme
-    assert "`eval_candidates`, `full_training_eval`, `smoke_chain`, `wsl_smoke_chain`" in package_readme
+    assert (
+        "`eval_candidates`, `full_training_eval`, `preflight_full_eval_inputs`, "
+        "`preflight_wsl_smoke_inputs`, `smoke_chain`, `wsl_smoke_chain`"
+        in package_readme
+    )
     assert "| `baseline_candidates` | JSONL candidates for the baseline model" in package_readme
     assert "| `outputs_dir` | Full-eval output directory" in package_readme
     assert "| `windows_audit` | Native Windows readiness audit JSON" in package_readme

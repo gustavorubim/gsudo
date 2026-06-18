@@ -835,7 +835,9 @@ def package_training_bundle(
         "wsl_bootstrap": "setup/bootstrap_wsl_ubuntu.ps1",
         "full_training_eval_launcher": "launch/run_full_training_eval.sh",
         "full_training_eval_resume_inspector": "launch/inspect_full_training_eval_resume.sh",
+        "full_training_eval_input_preflight": "launch/preflight_full_eval_inputs.sh",
         "smoke_chain_launcher": "launch/run_smoke_chain.sh",
+        "wsl_smoke_input_preflight": "launch/preflight_wsl_smoke_inputs.ps1",
         "wsl_smoke_chain_launcher": "launch/run_wsl_smoke_chain.ps1",
         "sft_launcher": "launch/run_sft.sh",
         "dpo_launcher": "launch/run_dpo.sh",
@@ -2223,6 +2225,10 @@ def _package_launch_commands() -> dict[str, str]:
             "powershell -ExecutionPolicy Bypass -File launch/run_wsl_smoke_chain.ps1 "
             "-HeldOutDataset <windows_dataset_dir>"
         ),
+        "preflight_wsl_smoke_inputs": (
+            "powershell -ExecutionPolicy Bypass -File launch/preflight_wsl_smoke_inputs.ps1 "
+            "-HeldOutDataset <windows_dataset_dir>"
+        ),
         "install": "python -m pip install --upgrade pip && python -m pip install -r requirements-training.txt",
         "validate": (
             "PYTHONPATH=src python -m semantic_mirror.cli train validate training "
@@ -2248,6 +2254,11 @@ def _package_launch_commands() -> dict[str, str]:
             "HELD_OUT_DATASET=<dataset_dir> "
             "BASELINE_CANDIDATES=<teacher_results_dir>/teacher_candidates.jsonl "
             "bash launch/run_full_training_eval.sh"
+        ),
+        "preflight_full_eval_inputs": (
+            "HELD_OUT_DATASET=<dataset_dir> "
+            "BASELINE_CANDIDATES=<teacher_results_dir>/teacher_candidates.jsonl "
+            "bash launch/preflight_full_eval_inputs.sh"
         ),
         "inspect_full_training_eval_resume": (
             "SFT_MAX_STEPS=300 DPO_MAX_STEPS=120 RL_MAX_STEPS=120 "
@@ -2337,10 +2348,12 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
         "validate": "validation",
         "audit": "validation",
         "wsl_smoke_chain": "training",
+        "preflight_wsl_smoke_inputs": "validation",
         "sft": "training",
         "dpo": "training",
         "rl": "training",
         "full_training_eval": "training",
+        "preflight_full_eval_inputs": "validation",
         "smoke_chain": "training",
         "inspect_full_training_eval_resume": "inspection",
         "inspect_resume": "inspection",
@@ -2370,10 +2383,12 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
         "validate": ["training_dir"],
         "audit": ["training_dir"],
         "wsl_smoke_chain": ["held_out_dataset"],
+        "preflight_wsl_smoke_inputs": ["held_out_dataset"],
         "sft": ["training_dir", "output_dir"],
         "dpo": ["training_dir", "sft_model_or_adapter", "output_dir"],
         "rl": ["training_dir", "dpo_or_sft_model_or_adapter", "output_dir"],
         "full_training_eval": ["held_out_dataset", "baseline_candidates"],
+        "preflight_full_eval_inputs": ["held_out_dataset", "baseline_candidates"],
         "smoke_chain": ["held_out_dataset"],
         "inspect_full_training_eval_resume": ["outputs_dir"],
         "inspect_resume": ["outputs_dir"],
@@ -2668,6 +2683,49 @@ set -euo pipefail
 : "${HELD_OUT_REPO:?set HELD_OUT_REPO to the source repo path}"
 PYTHONPATH=src python training/score_sir_candidates.py --repo "$HELD_OUT_REPO" --candidates outputs/samples/repaired_candidates.jsonl --out outputs/candidate_scores.jsonl
 """,
+        "preflight_full_eval_inputs.sh": """#!/usr/bin/env bash
+set -euo pipefail
+
+: "${HELD_OUT_DATASET:?set HELD_OUT_DATASET to a dataset directory containing manifest.json}"
+: "${BASELINE_CANDIDATES:?set BASELINE_CANDIDATES to baseline candidate JSONL for the held-out dataset}"
+
+mkdir -p outputs/preflight
+python - "$HELD_OUT_DATASET" "$BASELINE_CANDIDATES" "outputs/preflight/full_eval_inputs.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+dataset = Path(sys.argv[1])
+baseline = Path(sys.argv[2])
+out = Path(sys.argv[3])
+issues = []
+if not dataset.exists():
+    issues.append(f"held_out_dataset does not exist: {dataset}")
+elif not dataset.is_dir():
+    issues.append(f"held_out_dataset is not a directory: {dataset}")
+manifest = dataset / "manifest.json"
+if not manifest.exists():
+    issues.append(f"held_out_dataset missing manifest.json: {manifest}")
+if not baseline.exists():
+    issues.append(f"baseline_candidates does not exist: {baseline}")
+elif not baseline.is_file():
+    issues.append(f"baseline_candidates is not a file: {baseline}")
+elif baseline.stat().st_size == 0:
+    issues.append(f"baseline_candidates is empty: {baseline}")
+report = {
+    "mode": "full_eval_input_preflight",
+    "passed": not issues,
+    "held_out_dataset": str(dataset),
+    "held_out_manifest": str(manifest),
+    "baseline_candidates": str(baseline),
+    "issues": issues,
+}
+out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+print(json.dumps(report, indent=2, sort_keys=True))
+if issues:
+    raise SystemExit(2)
+PY
+""",
         "run_smoke_chain.sh": """#!/usr/bin/env bash
 set -euo pipefail
 
@@ -2844,6 +2902,49 @@ manifest["all_repaired_samples_schema_valid"] = all(
     encoding="utf-8",
 )
 PY
+""",
+        "preflight_wsl_smoke_inputs.ps1": """param(
+  [Parameter(Mandatory = $true)]
+  [string]$HeldOutDataset,
+  [string]$Out = "outputs/preflight/wsl_smoke_inputs.json"
+)
+
+$ErrorActionPreference = "Stop"
+$issues = New-Object System.Collections.Generic.List[string]
+try {
+  $datasetPath = (Resolve-Path $HeldOutDataset -ErrorAction Stop).Path
+} catch {
+  $datasetPath = $HeldOutDataset
+  $issues.Add("held_out_dataset does not exist: $HeldOutDataset")
+}
+if ($issues.Count -eq 0) {
+  $item = Get-Item -LiteralPath $datasetPath
+  if (-not $item.PSIsContainer) {
+    $issues.Add("held_out_dataset is not a directory: $datasetPath")
+  }
+  $manifest = Join-Path $datasetPath "manifest.json"
+  if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+    $issues.Add("held_out_dataset missing manifest.json: $manifest")
+  }
+} else {
+  $manifest = Join-Path $datasetPath "manifest.json"
+}
+$outPath = Join-Path (Get-Location).Path $Out
+$outDir = Split-Path -Parent $outPath
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+$report = [ordered]@{
+  mode = "wsl_smoke_input_preflight"
+  passed = ($issues.Count -eq 0)
+  held_out_dataset = $datasetPath
+  held_out_manifest = $manifest
+  issues = @($issues)
+}
+$json = $report | ConvertTo-Json -Depth 5
+Set-Content -LiteralPath $outPath -Value $json -Encoding UTF8
+Write-Output $json
+if ($issues.Count -ne 0) {
+  exit 2
+}
 """,
         "run_wsl_smoke_chain.ps1": """param(
   [Parameter(Mandatory = $true)]
@@ -3676,6 +3777,7 @@ path, Python executable, CUDA device, and smoke output path in
 bounded smoke chain:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File launch/preflight_wsl_smoke_inputs.ps1 -HeldOutDataset C:\\path\\to\\heldout_dataset
 powershell -ExecutionPolicy Bypass -File launch/run_wsl_smoke_chain.ps1 -HeldOutDataset C:\\path\\to\\heldout_dataset
 ```
 
@@ -3692,6 +3794,10 @@ baseline candidate JSONL are available. `semantic-mirror teacher ingest` writes
 teacher run covered the same held-out units:
 
 ```bash
+HELD_OUT_DATASET=/path/to/heldout_dataset \
+BASELINE_CANDIDATES=/path/to/teacher_results/teacher_candidates.jsonl \
+bash launch/preflight_full_eval_inputs.sh
+
 HELD_OUT_DATASET=/path/to/heldout_dataset \
 BASELINE_CANDIDATES=/path/to/teacher_results/teacher_candidates.jsonl \
 bash launch/run_full_training_eval.sh
@@ -9940,6 +10046,8 @@ def _package_command_manifest_contract_status(
         "inspect_resume",
         "contract_status",
         "source_freshness",
+        "preflight_full_eval_inputs",
+        "preflight_wsl_smoke_inputs",
         "report",
         "validate",
         "audit",
