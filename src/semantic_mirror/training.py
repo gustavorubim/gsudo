@@ -1316,6 +1316,10 @@ def summarize_full_eval_contract_status(
     package_command_manifest_status = _package_command_manifest_contract_status(
         package_source_status
     )
+    windows_readiness_status = _annotate_windows_readiness_with_command_inputs(
+        windows_readiness_status,
+        package_command_manifest_status,
+    )
     package_metadata_status = _package_metadata_contract_status(package_source_status)
     gates.extend(
         [
@@ -7452,6 +7456,57 @@ def _annotate_next_actions_with_command_inputs(
     return annotated
 
 
+def _annotate_windows_readiness_with_command_inputs(
+    status: dict[str, Any],
+    package_command_manifest_status: dict[str, Any],
+) -> dict[str, Any]:
+    command_name = status.get("next_action_command_name")
+    command_category = status.get("next_action_command_category")
+    launches_training = status.get("next_action_launches_training")
+    if command_name is None:
+        return {
+            **status,
+            "next_action_command_exists": None,
+            "next_action_command_required_inputs": [],
+            "next_action_command_optional_inputs": [],
+            "next_action_command_link_valid": None,
+            "next_action_command_link_errors": [],
+        }
+    if not package_command_manifest_status.get("checked"):
+        return {
+            **status,
+            "next_action_command_exists": None,
+            "next_action_command_required_inputs": [],
+            "next_action_command_optional_inputs": [],
+            "next_action_command_link_valid": None,
+            "next_action_command_link_errors": ["command_manifest_not_checked"],
+        }
+    commands = package_command_manifest_status.get("command_lookup")
+    command = commands.get(command_name) if isinstance(commands, dict) else None
+    if not isinstance(command, dict):
+        return {
+            **status,
+            "next_action_command_exists": False,
+            "next_action_command_required_inputs": [],
+            "next_action_command_optional_inputs": [],
+            "next_action_command_link_valid": False,
+            "next_action_command_link_errors": ["missing_command"],
+        }
+    link_errors = []
+    if command.get("category") != command_category:
+        link_errors.append("category_mismatch")
+    if command.get("launches_training") != launches_training:
+        link_errors.append("launches_training_mismatch")
+    return {
+        **status,
+        "next_action_command_exists": True,
+        "next_action_command_required_inputs": command.get("required_inputs", []),
+        "next_action_command_optional_inputs": command.get("optional_inputs", []),
+        "next_action_command_link_valid": not link_errors,
+        "next_action_command_link_errors": link_errors,
+    }
+
+
 def _next_action_stage_actions(
     stage_recovery_status: dict[str, Any],
 ) -> dict[str, str | None]:
@@ -8310,6 +8365,19 @@ def _windows_readiness_contract_summary(status: dict[str, Any]) -> dict[str, Any
         "next_action_command_name": status.get("next_action_command_name"),
         "next_action_command_category": status.get("next_action_command_category"),
         "next_action_launches_training": status.get("next_action_launches_training"),
+        "next_action_command_exists": status.get("next_action_command_exists"),
+        "next_action_command_required_inputs": status.get(
+            "next_action_command_required_inputs", []
+        ),
+        "next_action_command_optional_inputs": status.get(
+            "next_action_command_optional_inputs", []
+        ),
+        "next_action_command_link_valid": status.get(
+            "next_action_command_link_valid"
+        ),
+        "next_action_command_link_errors": status.get(
+            "next_action_command_link_errors", []
+        ),
         "next_action_blocked_by_stages": status.get(
             "next_action_blocked_by_stages", []
         ),

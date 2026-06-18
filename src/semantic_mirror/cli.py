@@ -1509,6 +1509,19 @@ def _windows_readiness_summary(status: object) -> dict[str, object]:
         "next_action_command_name": status.get("next_action_command_name"),
         "next_action_command_category": status.get("next_action_command_category"),
         "next_action_launches_training": status.get("next_action_launches_training"),
+        "next_action_command_exists": status.get("next_action_command_exists"),
+        "next_action_command_required_inputs": status.get(
+            "next_action_command_required_inputs", []
+        ),
+        "next_action_command_optional_inputs": status.get(
+            "next_action_command_optional_inputs", []
+        ),
+        "next_action_command_link_valid": status.get(
+            "next_action_command_link_valid"
+        ),
+        "next_action_command_link_errors": status.get(
+            "next_action_command_link_errors", []
+        ),
         "next_action_blocked_by_stages": status.get(
             "next_action_blocked_by_stages", []
         ),

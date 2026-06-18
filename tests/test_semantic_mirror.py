@@ -1615,6 +1615,34 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         readiness_status["windows_readiness_status"]["next_action_launches_training"]
         is False
     )
+    assert (
+        readiness_status["windows_readiness_status"]["next_action_command_exists"]
+        is None
+    )
+    assert (
+        readiness_status["windows_readiness_status"][
+            "next_action_command_required_inputs"
+        ]
+        == []
+    )
+    assert (
+        readiness_status["windows_readiness_status"][
+            "next_action_command_optional_inputs"
+        ]
+        == []
+    )
+    assert (
+        readiness_status["windows_readiness_status"][
+            "next_action_command_link_valid"
+        ]
+        is None
+    )
+    assert (
+        readiness_status["windows_readiness_status"][
+            "next_action_command_link_errors"
+        ]
+        == []
+    )
     assert readiness_status["windows_readiness_status"]["next_action_failed_checks"] == []
     readiness_scorecard = {
         row["area"]: row for row in readiness_status["contract_scorecard"]
@@ -1675,6 +1703,13 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert wrong_wsl_readiness["next_action_command_name"] == "wsl_smoke_chain"
     assert wrong_wsl_readiness["next_action_command_category"] == "training"
     assert wrong_wsl_readiness["next_action_launches_training"] is True
+    assert wrong_wsl_readiness["next_action_command_exists"] is None
+    assert wrong_wsl_readiness["next_action_command_required_inputs"] == []
+    assert wrong_wsl_readiness["next_action_command_optional_inputs"] == []
+    assert wrong_wsl_readiness["next_action_command_link_valid"] is None
+    assert wrong_wsl_readiness["next_action_command_link_errors"] == [
+        "command_manifest_not_checked"
+    ]
     assert wrong_wsl_readiness["next_action_blocked_by_stages"] == ["sft", "dpo", "rl"]
     assert wrong_wsl_readiness["next_action_failed_checks"] == [
         "smoke_chain_manifest_mode",
@@ -1960,6 +1995,28 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert freshness_status["package_metadata_status"]["passed"]
     assert freshness_status["package_metadata_status"]["requires_python"] == ">=3.11,<3.14"
     assert freshness_status["package_metadata_status"]["excludes_python_3_14"]
+    readiness_with_manifest = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        windows_audit_path=windows_audit,
+        wsl_smoke_manifest_path=wrong_wsl_smoke,
+        package_source_freshness_path=source_freshness,
+    )
+    assert readiness_with_manifest["windows_readiness_summary"][
+        "next_action_command_name"
+    ] == "wsl_smoke_chain"
+    assert readiness_with_manifest["windows_readiness_summary"][
+        "next_action_command_exists"
+    ]
+    assert readiness_with_manifest["windows_readiness_summary"][
+        "next_action_command_link_valid"
+    ]
+    assert readiness_with_manifest["windows_readiness_summary"][
+        "next_action_command_required_inputs"
+    ] == ["held_out_dataset"]
+    assert readiness_with_manifest["windows_readiness_summary"][
+        "next_action_command_optional_inputs"
+    ] == []
     freshness_run_action = next(
         action
         for action in freshness_status["next_actions"]
