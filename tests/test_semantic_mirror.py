@@ -1824,6 +1824,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     wrong_ordered_plan = wrong_wsl_status["ordered_execution_plan"]
     assert wrong_ordered_plan["smoke_prerequisite_open"] is True
     assert wrong_ordered_plan["first_ready_command"] == "wsl_smoke_chain"
+    assert wrong_ordered_plan["first_ready_training_command"] == "wsl_smoke_chain"
+    assert wrong_ordered_plan["first_ready_non_training_command"] is None
     wrong_ordered_by_command = {
         item["command_name"]: item for item in wrong_ordered_plan["items"]
     }
@@ -2470,6 +2472,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ordered_plan = cli_stdout["ordered_execution_plan"]
     assert ordered_plan["smoke_prerequisite_open"] is False
     assert ordered_plan["first_ready_command"] == "full_training_eval"
+    assert ordered_plan["first_ready_training_command"] == "full_training_eval"
+    assert (
+        ordered_plan["first_ready_non_training_command"]
+        == "phase6_collection_sequence"
+    )
     assert ordered_plan["state_counts"] == {
         "blocked_by_preconditions": 2,
         "completed": 1,

@@ -7189,12 +7189,42 @@ def _ordered_execution_plan_summary(
         ),
         None,
     )
+    first_ready_training = next(
+        (
+            row
+            for row in rows
+            if row["execution_state"] in {"ready", "ready_after_inputs"}
+            and row.get("launches_training") is True
+        ),
+        None,
+    )
+    first_ready_non_training = next(
+        (
+            row
+            for row in rows
+            if row["execution_state"] in {"ready", "ready_after_inputs"}
+            and row.get("launches_training") is not True
+        ),
+        None,
+    )
     return {
         "total_items": len(rows),
         "state_counts": {key: state_counts[key] for key in sorted(state_counts)},
         "smoke_prerequisite_open": bool(smoke_prerequisite_open),
         "first_ready_command": first_ready["command_name"] if first_ready else None,
         "first_ready_title": first_ready["title"] if first_ready else None,
+        "first_ready_training_command": (
+            first_ready_training["command_name"] if first_ready_training else None
+        ),
+        "first_ready_training_title": (
+            first_ready_training["title"] if first_ready_training else None
+        ),
+        "first_ready_non_training_command": (
+            first_ready_non_training["command_name"] if first_ready_non_training else None
+        ),
+        "first_ready_non_training_title": (
+            first_ready_non_training["title"] if first_ready_non_training else None
+        ),
         "items": rows,
     }
 
@@ -7715,6 +7745,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 "",
                 f"- Smoke prerequisite open: `{ordered_execution_plan.get('smoke_prerequisite_open')}`",
                 f"- First ready command: `{ordered_execution_plan.get('first_ready_command') or 'None'}`",
+                f"- First ready training command: `{ordered_execution_plan.get('first_ready_training_command') or 'None'}`",
+                f"- First ready non-training command: `{ordered_execution_plan.get('first_ready_non_training_command') or 'None'}`",
                 f"- State counts: `{json.dumps(ordered_execution_plan.get('state_counts', {}), sort_keys=True)}`",
                 "",
                 "| Order | Action | Command | State | Preconditions | Required Inputs | Launches Training |",
