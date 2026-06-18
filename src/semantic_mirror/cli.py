@@ -1612,6 +1612,8 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
     action_category_counts: dict[str, int] = {}
     blocked_stage_counts: dict[str, int] = {}
     non_training_action_counts: dict[str, int] = {}
+    next_action_command_counts: dict[str, int] = {}
+    next_action_command_category_counts: dict[str, int] = {}
     requires_training_count = 0
     blocked_item_count = 0
     command_link_valid_count = 0
@@ -1625,6 +1627,14 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
             continue
         category = str(item.get("action_category") or "inspection")
         action_category_counts[category] = action_category_counts.get(category, 0) + 1
+        command_name = str(item.get("next_action_command_name") or "unknown")
+        next_action_command_counts[command_name] = (
+            next_action_command_counts.get(command_name, 0) + 1
+        )
+        command_category = str(item.get("next_action_category") or "inspection")
+        next_action_command_category_counts[command_category] = (
+            next_action_command_category_counts.get(command_category, 0) + 1
+        )
         if item.get("requires_training"):
             requires_training_count += 1
         else:
@@ -1669,6 +1679,14 @@ def _recovery_plan_summary(plan: object) -> dict[str, object]:
         "command_launches_training_count": command_launches_training_count,
         "command_non_training_count": command_non_training_count,
         "missing_command_names": sorted(missing_command_names),
+        "next_action_command_counts": {
+            key: next_action_command_counts[key]
+            for key in sorted(next_action_command_counts)
+        },
+        "next_action_command_category_counts": {
+            key: next_action_command_category_counts[key]
+            for key in sorted(next_action_command_category_counts)
+        },
         "action_category_counts": {
             key: action_category_counts[key] for key in sorted(action_category_counts)
         },

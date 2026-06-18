@@ -865,6 +865,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "command_launches_training_count": 8,
         "command_non_training_count": 4,
         "missing_command_names": [],
+        "next_action_command_category_counts": {
+            "diagnostics": 1,
+            "status": 3,
+            "training": 8,
+        },
+        "next_action_command_counts": {
+            "contract_status": 3,
+            "full_training_eval": 8,
+            "report": 1,
+        },
         "non_training_action_counts": {},
         "non_training_count": 0,
         "requires_training_count": 12,
@@ -1079,6 +1089,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "- Commands launching training: `8`" in status_markdown
     assert "- Commands not launching training: `4`" in status_markdown
     assert "- Missing command names: `[]`" in status_markdown
+    assert (
+        '- Next action command counts: `{"contract_status": 3, "full_training_eval": 8, "report": 1}`'
+        in status_markdown
+    )
+    assert (
+        '- Next action command category counts: `{"diagnostics": 1, "status": 3, "training": 8}`'
+        in status_markdown
+    )
     assert (
         '- Action category counts: `{"diagnostics": 1, "evaluation": 6, "status": 3, "training": 2}`'
         in status_markdown
