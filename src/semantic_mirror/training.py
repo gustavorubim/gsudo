@@ -2348,6 +2348,31 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
         "full_training_eval",
         "smoke_chain",
     }
+    required_inputs = {
+        "validate": ["training_dir"],
+        "audit": ["training_dir"],
+        "wsl_smoke_chain": ["held_out_dataset"],
+        "sft": ["training_dir", "output_dir"],
+        "dpo": ["training_dir", "sft_model_or_adapter", "output_dir"],
+        "rl": ["training_dir", "dpo_or_sft_model_or_adapter", "output_dir"],
+        "full_training_eval": ["held_out_dataset", "baseline_candidates"],
+        "smoke_chain": ["held_out_dataset"],
+        "inspect_full_training_eval_resume": ["outputs_dir"],
+        "inspect_resume": ["outputs_dir"],
+        "generate_candidates": ["model_or_adapter", "prompt_file"],
+        "score_candidates": ["candidates_jsonl"],
+        "eval_candidates": ["model_or_adapter", "held_out_dataset"],
+        "inspect_samples": ["samples_dir"],
+        "report": ["outputs_dir"],
+        "source_freshness": ["package_root"],
+        "contract_status": ["outputs_dir"],
+        "compare_sft": ["baseline_candidates", "sft_candidates"],
+        "compare_sft_raw": ["baseline_candidates", "sft_raw_candidates"],
+        "compare_dpo": ["sft_candidates", "dpo_candidates"],
+        "compare_dpo_raw": ["sft_raw_candidates", "dpo_raw_candidates"],
+        "compare_rl": ["sft_candidates", "rl_candidates"],
+        "compare_rl_raw": ["sft_raw_candidates", "rl_raw_candidates"],
+    }
     return {
         "schema_version": 1,
         "commands": {
@@ -2355,6 +2380,7 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
                 "command": command,
                 "category": categories.get(name, "other"),
                 "launches_training": name in training_commands,
+                "required_inputs": required_inputs.get(name, []),
             }
             for name, command in commands.items()
         },
@@ -6785,6 +6811,7 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             f"- Command count: `{command_manifest.get('command_count')}`",
             f"- Training command count: `{command_manifest.get('training_command_count')}`",
             f"- Non-training command count: `{command_manifest.get('non_training_command_count')}`",
+            f"- Commands with required inputs: `{command_manifest.get('required_input_command_count')}`",
             f"- Command category counts: `{json.dumps(command_manifest.get('command_category_counts') or {}, sort_keys=True)}`",
         ]
     )
@@ -6800,6 +6827,14 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             "- Training commands: "
             + ", ".join(
                 f"`{command}`" for command in command_manifest["training_commands"]
+            )
+        )
+    if command_manifest.get("commands_with_required_inputs"):
+        lines.append(
+            "- Commands with required inputs: "
+            + ", ".join(
+                f"`{command}`"
+                for command in command_manifest["commands_with_required_inputs"]
             )
         )
     if command_manifest.get("failed_checks"):
@@ -8180,6 +8215,8 @@ def _package_command_manifest_contract_summary(
         "non_training_command_count": status.get("non_training_command_count"),
         "command_category_counts": status.get("command_category_counts", {}),
         "commands_by_category": status.get("commands_by_category", {}),
+        "commands_with_required_inputs": status.get("commands_with_required_inputs", []),
+        "required_input_command_count": status.get("required_input_command_count"),
         "failed_checks": status.get("failed_checks", []),
     }
 
@@ -9205,6 +9242,25 @@ def _package_command_manifest_contract_status(
         for name, command in commands.items()
         if isinstance(command, dict) and not isinstance(command.get("category"), str)
     )
+    invalid_required_inputs = sorted(
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict)
+        and (
+            not isinstance(command.get("required_inputs"), list)
+            or not all(
+                isinstance(item, str) and item
+                for item in command.get("required_inputs", [])
+            )
+        )
+    )
+    commands_with_required_inputs = sorted(
+        name
+        for name, command in commands.items()
+        if isinstance(command, dict)
+        and isinstance(command.get("required_inputs"), list)
+        and command.get("required_inputs")
+    )
     commands_by_category: dict[str, list[str]] = {}
     command_lookup: dict[str, dict[str, Any]] = {}
     for name, command in commands.items():
@@ -9214,6 +9270,7 @@ def _package_command_manifest_contract_status(
             "category": command.get("category"),
             "launches_training": command.get("launches_training"),
             "has_command": isinstance(command.get("command"), str),
+            "required_inputs": command.get("required_inputs", []),
         }
         commands_by_category.setdefault(str(command["category"]), []).append(name)
     commands_by_category = {
@@ -9234,6 +9291,8 @@ def _package_command_manifest_contract_status(
         failed_checks.append("missing_command_text")
     if missing_category:
         failed_checks.append("missing_category")
+    if invalid_required_inputs:
+        failed_checks.append("invalid_required_inputs")
     passed = not failed_checks
     return {
         "checked": True,
@@ -9254,6 +9313,8 @@ def _package_command_manifest_contract_status(
             category: len(names) for category, names in commands_by_category.items()
         },
         "commands_by_category": commands_by_category,
+        "commands_with_required_inputs": commands_with_required_inputs,
+        "required_input_command_count": len(commands_with_required_inputs),
         "command_lookup": command_lookup,
         "missing_training_commands": missing_training,
         "unexpected_training_commands": unexpected_training,
@@ -9261,6 +9322,7 @@ def _package_command_manifest_contract_status(
         "malformed_commands": malformed,
         "missing_command_text": missing_command_text,
         "missing_category": missing_category,
+        "invalid_required_inputs": invalid_required_inputs,
         "failed_checks": failed_checks,
     }
 

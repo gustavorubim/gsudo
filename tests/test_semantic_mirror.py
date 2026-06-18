@@ -90,11 +90,37 @@ def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, obje
         "compare_rl": "evaluation",
         "compare_rl_raw": "evaluation",
     }
+    required_inputs = {
+        "validate": ["training_dir"],
+        "audit": ["training_dir"],
+        "wsl_smoke_chain": ["held_out_dataset"],
+        "sft": ["training_dir", "output_dir"],
+        "dpo": ["training_dir", "sft_model_or_adapter", "output_dir"],
+        "rl": ["training_dir", "dpo_or_sft_model_or_adapter", "output_dir"],
+        "full_training_eval": ["held_out_dataset", "baseline_candidates"],
+        "smoke_chain": ["held_out_dataset"],
+        "inspect_full_training_eval_resume": ["outputs_dir"],
+        "inspect_resume": ["outputs_dir"],
+        "generate_candidates": ["model_or_adapter", "prompt_file"],
+        "score_candidates": ["candidates_jsonl"],
+        "eval_candidates": ["model_or_adapter", "held_out_dataset"],
+        "inspect_samples": ["samples_dir"],
+        "report": ["outputs_dir"],
+        "source_freshness": ["package_root"],
+        "contract_status": ["outputs_dir"],
+        "compare_sft": ["baseline_candidates", "sft_candidates"],
+        "compare_sft_raw": ["baseline_candidates", "sft_raw_candidates"],
+        "compare_dpo": ["sft_candidates", "dpo_candidates"],
+        "compare_dpo_raw": ["sft_raw_candidates", "dpo_raw_candidates"],
+        "compare_rl": ["sft_candidates", "rl_candidates"],
+        "compare_rl_raw": ["sft_raw_candidates", "rl_raw_candidates"],
+    }
     return {
         name: {
             "command": command,
             "category": categories[name],
             "launches_training": name in training_commands,
+            "required_inputs": required_inputs.get(name, []),
         }
         for name, command in commands.items()
     }
@@ -1959,6 +1985,15 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["package_source_summary"]["missing_package_specific_doc_count"] == 0
     assert cli_stdout["package_command_manifest_summary"]["passed"] is True
     assert cli_stdout["package_command_manifest_summary"]["training_command_count"] == 6
+    assert cli_stdout["package_command_manifest_summary"][
+        "required_input_command_count"
+    ] == 23
+    assert "dpo" in cli_stdout["package_command_manifest_summary"][
+        "commands_with_required_inputs"
+    ]
+    assert "rl" in cli_stdout["package_command_manifest_summary"][
+        "commands_with_required_inputs"
+    ]
     assert cli_stdout["package_command_manifest_summary"]["command_category_counts"] == {
         "diagnostics": 1,
         "evaluation": 8,
@@ -2294,6 +2329,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == 0
     assert cli_status_json["package_command_manifest_status"]["passed"]
     assert cli_status_json["package_command_manifest_summary"]["training_command_count"] == 6
+    assert (
+        cli_status_json["package_command_manifest_summary"]["required_input_command_count"]
+        == 23
+    )
     assert cli_status_json["package_command_manifest_summary"]["command_category_counts"][
         "evaluation"
     ] == 8
@@ -2308,6 +2347,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "smoke_chain",
         "wsl_smoke_chain",
     ]
+    assert cli_status_json["package_command_manifest_status"]["command_lookup"]["dpo"][
+        "required_inputs"
+    ] == ["training_dir", "sft_model_or_adapter", "output_dir"]
+    assert cli_status_json["package_command_manifest_status"]["command_lookup"]["rl"][
+        "required_inputs"
+    ] == ["training_dir", "dpo_or_sft_model_or_adapter", "output_dir"]
     assert cli_status_json["package_metadata_status"]["passed"]
     assert cli_status_json["package_metadata_summary"]["requires_python"] == ">=3.11,<3.14"
     assert cli_status_json["package_metadata_status"]["requires_python"] == ">=3.11,<3.14"
@@ -2537,6 +2582,28 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert not bad_command_recovery["package_command_manifest_valid_when_checked"][
         "requires_training"
     ]
+    command_manifest_path.write_text(
+        json.dumps(good_command_manifest, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    missing_input_manifest = copy.deepcopy(good_command_manifest)
+    missing_input_manifest["commands"]["dpo"].pop("required_inputs")
+    command_manifest_path.write_text(
+        json.dumps(missing_input_manifest, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    bad_input_status = summarize_full_eval_contract_status(
+        run,
+        repo_root=repo,
+        package_source_freshness_path=source_freshness,
+    )
+    assert not bad_input_status["package_command_manifest_status"]["passed"]
+    assert bad_input_status["package_command_manifest_status"]["failed_checks"] == [
+        "invalid_required_inputs"
+    ]
+    assert bad_input_status["package_command_manifest_status"][
+        "invalid_required_inputs"
+    ] == ["dpo"]
     command_manifest_path.write_text(
         json.dumps(good_command_manifest, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -3606,8 +3673,13 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert manifest_commands["full_training_eval"]["command"] == commands["full_training_eval"]
     assert manifest_commands["full_training_eval"]["category"] == "training"
     assert manifest_commands["full_training_eval"]["launches_training"] is True
+    assert manifest_commands["full_training_eval"]["required_inputs"] == [
+        "held_out_dataset",
+        "baseline_candidates",
+    ]
     assert manifest_commands["smoke_chain"]["launches_training"] is True
     assert manifest_commands["wsl_smoke_chain"]["launches_training"] is True
+    assert manifest_commands["wsl_smoke_chain"]["required_inputs"] == ["held_out_dataset"]
     assert manifest_commands["inspect_full_training_eval_resume"]["category"] == "inspection"
     assert manifest_commands["inspect_full_training_eval_resume"]["launches_training"] is False
     assert manifest_commands["inspect_resume"]["category"] == "inspection"
@@ -3643,6 +3715,16 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "--markdown-out outputs/contract_status.md" in commands["contract_status"]
     assert "run_unsloth_sft.py" in commands["sft"]
     assert "run_reward_rl.py" in commands["rl"]
+    assert manifest_commands["dpo"]["required_inputs"] == [
+        "training_dir",
+        "sft_model_or_adapter",
+        "output_dir",
+    ]
+    assert manifest_commands["rl"]["required_inputs"] == [
+        "training_dir",
+        "dpo_or_sft_model_or_adapter",
+        "output_dir",
+    ]
     assert "--schema-prefix-mode schema-scaffold" in commands["rl"]
     assert "--schema-prefix-mode schema-scaffold" in commands["generate_candidates"]
     assert "outputs/dpo_eval.json" in commands["compare_dpo"]
@@ -3663,6 +3745,12 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         ]
         is True
     )
+    assert package_manifest["launch_command_manifest"]["commands"]["dpo"][
+        "required_inputs"
+    ] == ["training_dir", "sft_model_or_adapter", "output_dir"]
+    assert package_manifest["launch_command_manifest"]["commands"]["rl"][
+        "required_inputs"
+    ] == ["training_dir", "dpo_or_sft_model_or_adapter", "output_dir"]
     assert (
         package_manifest["launch_command_manifest"]["commands"]["contract_status"][
             "launches_training"
