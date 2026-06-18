@@ -939,10 +939,26 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert inspect_action["category"] == "inspection"
     assert inspect_action["launches_training"] is False
+    assert inspect_action["blocked_by_stages"] == []
+    assert inspect_action["stage_actions"] == {
+        "dpo": "resume",
+        "rl": "run",
+        "sft": "reuse",
+    }
+    resume_action = next(
+        action
+        for action in status["next_actions"]
+        if action["title"] == "Resume full eval through DPO and RL"
+    )
+    assert resume_action["blocked_by_stages"] == ["dpo", "rl"]
+    assert resume_action["stage_actions"]["dpo"] == "resume"
+    assert resume_action["stage_actions"]["rl"] == "run"
     assert any(
         action["title"] == "Regenerate target diagnostics"
         and action["category"] == "diagnostics"
         and action["launches_training"] is False
+        and action["blocked_by_stages"] == ["dpo", "rl"]
+        and action["stage_actions"] == {}
         and "stale stages: `dpo`, `rl`" in action["reason"]
         and "train report outputs --out outputs/diagnostics" in action["command"]
         for action in status["next_actions"]
@@ -1003,8 +1019,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Resume full eval through DPO and RL" in status_markdown
     assert "- Category: `training`" in status_markdown
     assert "- Launches training: `True`" in status_markdown
+    assert "- Blocked by stages: `dpo, rl`" in status_markdown
+    assert '- Stage actions: `{"dpo": "resume", "rl": "run", "sft": "reuse"}`' in status_markdown
     assert "- Category: `inspection`" in status_markdown
     assert "- Launches training: `False`" in status_markdown
+    assert "- Blocked by stages: `None`" in status_markdown
     assert "RL/final eval evidence is incomplete" in status_markdown
     assert "Regenerate target diagnostics" in status_markdown
     assert "bash launch/inspect_full_training_eval_resume.sh" in status_markdown
@@ -1586,6 +1605,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         and action["launches_training"] is False
         and action["has_command"] is True
         and action["has_windows_powershell_command"] is True
+        and action["blocked_by_stages"] == []
+        and action["stage_actions"] == {"dpo": "resume", "rl": "run", "sft": "reuse"}
         and "Preview stage reuse" in action["reason"]
         for action in cli_stdout["next_actions"]
     )
@@ -1599,6 +1620,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert any(
         action["title"] == "Regenerate target diagnostics"
         and action["launches_training"] is False
+        and action["blocked_by_stages"] == ["dpo", "rl"]
+        and action["stage_actions"] == {}
         and "stale stages: `dpo`, `rl`" in action["reason"]
         for action in cli_stdout["next_actions"]
     )
@@ -1606,6 +1629,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         action["title"] == "Resume full eval through DPO and RL"
         and action["launches_training"] is True
         and action["has_windows_powershell_command"] is True
+        and action["blocked_by_stages"] == ["dpo", "rl"]
+        and action["stage_actions"]["dpo"] == "resume"
+        and action["stage_actions"]["rl"] == "run"
         for action in cli_stdout["next_actions"]
     )
     cli_status_json = json.loads(

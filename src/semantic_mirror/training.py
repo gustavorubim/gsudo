@@ -1358,6 +1358,7 @@ def summarize_full_eval_contract_status(
         report_status,
         sample_status,
         diagnostics_status,
+        stage_recovery_status,
         repo_hygiene_status,
         windows_readiness_status,
         package_source_status,
@@ -6866,6 +6867,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     "",
                     f"- Category: `{action.get('category', 'unspecified')}`",
                     f"- Launches training: `{action.get('launches_training', False)}`",
+                    f"- Blocked by stages: `{', '.join(action.get('blocked_by_stages') or []) or 'None'}`",
+                    f"- Stage actions: `{json.dumps(action.get('stage_actions') or {}, sort_keys=True)}`",
                     "",
                     action["reason"],
                     "",
@@ -6905,6 +6908,7 @@ def _full_eval_next_actions(
     report_status: dict[str, dict[str, Any]],
     sample_status: dict[str, dict[str, Any]],
     diagnostics_status: dict[str, Any],
+    stage_recovery_status: dict[str, Any],
     repo_hygiene_status: dict[str, Any],
     windows_readiness_status: dict[str, Any],
     package_source_status: dict[str, Any],
@@ -6950,12 +6954,20 @@ def _full_eval_next_actions(
         "--out outputs/contract_status.json --markdown-out outputs/contract_status.md"
     )
     diagnostics_command = "PYTHONPATH=src python -m semantic_mirror.cli train report outputs --out outputs/diagnostics"
+    stage_actions = _next_action_stage_actions(stage_recovery_status)
+    incomplete_stages = [
+        stage
+        for stage, recovery in stage_recovery_status.items()
+        if recovery.get("missing_current_artifacts")
+    ]
     actions.append(
         {
             "title": "Inspect resume plan",
             "category": "inspection",
             "launches_training": False,
             "reason": "Preview stage reuse and resume decisions before launching training.",
+            "blocked_by_stages": [],
+            "stage_actions": stage_actions,
             "command": f"# from {package_root}\n{inspect_command}",
             "windows_powershell_command": _windows_wsl_command(package_root, inspect_command),
         }
@@ -6992,6 +7004,10 @@ def _full_eval_next_actions(
                 "category": "training",
                 "launches_training": True,
                 "reason": wsl_reason,
+                "blocked_by_stages": list(
+                    windows_readiness_status.get("wsl_missing_stage_manifests") or []
+                ),
+                "stage_actions": {},
                 "command": f"# from {package_root}\n{wsl_smoke_command}",
                 "windows_powershell_command": wsl_smoke_powershell,
             }
@@ -7017,6 +7033,10 @@ def _full_eval_next_actions(
                     if rl_incomplete
                     else "DPO has not reached the requested max_steps; resume from the newest available DPO checkpoint if present."
                 ),
+                "blocked_by_stages": [
+                    stage for stage in ("dpo", "rl") if stage in incomplete_stages
+                ],
+                "stage_actions": stage_actions,
                 "command": f"# from {package_root}\n{run_command}",
                 "windows_powershell_command": _windows_wsl_command(package_root, run_command),
             }
@@ -7032,6 +7052,10 @@ def _full_eval_next_actions(
                 "category": "training",
                 "launches_training": True,
                 "reason": "DPO is complete but RL/final eval evidence is missing.",
+                "blocked_by_stages": [
+                    stage for stage in ("rl",) if stage in incomplete_stages
+                ],
+                "stage_actions": stage_actions,
                 "command": f"# from {package_root}\n{run_command}",
                 "windows_powershell_command": _windows_wsl_command(package_root, run_command),
             }
@@ -7058,6 +7082,8 @@ def _full_eval_next_actions(
                 "category": "diagnostics",
                 "launches_training": False,
                 "reason": diagnostics_reason,
+                "blocked_by_stages": stale_stages,
+                "stage_actions": {},
                 "command": f"# from {package_root}\n{diagnostics_command}",
                 "windows_powershell_command": _windows_wsl_command(
                     package_root, diagnostics_command
@@ -7073,11 +7099,26 @@ def _full_eval_next_actions(
             "category": "status",
             "launches_training": False,
             "reason": "Refresh JSON and Markdown status after the next full-eval attempt.",
+            "blocked_by_stages": incomplete_stages,
+            "stage_actions": stage_actions,
             "command": f"# from {package_root}\n{status_command}",
             "windows_powershell_command": _windows_wsl_command(package_root, status_command),
         }
     )
     return actions
+
+
+def _next_action_stage_actions(
+    stage_recovery_status: dict[str, Any],
+) -> dict[str, str | None]:
+    return {
+        stage: (
+            str(recovery.get("action"))
+            if isinstance(recovery, dict) and recovery.get("action") is not None
+            else None
+        )
+        for stage, recovery in stage_recovery_status.items()
+    }
 
 
 def _phase6_collection_next_action(

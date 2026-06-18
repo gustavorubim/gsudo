@@ -1299,6 +1299,8 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "category": action.get("category", "unspecified"),
                     "launches_training": action.get("launches_training", False),
                     "reason": action.get("reason"),
+                    "blocked_by_stages": action.get("blocked_by_stages", []),
+                    "stage_actions": action.get("stage_actions", {}),
                     "has_command": bool(action.get("command")),
                     "has_windows_powershell_command": bool(
                         action.get("windows_powershell_command")
