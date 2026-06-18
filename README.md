@@ -268,6 +268,7 @@ uv run semantic-mirror train run-dpo <training_dir> --model-name-or-path <sft_mo
 uv run semantic-mirror train run-rl <training_dir> --model-name-or-path <dpo_model_dir> --output-dir <rl_model_dir> --max-steps 120 --dry-run
 uv run semantic-mirror train report <run_outputs_dir> --out <run_outputs_dir>/diagnostics
 uv run semantic-mirror train source-freshness <training_bundle_dir> --repo-root . --out <training_bundle_dir>/source_freshness.json --markdown-out <training_bundle_dir>/source_freshness.md
+uv run semantic-mirror train inspect-resume <run_outputs_dir> --sft-steps 300 --dpo-steps 120 --rl-steps 120 --reuse-stage-outputs --dpo-resume-from-checkpoint <run_outputs_dir>/semantic-mirror-dpo/checkpoint-10 --out <run_outputs_dir>/full_training_eval_resume_inspection.json --markdown-out <run_outputs_dir>/full_training_eval_resume_inspection.md
 uv run semantic-mirror train contract-status <run_outputs_dir> --sft-steps 300 --dpo-steps 120 --rl-steps 120 --repo-root . --windows-audit <windows_audit.json> --wsl-smoke-manifest <smoke_chain_manifest.json> --package-source-freshness <source_freshness.json> --human-study-coverage <coverage.json> --human-study-suite <phase6_summary.json> --out <run_outputs_dir>/contract_status.json --markdown-out <run_outputs_dir>/contract_status.md
 uv run semantic-mirror train inspect-samples <dataset_dir> --raw-candidates <raw.jsonl> --repaired-candidates <repaired.jsonl> --out <samples_dir> --model-name <run_name>
 ```
@@ -291,7 +292,10 @@ held-out coverage, repaired schema validity, repaired model-compare gates,
 RL-vs-SFT raw non-regression, and raw stretch gate status. The launcher also
 writes `outputs/contract_status.json` and `outputs/contract_status.md`, which
 list any missing stage manifests, eval reports, sample inspections,
-diagnostics, or final gates. Generated prompts include
+diagnostics, or final gates. The status JSON includes `remaining_recovery_plan`,
+and the Markdown includes a `Recovery Plan` table mapping every failed gate to
+the required action, whether training is required, blocking stages, and target
+artifacts. Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
 model to return that object as the final JSON. The
@@ -313,7 +317,10 @@ stages from a checkpoint. The trainer-backed stages default to
 `SFT_SAVE_STEPS=10`, `DPO_SAVE_STEPS=10`, `SFT_SAVE_TOTAL_LIMIT=3`, and
 `DPO_SAVE_TOTAL_LIMIT=3` so interrupted bounded runs keep recent checkpoints
 without retaining every checkpoint. RL currently records `resume_supported=false`,
-so the wrapper only reuses completed RL output.
+so the wrapper only reuses completed RL output. Use `train inspect-resume`
+or the packaged `launch/inspect_full_training_eval_resume.sh` before launching a
+resumed run; both commands only inspect manifests and checkpoints and write
+`full_training_eval_resume_inspection.json` plus Markdown.
 Generation prompts explicitly require the answer to start with `{"unit_id"`,
 preserve identity fields exactly, and forbid template or marker wrappers.
 Candidate and RL generation also use a balanced-JSON stop criterion so decoding

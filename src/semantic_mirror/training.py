@@ -3284,17 +3284,28 @@ without retaining every checkpoint. RL currently records
 directory.
 
 Before launching a resumed full-eval run, inspect the same reuse and resume
-decisions without starting training:
+decisions without starting training. The shell helper calls the same
+`train inspect-resume` CLI command that can be run directly by automation:
 
 ```bash
 SFT_MAX_STEPS=300 DPO_MAX_STEPS=120 RL_MAX_STEPS=120 \
 REUSE_STAGE_OUTPUTS=1 \
 DPO_RESUME_FROM_CHECKPOINT=outputs/semantic-mirror-dpo/checkpoint-10 \
 bash launch/inspect_full_training_eval_resume.sh
+
+PYTHONPATH=src python -m semantic_mirror.cli train inspect-resume outputs \
+  --sft-steps 300 \
+  --dpo-steps 120 \
+  --rl-steps 120 \
+  --reuse-stage-outputs \
+  --dpo-resume-from-checkpoint outputs/semantic-mirror-dpo/checkpoint-10 \
+  --out outputs/full_training_eval_resume_inspection.json \
+  --markdown-out outputs/full_training_eval_resume_inspection.md
 ```
 
 The inspector writes `outputs/full_training_eval_resume_inspection.json` and
-prints whether each stage will be reused, resumed, rerun, or started fresh.
+`outputs/full_training_eval_resume_inspection.md`, and reports whether each
+stage will be reused, resumed, rerun, or started fresh.
 For automation, `launch/commands_manifest.json` classifies every packaged
 command by category and includes a `launches_training` boolean so inspection,
 status, and diagnostic commands can be selected without accidentally starting a
@@ -3315,7 +3326,11 @@ This writes `outputs/baseline_eval.json`, raw and repaired eval reports for
 SFT/DPO/RL, `outputs/sft_vs_baseline.json`, `outputs/dpo_vs_sft.json`,
 `outputs/rl_vs_sft.json`, per-stage sample inspection folders,
 `outputs/diagnostics/`, `outputs/training_eval_summary.json`,
-`outputs/contract_status.json`, and `outputs/contract_status.md`. Sample manifests and the summary include raw parseability, cap hits, repair-free
+`outputs/contract_status.json`, and `outputs/contract_status.md`. The contract
+status JSON includes `remaining_recovery_plan`, and the Markdown includes a
+`Recovery Plan` table mapping each failed gate to the required action, whether
+training is required, blocking stages, and target artifacts. Sample manifests
+and the summary include raw parseability, cap hits, repair-free
 contract counts, exact identity counts, top-level key validity, and compact
 shape validity.
 

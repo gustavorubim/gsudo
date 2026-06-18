@@ -2707,6 +2707,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "launches_training" in package_readme
     assert "contract_status.json" in package_readme
     assert "contract_status.md" in package_readme
+    assert "train inspect-resume outputs" in package_readme
+    assert "full_training_eval_resume_inspection.md" in package_readme
+    assert "remaining_recovery_plan" in package_readme
+    assert "Recovery Plan" in package_readme
     assert (
         package_manifest["files"]["full_training_eval_resume_inspector"]
         == "launch/inspect_full_training_eval_resume.sh"
