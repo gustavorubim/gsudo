@@ -1236,6 +1236,9 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "passed": manifest["passed"],
             "requested_max_steps": manifest["requested_max_steps"],
             "contract_reward_summary": manifest["contract_reward_summary"],
+            "contract_scorecard_summary": _contract_scorecard_summary(
+                manifest.get("contract_scorecard")
+            ),
             "repo_hygiene_summary": _repo_hygiene_summary(
                 manifest.get("repo_hygiene_status")
             ),
@@ -1329,6 +1332,26 @@ def _package_command_manifest_summary(status: object) -> dict[str, object]:
         "non_training_command_count": status.get("non_training_command_count"),
         "failed_checks": status.get("failed_checks", []),
     }
+
+
+def _contract_scorecard_summary(scorecard: object) -> list[dict[str, object]]:
+    if not isinstance(scorecard, list):
+        return []
+    rows: list[dict[str, object]] = []
+    for row in scorecard:
+        if not isinstance(row, dict):
+            continue
+        rows.append(
+            {
+                "area": row.get("area"),
+                "required": row.get("required"),
+                "passed": row.get("passed"),
+                "earned_reward": row.get("earned_reward"),
+                "max_reward": row.get("max_reward"),
+                "evidence": row.get("evidence"),
+            }
+        )
+    return rows
 
 
 def _repo_hygiene_summary(status: object) -> dict[str, object]:

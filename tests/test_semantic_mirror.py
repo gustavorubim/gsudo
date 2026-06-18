@@ -1358,6 +1358,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     cli_stdout = json.loads(cli_status.stdout)
     assert cli_stdout["passed"] is False
     assert cli_stdout["contract_reward_summary"]["completion_eligible"] is False
+    stdout_scorecard = {
+        row["area"]: row for row in cli_stdout["contract_scorecard_summary"]
+    }
+    assert stdout_scorecard["repo_hygiene"]["required"] is True
+    assert stdout_scorecard["repo_hygiene"]["passed"] is False
+    assert stdout_scorecard["repo_hygiene"]["earned_reward"] == 0
+    assert stdout_scorecard["windows_unsloth_readiness"]["passed"] is True
+    assert stdout_scorecard["windows_unsloth_readiness"]["earned_reward"] == 65
+    assert stdout_scorecard["real_training_eval_gates"]["passed"] is False
+    assert stdout_scorecard["human_usefulness"]["required"] is False
     assert cli_stdout["repo_hygiene_summary"]["passed"] is False
     assert cli_stdout["repo_hygiene_summary"]["tracked_change_count"] == 1
     assert cli_stdout["repo_hygiene_summary"]["untracked_count"] == 2
