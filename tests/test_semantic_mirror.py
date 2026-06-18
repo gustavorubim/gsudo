@@ -1094,11 +1094,45 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert readiness_status["windows_readiness_status"]["checked"]
     assert readiness_status["windows_readiness_status"]["native_blocked"]
     assert readiness_status["windows_readiness_status"]["wsl_smoke_complete"]
+    assert readiness_status["windows_readiness_status"]["wsl_failed_checks"] == []
+    assert readiness_status["windows_readiness_status"]["wsl_smoke_manifest_mode"] == (
+        "smoke_chain"
+    )
     readiness_scorecard = {
         row["area"]: row for row in readiness_status["contract_scorecard"]
     }
     assert readiness_scorecard["windows_unsloth_readiness"]["passed"] is True
     assert readiness_scorecard["windows_unsloth_readiness"]["earned_reward"] == 65
+    wrong_wsl_smoke = tmp_path / "training_validate_report.json"
+    wrong_wsl_smoke.write_text(
+        json.dumps(
+            {
+                "mode": "training_validate",
+                "passed": True,
+                "issues": [],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wrong_wsl_status = summarize_full_eval_contract_status(
+        run,
+        windows_audit_path=windows_audit,
+        wsl_smoke_manifest_path=wrong_wsl_smoke,
+    )
+    wrong_wsl_readiness = wrong_wsl_status["windows_readiness_status"]
+    assert not wrong_wsl_readiness["passed"]
+    assert not wrong_wsl_readiness["wsl_smoke_complete"]
+    assert wrong_wsl_readiness["wsl_smoke_manifest_mode"] == "training_validate"
+    assert wrong_wsl_readiness["wsl_failed_checks"] == [
+        "smoke_chain_manifest_mode",
+        "stage_manifests",
+        "sample_manifests",
+        "diagnostics",
+    ]
+    assert wrong_wsl_readiness["wsl_missing_stage_manifests"] == ["sft", "dpo", "rl"]
+    assert wrong_wsl_readiness["wsl_missing_sample_manifests"] == ["sft", "dpo", "rl"]
     human_suite = tmp_path / "phase6_summary.json"
     human_suite.write_text(
         json.dumps(
@@ -1413,6 +1447,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "native_recommended_fallback"
     ] == "Use WSL CUDA."
     assert cli_stdout["windows_readiness_summary"]["wsl_smoke_complete"] is True
+    assert cli_stdout["windows_readiness_summary"]["wsl_failed_checks"] == []
+    assert cli_stdout["windows_readiness_summary"]["wsl_smoke_manifest_mode"] == (
+        "smoke_chain"
+    )
     assert cli_stdout["package_source_summary"]["passed"] is True
     assert cli_stdout["package_source_summary"]["git_commit_matches_repo"] is True
     assert cli_stdout["package_source_summary"]["compared_file_count"] == 2

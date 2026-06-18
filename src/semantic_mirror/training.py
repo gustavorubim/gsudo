@@ -7677,6 +7677,21 @@ def _windows_readiness_contract_status(
         and all(wsl_sample_manifests.values())
         and bool(smoke.get("diagnostics_exists"))
     )
+    wsl_failed_checks = []
+    if wsl_checked and smoke.get("mode") != "smoke_chain":
+        wsl_failed_checks.append("smoke_chain_manifest_mode")
+    missing_stage_manifests = [
+        stage for stage, exists in wsl_stage_manifests.items() if not exists
+    ]
+    missing_sample_manifests = [
+        stage for stage, exists in wsl_sample_manifests.items() if not exists
+    ]
+    if wsl_checked and missing_stage_manifests:
+        wsl_failed_checks.append("stage_manifests")
+    if wsl_checked and missing_sample_manifests:
+        wsl_failed_checks.append("sample_manifests")
+    if wsl_checked and not bool(smoke.get("diagnostics_exists")):
+        wsl_failed_checks.append("diagnostics")
     passed = native_passed or (native_blocked and wsl_complete)
     if native_passed:
         summary = "Windows-native audit passed and is ready to launch."
@@ -7712,9 +7727,13 @@ def _windows_readiness_contract_status(
             else None
         ),
         "wsl_checked": wsl_checked,
+        "wsl_smoke_manifest_mode": smoke.get("mode") if isinstance(smoke, dict) else None,
         "wsl_smoke_complete": wsl_complete,
+        "wsl_failed_checks": wsl_failed_checks,
         "wsl_stage_manifests": wsl_stage_manifests,
+        "wsl_missing_stage_manifests": missing_stage_manifests,
         "wsl_sample_manifests": wsl_sample_manifests,
+        "wsl_missing_sample_manifests": missing_sample_manifests,
         "wsl_diagnostics_exists": bool(smoke.get("diagnostics_exists"))
         if isinstance(smoke, dict)
         else False,

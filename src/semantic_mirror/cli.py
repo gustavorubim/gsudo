@@ -1404,7 +1404,15 @@ def _windows_readiness_summary(status: object) -> dict[str, object]:
             "native_failed_required_checks", []
         ),
         "native_recommended_fallback": status.get("native_recommended_fallback"),
+        "wsl_smoke_manifest_mode": status.get("wsl_smoke_manifest_mode"),
         "wsl_smoke_complete": status.get("wsl_smoke_complete"),
+        "wsl_failed_checks": status.get("wsl_failed_checks", []),
+        "wsl_missing_stage_manifest_count": len(
+            status.get("wsl_missing_stage_manifests", []) or []
+        ),
+        "wsl_missing_sample_manifest_count": len(
+            status.get("wsl_missing_sample_manifests", []) or []
+        ),
         "wsl_diagnostics_exists": status.get("wsl_diagnostics_exists"),
         "summary": status.get("summary"),
     }
