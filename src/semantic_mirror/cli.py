@@ -1291,6 +1291,8 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                     "stage": item.get("stage"),
                     "required_action": item["required_action"],
                     "action_category": item.get("action_category", "inspection"),
+                    "next_action_title": item.get("next_action_title"),
+                    "next_action_category": item.get("next_action_category"),
                     "requires_training": item["requires_training"],
                     "blocked_by_stages": item["blocked_by_stages"],
                     "current_evidence": item.get("current_evidence"),

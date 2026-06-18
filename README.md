@@ -294,8 +294,8 @@ writes `outputs/contract_status.json` and `outputs/contract_status.md`, which
 list any missing stage manifests, eval reports, sample inspections,
 diagnostics, or final gates. The status JSON includes `remaining_recovery_plan`,
 and the Markdown includes a `Recovery Plan` table mapping every failed gate to
-the required action, action category, whether training is required, blocking
-stages, and target artifacts. Stale stage-derived eval rows use
+the required action, action category, recommended next-action row, whether
+training is required, blocking stages, and target artifacts. Stale stage-derived eval rows use
 `generate_eval_report_after_stage`, sample rows use
 `generate_sample_inspection_after_stage`, and
 `blocked_by_stages` names the stage that must finish before those artifacts are
@@ -446,7 +446,8 @@ gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
 `stage_actions`, recovery-plan `action_category`,
 native and WSL readiness blocker summaries, Phase 6 failed gates, real
 timed-answer counts, package source freshness, command-manifest safety checks,
-command category rollups, and package Python metadata so automation can decide
+command category rollups, recovery-plan `next_action_title` and
+`next_action_category`, and package Python metadata so automation can decide
 whether the next step is inspection, human study collection, status refresh,
 diagnostics, package repair, evaluation, or a training launch. Use
 `train inspect-samples` after generation to
