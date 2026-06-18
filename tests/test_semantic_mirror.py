@@ -1378,6 +1378,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["human_usefulness_summary"]["collection_plan"][
         "required_total_answer_records"
     ] == 108
+    assert cli_stdout["stage_recovery_summary"]["sft"]["action"] == "reuse"
+    assert cli_stdout["stage_recovery_summary"]["sft"]["manifest_max_steps"] == 300
+    assert cli_stdout["stage_recovery_summary"]["dpo"]["action"] == "resume"
+    assert cli_stdout["stage_recovery_summary"]["dpo"][
+        "latest_checkpoint_relative"
+    ] == "semantic-mirror-dpo/checkpoint-10"
+    assert cli_stdout["stage_recovery_summary"]["rl"]["action"] == "run"
+    assert cli_stdout["stage_recovery_summary"]["rl"][
+        "missing_current_artifact_count"
+    ] >= 1
     assert cli_stdout["remaining_by_area"]["dpo"] == [
         "dpo_stage_manifest_matches_requested_steps",
         "dpo_eval_exists_and_passed",

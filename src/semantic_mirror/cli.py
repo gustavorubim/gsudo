@@ -1251,6 +1251,9 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "human_usefulness_summary": _human_usefulness_summary(
                 manifest.get("human_usefulness_status")
             ),
+            "stage_recovery_summary": _stage_recovery_summary(
+                manifest.get("stage_recovery_status")
+            ),
             "remaining_by_area": manifest["remaining_by_area"],
             "remaining_recovery_plan": [
                 {
@@ -1388,6 +1391,25 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
             "missing_answer_targets": collection_plan.get("missing_answer_targets", []),
         },
     }
+
+
+def _stage_recovery_summary(status: object) -> dict[str, dict[str, object]]:
+    if not isinstance(status, dict):
+        return {}
+    summary: dict[str, dict[str, object]] = {}
+    for stage, recovery in status.items():
+        if not isinstance(recovery, dict):
+            continue
+        summary[str(stage)] = {
+            "action": recovery.get("action"),
+            "requested_max_steps": recovery.get("requested_max_steps"),
+            "manifest_max_steps": recovery.get("manifest_max_steps"),
+            "latest_checkpoint_relative": recovery.get("latest_checkpoint_relative"),
+            "missing_current_artifact_count": len(
+                recovery.get("missing_current_artifacts", []) or []
+            ),
+        }
+    return summary
 
 
 def _eval_summary(report: dict[str, object]) -> dict[str, object]:
