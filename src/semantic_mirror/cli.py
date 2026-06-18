@@ -1611,6 +1611,13 @@ def _stage_recovery_summary(status: object) -> dict[str, dict[str, object]]:
             continue
         summary[str(stage)] = {
             "action": recovery.get("action"),
+            "next_action_title": recovery.get("next_action_title"),
+            "next_action_command_name": recovery.get("next_action_command_name"),
+            "next_action_command_category": recovery.get("next_action_command_category"),
+            "next_action_launches_training": recovery.get("next_action_launches_training"),
+            "next_action_blocked_by_stages": recovery.get(
+                "next_action_blocked_by_stages", []
+            ),
             "requested_max_steps": recovery.get("requested_max_steps"),
             "manifest_max_steps": recovery.get("manifest_max_steps"),
             "latest_checkpoint_relative": recovery.get("latest_checkpoint_relative"),

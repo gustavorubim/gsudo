@@ -3519,7 +3519,9 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 `remaining_recovery_plan`, and `recovery_plan_summary`. The JSON keeps full `next_actions` commands,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. `next_action_summary` also includes
-a blocked-stage command matrix for the current next-action set. These surfaces include
+a blocked-stage command matrix for the current next-action set. `stage_recovery_summary`
+includes per-stage next command names, categories, launch flags, and blocked
+stages so reuse decisions can be separated from training launches. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
 per-action `command_name`, `command_category`, `blocked_by_stages`, and
 `stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
@@ -6576,8 +6578,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                 "",
                 "## Stage Recovery",
                 "",
-                "| Stage | Action | Latest Checkpoint | Missing Current Artifacts |",
-                "| --- | --- | --- | --- |",
+                "| Stage | Action | Next Command | Launches Training | Latest Checkpoint | Missing Current Artifacts |",
+                "| --- | --- | --- | --- | --- | --- |",
             ]
         )
         for stage in ("sft", "dpo", "rl"):
@@ -6588,6 +6590,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
             )
             lines.append(
                 f"| `{stage}` | `{recovery.get('action')}` | "
+                f"`{recovery.get('next_action_command_name') or 'None'}` | "
+                f"`{recovery.get('next_action_launches_training', False)}` | "
                 f"`{checkpoint}` | "
                 f"{', '.join(f'`{item}`' for item in missing)} |"
             )
@@ -7519,9 +7523,16 @@ def _stage_recovery_contract_status(
             missing_current_artifacts.append(compare_key)
         if not sample_status[stage]["complete_for_requested_stage"]:
             missing_current_artifacts.append(f"{stage}_sample_inspection")
+        action = str(decision.get("action") or inferred_action)
+        next_action = _stage_recovery_next_action(stage=stage, action=action)
         recovery[stage] = {
-            "action": decision.get("action") or inferred_action,
+            "action": action,
             "reason": decision.get("reason"),
+            "next_action_title": next_action["title"],
+            "next_action_command_name": next_action["command_name"],
+            "next_action_command_category": next_action["command_category"],
+            "next_action_launches_training": next_action["launches_training"],
+            "next_action_blocked_by_stages": next_action["blocked_by_stages"],
             "requested_max_steps": stage_status[stage]["requested_max_steps"],
             "manifest_max_steps": stage_status[stage]["manifest_max_steps"],
             "manifest_current": stage_status[stage][
@@ -7548,6 +7559,24 @@ def _stage_recovery_action(
     if stage in {"sft", "dpo"} and latest_checkpoint is not None:
         return "resume"
     return "run" if not status["manifest_exists"] else "rerun"
+
+
+def _stage_recovery_next_action(*, stage: str, action: str) -> dict[str, Any]:
+    if action == "reuse":
+        return {
+            "title": "Reuse current stage output",
+            "command_name": None,
+            "command_category": None,
+            "launches_training": False,
+            "blocked_by_stages": [],
+        }
+    return {
+        "title": "Resume full eval through DPO and RL",
+        "command_name": "full_training_eval",
+        "command_category": "training",
+        "launches_training": True,
+        "blocked_by_stages": [stage],
+    }
 
 
 def _eval_summary_contract_status(
@@ -7748,6 +7777,13 @@ def _stage_recovery_contract_summary(
             continue
         summary[str(stage)] = {
             "action": recovery.get("action"),
+            "next_action_title": recovery.get("next_action_title"),
+            "next_action_command_name": recovery.get("next_action_command_name"),
+            "next_action_command_category": recovery.get("next_action_command_category"),
+            "next_action_launches_training": recovery.get("next_action_launches_training"),
+            "next_action_blocked_by_stages": recovery.get(
+                "next_action_blocked_by_stages", []
+            ),
             "requested_max_steps": recovery.get("requested_max_steps"),
             "manifest_max_steps": recovery.get("manifest_max_steps"),
             "latest_checkpoint_relative": recovery.get("latest_checkpoint_relative"),

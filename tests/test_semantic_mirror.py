@@ -828,11 +828,30 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert status["sample_status"]["dpo"]["manifest_exists"]
     assert not status["sample_status"]["dpo"]["complete_for_requested_stage"]
     assert status["stage_recovery_status"]["sft"]["action"] == "reuse"
+    assert status["stage_recovery_summary"]["sft"]["next_action_command_name"] is None
+    assert not status["stage_recovery_summary"]["sft"]["next_action_launches_training"]
     assert status["stage_recovery_status"]["dpo"]["action"] == "resume"
     assert status["stage_recovery_status"]["dpo"]["latest_checkpoint_relative"] == (
         "semantic-mirror-dpo/checkpoint-10"
     )
+    assert status["stage_recovery_summary"]["dpo"]["next_action_command_name"] == (
+        "full_training_eval"
+    )
+    assert status["stage_recovery_summary"]["dpo"]["next_action_command_category"] == (
+        "training"
+    )
+    assert status["stage_recovery_summary"]["dpo"]["next_action_launches_training"]
+    assert status["stage_recovery_summary"]["dpo"]["next_action_blocked_by_stages"] == [
+        "dpo"
+    ]
     assert status["stage_recovery_status"]["rl"]["action"] == "run"
+    assert status["stage_recovery_summary"]["rl"]["next_action_command_name"] == (
+        "full_training_eval"
+    )
+    assert status["stage_recovery_summary"]["rl"]["next_action_launches_training"]
+    assert status["stage_recovery_summary"]["rl"]["next_action_blocked_by_stages"] == [
+        "rl"
+    ]
     assert "rl_eval" in status["stage_recovery_status"]["rl"]["missing_current_artifacts"]
     assert status["diagnostics_status"]["all_required_plots_exist"]
     assert not status["diagnostics_status"]["sources_current_for_run"]
@@ -1161,8 +1180,11 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "| `dpo` | `False` | `False` | `False` | `False` |" in status_markdown
     assert "| `rl` | `False` | `False` | `False` | `False` |" in status_markdown
     assert "## Stage Recovery" in status_markdown
-    assert "| `dpo` | `resume` | `semantic-mirror-dpo/checkpoint-10` |" in status_markdown
-    assert "| `rl` | `run` | `None` |" in status_markdown
+    assert (
+        "| `dpo` | `resume` | `full_training_eval` | `True` | "
+        "`semantic-mirror-dpo/checkpoint-10` |"
+    ) in status_markdown
+    assert "| `rl` | `run` | `full_training_eval` | `True` | `None` |" in status_markdown
     assert "## Contract Scorecard" in status_markdown
     assert "## Repo Hygiene" in status_markdown
     assert "Repo hygiene not checked" in status_markdown
@@ -1852,11 +1874,36 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == ["answer_task_id_coverage", "real_timed_reviewer_logs"]
     assert cli_stdout["stage_recovery_summary"]["sft"]["action"] == "reuse"
     assert cli_stdout["stage_recovery_summary"]["sft"]["manifest_max_steps"] == 300
+    assert cli_stdout["stage_recovery_summary"]["sft"]["next_action_command_name"] is None
+    assert not cli_stdout["stage_recovery_summary"]["sft"][
+        "next_action_launches_training"
+    ]
     assert cli_stdout["stage_recovery_summary"]["dpo"]["action"] == "resume"
     assert cli_stdout["stage_recovery_summary"]["dpo"][
         "latest_checkpoint_relative"
     ] == "semantic-mirror-dpo/checkpoint-10"
+    assert cli_stdout["stage_recovery_summary"]["dpo"][
+        "next_action_command_name"
+    ] == "full_training_eval"
+    assert cli_stdout["stage_recovery_summary"]["dpo"][
+        "next_action_command_category"
+    ] == "training"
+    assert cli_stdout["stage_recovery_summary"]["dpo"][
+        "next_action_launches_training"
+    ]
+    assert cli_stdout["stage_recovery_summary"]["dpo"][
+        "next_action_blocked_by_stages"
+    ] == ["dpo"]
     assert cli_stdout["stage_recovery_summary"]["rl"]["action"] == "run"
+    assert cli_stdout["stage_recovery_summary"]["rl"][
+        "next_action_command_name"
+    ] == "full_training_eval"
+    assert cli_stdout["stage_recovery_summary"]["rl"][
+        "next_action_launches_training"
+    ]
+    assert cli_stdout["stage_recovery_summary"]["rl"][
+        "next_action_blocked_by_stages"
+    ] == ["rl"]
     assert cli_stdout["stage_recovery_summary"]["rl"][
         "missing_current_artifact_count"
     ] >= 1
@@ -3668,6 +3715,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "full_training_eval_resume_inspection.md" in package_readme
     assert "contract_scorecard_summary" in package_readme
     assert "stage_recovery_summary" in package_readme
+    assert "reuse decisions can be separated from" in package_readme
     assert "next_action_summary" in package_readme
     assert "current next-action set" in package_readme
     assert "readiness next-command routing fields" in package_readme
@@ -3703,6 +3751,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     )
     assert "The JSON keeps full `next_actions` commands" in root_readme
     assert "package_metadata_summary" in root_readme
+    assert "reuse decisions can be separated from" in root_readme
     assert "next_action_summary" in root_readme
     assert "current next-action set" in root_readme
     assert "next readiness command name" in root_readme

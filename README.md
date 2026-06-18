@@ -311,6 +311,9 @@ callers can route WSL smoke, DPO resume, RL launch, diagnostics, and
 status-refresh work without parsing prose. The status JSON and stdout also
 include `next_action_summary` counts by command, command category, and launch
 behavior, plus a blocked-stage command matrix for the current next-action set.
+`stage_recovery_summary` includes per-stage next command names, categories,
+launch flags, and blocked stages so reuse decisions can be separated from
+training launches.
 Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
@@ -451,6 +454,8 @@ currently recommended next actions.
 `windows_readiness_summary` includes the next readiness command name, category,
 training-launch flag, blocked stages, and failed checks so automation can route
 native-audit refreshes separately from WSL smoke-chain launches.
+`stage_recovery_summary` includes the same command-routing fields for each
+SFT/DPO/RL stage.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
 gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,
