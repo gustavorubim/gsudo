@@ -1394,6 +1394,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["human_usefulness_summary"]["collection_plan"][
         "required_total_answer_records"
     ] == 108
+    collection_studies = cli_stdout["human_usefulness_summary"]["collection_plan"][
+        "studies"
+    ]
+    assert collection_studies["whole_repo"]["answer_records"] == 1
+    assert collection_studies["whole_repo"]["required_answer_records"] == 108
+    assert collection_studies["whole_repo"]["answer_target_exists"] is True
+    assert collection_studies["whole_repo"]["answer_target"].endswith(
+        "whole_answers.jsonl"
+    )
+    assert collection_studies["whole_repo"]["coverage_report"] is None
+    assert collection_studies["whole_repo"]["eval_report"] is None
     assert cli_stdout["human_usefulness_summary"]["failed_phase6_gates"] == []
     assert cli_stdout["human_usefulness_summary"]["coverage_reports"][0][
         "passed"

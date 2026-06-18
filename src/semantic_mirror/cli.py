@@ -1413,6 +1413,9 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
     collection_plan = status.get("collection_plan_status")
     if not isinstance(collection_plan, dict):
         collection_plan = {}
+    collection_studies = collection_plan.get("studies")
+    if not isinstance(collection_studies, dict):
+        collection_studies = {}
     required_phase6_gates = status.get("required_phase6_gates")
     if not isinstance(required_phase6_gates, dict):
         required_phase6_gates = {}
@@ -1452,6 +1455,20 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
                 "required_total_answer_records"
             ),
             "missing_answer_targets": collection_plan.get("missing_answer_targets", []),
+            "studies": {
+                str(label): {
+                    "answer_records": study.get("answer_records"),
+                    "required_answer_records": study.get(
+                        "required_answer_records"
+                    ),
+                    "answer_target_exists": study.get("answer_target_exists"),
+                    "answer_target": study.get("answer_target"),
+                    "coverage_report": study.get("coverage_report"),
+                    "eval_report": study.get("eval_report"),
+                }
+                for label, study in collection_studies.items()
+                if isinstance(study, dict)
+            },
         },
     }
 
