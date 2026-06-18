@@ -1324,6 +1324,8 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
                 {
                     "title": action["title"],
                     "category": action.get("category", "unspecified"),
+                    "command_name": action.get("command_name"),
+                    "command_category": action.get("command_category"),
                     "launches_training": action.get("launches_training", False),
                     "reason": action.get("reason"),
                     "blocked_by_stages": action.get("blocked_by_stages", []),

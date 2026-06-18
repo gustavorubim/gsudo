@@ -305,8 +305,9 @@ training dependency, command launch behavior, blocking stage, and command-link
 validity, including counts by next packaged command. Contract-status JSON and stdout also include package source,
 command-manifest, and Python metadata summaries so automation can distinguish
 package evidence repairs from training work. Next-action rows also expose
-`blocked_by_stages` and `stage_actions`, so callers can route WSL smoke, DPO
-resume, RL launch, diagnostics, and status-refresh work without parsing prose.
+`command_name`, `command_category`, `blocked_by_stages`, and `stage_actions`, so
+callers can route WSL smoke, DPO resume, RL launch, diagnostics, and
+status-refresh work without parsing prose.
 Generated prompts include
 an explicit compact final SIR JSON object prefilled with source-backed static
 facts between `FINAL_SIR_JSON_START` and `FINAL_SIR_JSON_END`, and instruct the
@@ -444,8 +445,8 @@ stdout is the compact pass/fail summary for callers. Both include
 command-link, command-launch, and next-command counts.
 The JSON keeps full `next_actions` commands, while stdout reports compact
 presence flags. Those rows include current-versus-expected evidence for failed
-gates, DPO/RL resume decisions, per-action `blocked_by_stages` and
-`stage_actions`, recovery-plan `action_category`,
+gates, DPO/RL resume decisions, per-action `command_name`, `command_category`,
+`blocked_by_stages`, and `stage_actions`, recovery-plan `action_category`,
 native and WSL readiness blocker summaries, Phase 6 failed gates, real
 timed-answer counts, package source freshness, command-manifest safety checks,
 command category rollups, recovery-plan `next_action_title` and

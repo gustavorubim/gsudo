@@ -3519,8 +3519,8 @@ surfaces: both include `contract_scorecard_summary`, `repo_hygiene_summary`,
 including Windows PowerShell variants; stdout compacts those actions into
 presence flags for safer automation summaries. These surfaces include
 current-versus-expected failed-gate evidence, DPO/RL resume decisions,
-per-action `blocked_by_stages` and `stage_actions`, recovery-plan
-`action_category`, `next_action_title`, `next_action_category`,
+per-action `command_name`, `command_category`, `blocked_by_stages`, and
+`stage_actions`, recovery-plan `action_category`, `next_action_title`, `next_action_category`,
 `next_action_command_name`, `next_action_launches_training`,
 `next_action_command_exists`, and `next_action_command_link_valid`, native and WSL
 readiness blocker summaries, Phase 6 failed gates, real timed-answer counts,
@@ -6928,6 +6928,8 @@ def _full_eval_contract_status_markdown(report: dict[str, Any]) -> str:
                     f"### {action['title']}",
                     "",
                     f"- Category: `{action.get('category', 'unspecified')}`",
+                    f"- Command name: `{action.get('command_name') or 'unknown'}`",
+                    f"- Command category: `{action.get('command_category') or action.get('category', 'unspecified')}`",
                     f"- Launches training: `{action.get('launches_training', False)}`",
                     f"- Blocked by stages: `{', '.join(action.get('blocked_by_stages') or []) or 'None'}`",
                     f"- Stage actions: `{json.dumps(action.get('stage_actions') or {}, sort_keys=True)}`",
@@ -7026,6 +7028,8 @@ def _full_eval_next_actions(
         {
             "title": "Inspect resume plan",
             "category": "inspection",
+            "command_name": "inspect_full_training_eval_resume",
+            "command_category": "inspection",
             "launches_training": False,
             "reason": "Preview stage reuse and resume decisions before launching training.",
             "blocked_by_stages": [],
@@ -7064,6 +7068,8 @@ def _full_eval_next_actions(
             {
                 "title": "Run Windows-hosted WSL smoke chain",
                 "category": "training",
+                "command_name": "wsl_smoke_chain",
+                "command_category": "training",
                 "launches_training": True,
                 "reason": wsl_reason,
                 "blocked_by_stages": list(
@@ -7088,6 +7094,8 @@ def _full_eval_next_actions(
                     else "Resume full eval through DPO"
                 ),
                 "category": "training",
+                "command_name": "full_training_eval",
+                "command_category": "training",
                 "launches_training": True,
                 "reason": (
                     "DPO has not reached the requested max_steps, and RL/final eval evidence is incomplete; "
@@ -7112,6 +7120,8 @@ def _full_eval_next_actions(
             {
                 "title": "Run RL and final eval",
                 "category": "training",
+                "command_name": "full_training_eval",
+                "command_category": "training",
                 "launches_training": True,
                 "reason": "DPO is complete but RL/final eval evidence is missing.",
                 "blocked_by_stages": [
@@ -7142,6 +7152,8 @@ def _full_eval_next_actions(
             {
                 "title": "Regenerate target diagnostics",
                 "category": "diagnostics",
+                "command_name": "report",
+                "command_category": "diagnostics",
                 "launches_training": False,
                 "reason": diagnostics_reason,
                 "blocked_by_stages": stale_stages,
@@ -7159,6 +7171,8 @@ def _full_eval_next_actions(
         {
             "title": "Regenerate contract status",
             "category": "status",
+            "command_name": "contract_status",
+            "command_category": "status",
             "launches_training": False,
             "reason": "Refresh JSON and Markdown status after the next full-eval attempt.",
             "blocked_by_stages": incomplete_stages,
@@ -7214,6 +7228,8 @@ def _phase6_collection_next_action(
             return {
                 "title": "Run real Phase 6 collection and eval sequence",
                 "category": "human_study",
+                "command_name": "phase6_collection_sequence",
+                "command_category": "human_study",
                 "launches_training": False,
                 "reason": (
                     "A Phase 6 collection plan already exists; run its conduct-study, "
@@ -7240,6 +7256,8 @@ def _phase6_collection_next_action(
     return {
         "title": "Create real Phase 6 answer collection plan",
         "category": "human_study",
+        "command_name": "phase6_collection_plan",
+        "command_category": "human_study",
         "launches_training": False,
         "reason": (
             "Human usefulness evidence is checked but failing; create a real timed "

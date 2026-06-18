@@ -1014,6 +1014,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         action for action in status["next_actions"] if action["title"] == "Inspect resume plan"
     )
     assert inspect_action["category"] == "inspection"
+    assert inspect_action["command_name"] == "inspect_full_training_eval_resume"
+    assert inspect_action["command_category"] == "inspection"
     assert inspect_action["launches_training"] is False
     assert inspect_action["blocked_by_stages"] == []
     assert inspect_action["stage_actions"] == {
@@ -1027,10 +1029,14 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         if action["title"] == "Resume full eval through DPO and RL"
     )
     assert resume_action["blocked_by_stages"] == ["dpo", "rl"]
+    assert resume_action["command_name"] == "full_training_eval"
+    assert resume_action["command_category"] == "training"
     assert resume_action["stage_actions"]["dpo"] == "resume"
     assert resume_action["stage_actions"]["rl"] == "run"
     assert any(
         action["title"] == "Regenerate target diagnostics"
+        and action["command_name"] == "report"
+        and action["command_category"] == "diagnostics"
         and action["category"] == "diagnostics"
         and action["launches_training"] is False
         and action["blocked_by_stages"] == ["dpo", "rl"]
@@ -1314,6 +1320,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         if action["title"] == "Run Windows-hosted WSL smoke chain"
     )
     assert wsl_smoke_action["category"] == "training"
+    assert wsl_smoke_action["command_name"] == "wsl_smoke_chain"
+    assert wsl_smoke_action["command_category"] == "training"
     assert wsl_smoke_action["launches_training"] is True
     assert "smoke_chain_manifest_mode" in wsl_smoke_action["reason"]
     assert "diagnostics" in wsl_smoke_action["reason"]
@@ -1402,6 +1410,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         if action["title"] == "Create real Phase 6 answer collection plan"
     )
     assert phase6_action["category"] == "human_study"
+    assert phase6_action["command_name"] == "phase6_collection_plan"
+    assert phase6_action["command_category"] == "human_study"
     assert phase6_action["launches_training"] is False
     assert "review study-collection-plan" in phase6_action["command"]
     assert "--reviewer 'REPLACE_WITH_REVIEWER'" in phase6_action["command"]
@@ -1459,6 +1469,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert collection_status["required_total_answer_records"] == 108
     assert collection_status["studies"]["whole_repo"]["answer_target_exists"]
     assert conduct_action["category"] == "human_study"
+    assert conduct_action["command_name"] == "phase6_collection_sequence"
+    assert conduct_action["command_category"] == "human_study"
     assert conduct_action["launches_training"] is False
     assert "phase6_collection_manifest.json" in conduct_action["command"]
     assert "review conduct-study" in conduct_action["command"]
@@ -1838,6 +1850,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     ] == ["dpo", "rl"]
     assert any(
         action["title"] == "Inspect resume plan"
+        and action["command_name"] == "inspect_full_training_eval_resume"
+        and action["command_category"] == "inspection"
         and action["launches_training"] is False
         and action["has_command"] is True
         and action["has_windows_powershell_command"] is True
@@ -1848,6 +1862,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert any(
         action["title"] == "Run real Phase 6 collection and eval sequence"
+        and action["command_name"] == "phase6_collection_sequence"
+        and action["command_category"] == "human_study"
         and action["launches_training"] is False
         and action["has_command"] is True
         and "real timed reviewer logs" in action["reason"]
@@ -1855,6 +1871,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert any(
         action["title"] == "Regenerate target diagnostics"
+        and action["command_name"] == "report"
+        and action["command_category"] == "diagnostics"
         and action["launches_training"] is False
         and action["blocked_by_stages"] == ["dpo", "rl"]
         and action["stage_actions"] == {}
@@ -1863,6 +1881,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     )
     assert any(
         action["title"] == "Resume full eval through DPO and RL"
+        and action["command_name"] == "full_training_eval"
+        and action["command_category"] == "training"
         and action["launches_training"] is True
         and action["has_windows_powershell_command"] is True
         and action["blocked_by_stages"] == ["dpo", "rl"]
@@ -1943,6 +1963,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         if action["title"] == "Regenerate contract status"
     )
     assert refresh_action["category"] == "status"
+    assert refresh_action["command_name"] == "contract_status"
+    assert refresh_action["command_category"] == "status"
     assert refresh_action["launches_training"] is False
     assert "--repo-root 'repo'" in refresh_action["command"]
     assert "--windows-audit 'windows_audit.json'" in refresh_action["command"]
@@ -1956,6 +1978,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         if action["title"] == "Resume full eval through DPO and RL"
     )
     assert resume_action["category"] == "training"
+    assert resume_action["command_name"] == "full_training_eval"
+    assert resume_action["command_category"] == "training"
     assert resume_action["launches_training"] is True
     assert "SOURCE_FRESHNESS_REPO_ROOT='repo'" in resume_action["command"]
     cli_phase6_action = next(
@@ -1964,6 +1988,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         if action["title"] == "Run real Phase 6 collection and eval sequence"
     )
     assert cli_phase6_action["category"] == "human_study"
+    assert cli_phase6_action["command_name"] == "phase6_collection_sequence"
+    assert cli_phase6_action["command_category"] == "human_study"
     assert cli_phase6_action["launches_training"] is False
     assert "review conduct-study" in cli_phase6_action["command"]
     assert "review study-status" in cli_phase6_action["command"]
@@ -3473,7 +3499,9 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package_metadata_summary" in package_readme
     assert "package-area gates" in package_readme
     assert "Python metadata" in package_readme
-    assert "per-action `blocked_by_stages` and `stage_actions`" in package_readme
+    assert "per-action `command_name`, `command_category`" in package_readme
+    assert "`blocked_by_stages`" in package_readme
+    assert "`stage_actions`" in package_readme
     assert "blocker summaries" in package_readme
     assert "command-manifest safety checks" in package_readme
     assert "`action_category`" in package_readme
@@ -3506,7 +3534,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "package Python" in root_readme
     assert "metadata so" in root_readme
     assert "Next-action rows also expose" in root_readme
-    assert "`blocked_by_stages` and `stage_actions`" in root_readme
+    assert "`command_name`, `command_category`, `blocked_by_stages`" in root_readme
     assert "native and WSL readiness blocker summaries" in root_readme
     assert "command category rollups" in root_readme
     assert "`action_category`" in root_readme
