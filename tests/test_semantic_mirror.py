@@ -410,6 +410,12 @@ def test_human_study_answer_coverage_reports_pending_and_ready_state(tmp_path: P
     assert not missing["passed"]
     missing_gates = {gate["name"]: gate for gate in missing["gates"]}
     assert not missing_gates["answers_file_present"]["passed"]
+    assert not missing_gates["real_timed_reviewer_logs"]["passed"]
+    assert missing_gates["real_timed_reviewer_logs"]["actual"] == 0.0
+    assert not missing_gates["reviewer_identity_present"]["passed"]
+    assert missing_gates["reviewer_identity_present"]["actual"] == 0.0
+    assert not missing_gates["answer_text_present"]["passed"]
+    assert missing_gates["answer_text_present"]["actual"] == 0.0
     assert missing["counts"]["pending_task_records"] == missing["counts"]["task_records"]
 
     completed_answers = _completed_study_answers(tmp_path / "study")

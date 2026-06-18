@@ -510,17 +510,17 @@ def summarize_human_study_answer_coverage(
         _gate("duplicate_answer_ids", len(duplicate_answer_ids), expected=0),
         _gate(
             "real_timed_reviewer_logs",
-            _ratio(len(real_timed_answers), len(known_answers)),
+            _required_ratio(len(real_timed_answers), len(known_answers)),
             minimum=1.0,
         ),
         _gate(
             "reviewer_identity_present",
-            _ratio(len(reviewer_answers), len(known_answers)),
+            _required_ratio(len(reviewer_answers), len(known_answers)),
             minimum=1.0,
         ),
         _gate(
             "answer_text_present",
-            _ratio(len(text_answers), len(source_mirror_answers)),
+            _required_ratio(len(text_answers), len(source_mirror_answers)),
             minimum=1.0,
         ),
         _gate(
@@ -1533,6 +1533,10 @@ def _gate(
 
 def _ratio(numerator: int, denominator: int) -> float:
     return 1.0 if denominator == 0 else round(numerator / denominator, 6)
+
+
+def _required_ratio(numerator: int, denominator: int) -> float:
+    return 0.0 if denominator == 0 else _ratio(numerator, denominator)
 
 
 def _review_id(prefix: str, *parts: str) -> str:
