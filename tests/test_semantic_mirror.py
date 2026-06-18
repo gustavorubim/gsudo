@@ -1394,6 +1394,12 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert cli_stdout["human_usefulness_summary"]["collection_plan"][
         "required_total_answer_records"
     ] == 108
+    assert cli_stdout["human_usefulness_summary"]["collection_plan"][
+        "remaining_total_answer_records"
+    ] == 107
+    assert cli_stdout["human_usefulness_summary"]["collection_plan"][
+        "complete"
+    ] is False
     collection_studies = cli_stdout["human_usefulness_summary"]["collection_plan"][
         "studies"
     ]

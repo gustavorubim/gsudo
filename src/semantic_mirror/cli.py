@@ -1425,6 +1425,13 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
     coverage_reports = status.get("coverage_reports")
     if not isinstance(coverage_reports, list):
         coverage_reports = []
+    collection_answer_records = _int_or_zero(collection_plan.get("answer_record_count"))
+    required_total_answer_records = _int_or_zero(
+        collection_plan.get("required_total_answer_records")
+    )
+    remaining_total_answer_records = max(
+        required_total_answer_records - collection_answer_records, 0
+    )
     return {
         "checked": status.get("checked", False),
         "passed": status.get("passed"),
@@ -1450,10 +1457,10 @@ def _human_usefulness_summary(status: object) -> dict[str, object]:
         "collection_plan": {
             "checked": collection_plan.get("checked", False),
             "passed": collection_plan.get("passed"),
-            "answer_record_count": collection_plan.get("answer_record_count"),
-            "required_total_answer_records": collection_plan.get(
-                "required_total_answer_records"
-            ),
+            "answer_record_count": collection_answer_records,
+            "required_total_answer_records": required_total_answer_records,
+            "remaining_total_answer_records": remaining_total_answer_records,
+            "complete": remaining_total_answer_records == 0,
             "missing_answer_targets": collection_plan.get("missing_answer_targets", []),
             "studies": {
                 str(label): _phase6_collection_study_summary(study)
