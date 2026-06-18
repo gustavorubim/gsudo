@@ -70,6 +70,7 @@ def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, obje
         "full_training_eval": "training",
         "smoke_chain": "training",
         "inspect_full_training_eval_resume": "inspection",
+        "inspect_resume": "inspection",
         "contract_status": "status",
         "source_freshness": "status",
         "report": "diagnostics",
@@ -1235,6 +1236,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "full_training_eval": "bash launch/run_full_training_eval.sh",
         "smoke_chain": "bash launch/run_smoke_chain.sh",
         "inspect_full_training_eval_resume": "bash launch/inspect_full_training_eval_resume.sh",
+        "inspect_resume": "PYTHONPATH=src python -m semantic_mirror.cli train inspect-resume outputs",
         "contract_status": "PYTHONPATH=src python -m semantic_mirror.cli train contract-status outputs",
         "source_freshness": "PYTHONPATH=src python -m semantic_mirror.cli train source-freshness .",
         "report": "PYTHONPATH=src python -m semantic_mirror.cli train report outputs",
@@ -1304,6 +1306,9 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert freshness_status["package_command_manifest_status"]["checked"]
     assert freshness_status["package_command_manifest_status"]["passed"]
     assert freshness_status["package_command_manifest_status"]["training_command_count"] == 6
+    assert "inspect_resume" in freshness_status["package_command_manifest_status"][
+        "non_training_commands"
+    ]
     assert "full_training_eval" in freshness_status["package_command_manifest_status"][
         "training_commands"
     ]
@@ -2455,6 +2460,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert manifest_commands["wsl_smoke_chain"]["launches_training"] is True
     assert manifest_commands["inspect_full_training_eval_resume"]["category"] == "inspection"
     assert manifest_commands["inspect_full_training_eval_resume"]["launches_training"] is False
+    assert manifest_commands["inspect_resume"]["category"] == "inspection"
+    assert manifest_commands["inspect_resume"]["launches_training"] is False
     assert manifest_commands["contract_status"]["category"] == "status"
     assert manifest_commands["contract_status"]["launches_training"] is False
     assert manifest_commands["report"]["category"] == "diagnostics"
@@ -2469,6 +2476,10 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "train report outputs" in commands["report"]
     assert "train source-freshness ." in commands["source_freshness"]
     assert "--out source_freshness.json" in commands["source_freshness"]
+    assert "train inspect-resume outputs" in commands["inspect_resume"]
+    assert "--markdown-out outputs/full_training_eval_resume_inspection.md" in commands[
+        "inspect_resume"
+    ]
     assert "train contract-status outputs" in commands["contract_status"]
     assert "--sft-steps $SFT_MAX_STEPS" in commands["contract_status"]
     assert "--package-source-freshness source_freshness.json" in commands["contract_status"]

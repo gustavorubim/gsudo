@@ -2076,6 +2076,13 @@ def _package_launch_commands() -> dict[str, str]:
             "REUSE_STAGE_OUTPUTS=1 DPO_RESUME_FROM_CHECKPOINT=<checkpoint_dir> "
             "bash launch/inspect_full_training_eval_resume.sh"
         ),
+        "inspect_resume": (
+            "PYTHONPATH=src python -m semantic_mirror.cli train inspect-resume outputs "
+            "--sft-steps 300 --dpo-steps 120 --rl-steps 120 "
+            "--reuse-stage-outputs --dpo-resume-from-checkpoint <checkpoint_dir> "
+            "--out outputs/full_training_eval_resume_inspection.json "
+            "--markdown-out outputs/full_training_eval_resume_inspection.md"
+        ),
         "smoke_chain": "HELD_OUT_DATASET=<dataset_dir> bash launch/run_smoke_chain.sh",
         "generate_candidates": (
             "python training/generate_sir_candidates.py --training-dir training "
@@ -2156,6 +2163,7 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
         "full_training_eval": "training",
         "smoke_chain": "training",
         "inspect_full_training_eval_resume": "inspection",
+        "inspect_resume": "inspection",
         "generate_candidates": "generation",
         "score_candidates": "evaluation",
         "eval_candidates": "evaluation",
@@ -7684,6 +7692,7 @@ def _package_command_manifest_contract_status(
     }
     expected_non_training = {
         "inspect_full_training_eval_resume",
+        "inspect_resume",
         "contract_status",
         "source_freshness",
         "report",
