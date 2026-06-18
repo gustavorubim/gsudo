@@ -1236,6 +1236,12 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
             "passed": manifest["passed"],
             "requested_max_steps": manifest["requested_max_steps"],
             "contract_reward_summary": manifest["contract_reward_summary"],
+            "package_command_manifest_summary": _package_command_manifest_summary(
+                manifest.get("package_command_manifest_status")
+            ),
+            "human_usefulness_summary": _human_usefulness_summary(
+                manifest.get("human_usefulness_status")
+            ),
             "remaining_by_area": manifest["remaining_by_area"],
             "remaining_recovery_plan": [
                 {
@@ -1297,6 +1303,41 @@ def _summary(manifest: dict[str, object]) -> dict[str, object]:
         "zoom": manifest["zoom"],
         "coverage": manifest["coverage"],
         "confidence": manifest["confidence"],
+    }
+
+
+def _package_command_manifest_summary(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        return {"checked": False, "passed": None}
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "command_count": status.get("command_count"),
+        "training_command_count": status.get("training_command_count"),
+        "non_training_command_count": status.get("non_training_command_count"),
+        "failed_checks": status.get("failed_checks", []),
+    }
+
+
+def _human_usefulness_summary(status: object) -> dict[str, object]:
+    if not isinstance(status, dict):
+        return {"checked": False, "passed": None}
+    collection_plan = status.get("collection_plan_status")
+    if not isinstance(collection_plan, dict):
+        collection_plan = {}
+    return {
+        "checked": status.get("checked", False),
+        "passed": status.get("passed"),
+        "summary": status.get("summary"),
+        "collection_plan": {
+            "checked": collection_plan.get("checked", False),
+            "passed": collection_plan.get("passed"),
+            "answer_record_count": collection_plan.get("answer_record_count"),
+            "required_total_answer_records": collection_plan.get(
+                "required_total_answer_records"
+            ),
+            "missing_answer_targets": collection_plan.get("missing_answer_targets", []),
+        },
     }
 
 
