@@ -11054,7 +11054,10 @@ def _human_usefulness_contract_status(
             "path": str(path),
             "coverage_reports": coverage_reports,
             "collection_plan_status": collection_plan_status,
-            "summary": "Human-study suite report is missing or not a JSON object.",
+            "summary": _human_usefulness_missing_suite_summary(
+                collection_plan_status,
+                coverage_reports,
+            ),
         }
     phase6 = report.get("phase6_gate_summary", {})
     required_phase6_gates = (
@@ -11144,6 +11147,52 @@ def _human_study_coverage_contract_status(
             }
         )
     return reports
+
+
+def _human_usefulness_missing_suite_summary(
+    collection_plan_status: dict[str, Any],
+    coverage_reports: list[dict[str, Any]],
+) -> str:
+    if collection_plan_status.get("checked"):
+        required = _contract_summary_int(
+            collection_plan_status.get("required_total_answer_records")
+        )
+        answered = _contract_summary_int(collection_plan_status.get("answer_record_count"))
+        missing = list(collection_plan_status.get("missing_answer_targets") or [])
+        if required > 0:
+            missing_text = (
+                f"; missing answer targets: {', '.join(str(item) for item in missing)}"
+                if missing
+                else ""
+            )
+            return (
+                "Phase 6 human-study suite report is missing or invalid, and real "
+                f"answer coverage is incomplete ({answered}/{required} records"
+                f"{missing_text})."
+            )
+    failed_coverage = [
+        coverage
+        for coverage in coverage_reports
+        if coverage.get("checked") and coverage.get("passed") is False
+    ]
+    if failed_coverage:
+        failed_gates = sorted(
+            {
+                str(gate)
+                for coverage in failed_coverage
+                for gate in coverage.get("failed_gates") or []
+            }
+        )
+        gate_text = (
+            f" Failed coverage gates: {', '.join(failed_gates)}."
+            if failed_gates
+            else ""
+        )
+        return (
+            "Phase 6 human-study suite report is missing or invalid, and supplied "
+            f"coverage reports are failing.{gate_text}"
+        )
+    return "Human-study suite report is missing or not a JSON object."
 
 
 def _phase6_collection_plan_contract_status(

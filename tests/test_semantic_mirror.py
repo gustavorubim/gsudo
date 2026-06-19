@@ -1965,6 +1965,16 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "review study-collection-plan" in phase6_action["command"]
     assert "--reviewer 'REPLACE_WITH_REVIEWER'" in phase6_action["command"]
     assert "--study whole_repo=" in phase6_action["command"]
+    missing_suite_status = summarize_full_eval_contract_status(
+        run,
+        human_study_suite_path=tmp_path / "missing_phase6_summary.json",
+        human_study_coverage_paths=[coverage_report],
+    )
+    assert missing_suite_status["human_usefulness_status"]["summary"] == (
+        "Phase 6 human-study suite report is missing or invalid, and supplied "
+        "coverage reports are failing. Failed coverage gates: "
+        "answer_task_id_coverage, real_timed_reviewer_logs."
+    )
     collection_plan = {
         "mode": "phase6_real_human_study_collection_plan",
         "batch_size": 20,
@@ -2018,6 +2028,15 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     collection_status = planned_status["human_usefulness_status"][
         "collection_plan_status"
     ]
+    planned_missing_suite_status = summarize_full_eval_contract_status(
+        run,
+        human_study_suite_path=tmp_path / "missing_phase6_summary.json",
+        human_study_coverage_paths=[coverage_report],
+    )
+    assert planned_missing_suite_status["human_usefulness_status"]["summary"] == (
+        "Phase 6 human-study suite report is missing or invalid, and real "
+        "answer coverage is incomplete (1/108 records)."
+    )
     assert collection_status["checked"]
     assert not collection_status["passed"]
     assert collection_status["answer_record_count"] == 1
