@@ -4117,8 +4117,9 @@ command by category and includes a `launches_training` boolean so inspection,
 status, and diagnostic commands can be selected without accidentally starting a
 training run. Each command row separates `required_inputs` from
 `optional_inputs`; optional evidence inputs such as Windows audits, WSL smoke
-manifests, and package source freshness can be supplied to strengthen status
-without making a non-training refresh invalid when they are absent. The older
+manifests, package source freshness, and Phase 6 human-study coverage or suite
+reports can be supplied to strengthen status without making a non-training
+refresh invalid when they are absent. The older
 `launch/commands.json` remains a flat command lookup for backward compatibility.
 
 ## Command Input Reference

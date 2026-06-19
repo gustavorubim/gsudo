@@ -4626,6 +4626,7 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
     assert "[string]$BaselineCandidates" in full_eval_preflight_ps
     assert "preflight_full_eval_inputs.ps1" in package_readme
     assert "-BaselineCandidates C:\\path\\to\\teacher_results\\teacher_candidates.jsonl" in package_readme
+    assert "Phase 6 human-study coverage or suite reports" in package_readme
     assert "HUMAN_STUDY_SUITE=outputs/phase6/phase6_real_suite_summary.json" in package_readme
     assert "HUMAN_STUDY_COVERAGE=outputs/phase6/whole_repo_real_coverage.json:outputs/phase6/diff_mode_real_coverage.json" in package_readme
     assert "--human-study-coverage outputs/phase6/whole_repo_real_coverage.json" in package_readme
