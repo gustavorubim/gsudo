@@ -134,6 +134,8 @@ def _test_command_manifest(commands: dict[str, str]) -> dict[str, dict[str, obje
             "windows_audit",
             "wsl_smoke_manifest",
             "package_source_freshness",
+            "human_study_coverage",
+            "human_study_suite",
         ],
         "inspect_full_training_eval_resume": [
             "sft_resume_from_checkpoint",
@@ -2425,8 +2427,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "command_link_unchecked_count": 0,
         "command_link_valid_count": 12,
         "optional_input_counts": {
-            "human_study_coverage": 3,
-            "human_study_suite": 3,
+            "human_study_coverage": 11,
+            "human_study_suite": 11,
             "package_source_freshness": 11,
             "repo_root": 3,
             "source_freshness_repo_root": 8,
@@ -2453,6 +2455,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "full_training_eval": {
             "gate_count": 8,
             "optional_inputs": [
+                "human_study_coverage",
+                "human_study_suite",
                 "package_source_freshness",
                 "source_freshness_repo_root",
                 "windows_audit",
@@ -2465,6 +2469,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "training_launch_optional_input_counts"
     ] == {
         "package_source_freshness": 8,
+        "human_study_coverage": 8,
+        "human_study_suite": 8,
         "source_freshness_repo_root": 8,
         "windows_audit": 8,
         "wsl_smoke_manifest": 8,
@@ -2626,6 +2632,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "windows_audit",
         "wsl_smoke_manifest",
         "package_source_freshness",
+        "human_study_coverage",
+        "human_study_suite",
     ]
     assert stdout_recovery_plan["dpo_stage_manifest_matches_requested_steps"][
         "area"
@@ -2799,6 +2807,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
             "full_training_eval": {
                 "gate_count": 1,
                 "optional_inputs": [
+                    "human_study_coverage",
+                    "human_study_suite",
                     "package_source_freshness",
                     "source_freshness_repo_root",
                     "windows_audit",
@@ -2839,8 +2849,8 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "ready_training_command_counts": {"full_training_eval": 1},
         "optional_input_counts": {
             "dpo_resume_from_checkpoint": 1,
-            "human_study_coverage": 1,
-            "human_study_suite": 1,
+            "human_study_coverage": 2,
+            "human_study_suite": 2,
             "package_source_freshness": 2,
             "repo_root": 1,
             "sft_resume_from_checkpoint": 1,
@@ -3045,7 +3055,7 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
     assert "Optional input counts:" in contract_status_md
     assert "Command inputs:" in contract_status_md
     assert "Required inputs: `held_out_dataset, baseline_candidates`" in contract_status_md
-    assert "Optional inputs: `source_freshness_repo_root, windows_audit, wsl_smoke_manifest, package_source_freshness`" in contract_status_md
+    assert "Optional inputs: `source_freshness_repo_root, windows_audit, wsl_smoke_manifest, package_source_freshness, human_study_coverage, human_study_suite`" in contract_status_md
     assert "Gates with required command inputs: `12`" in contract_status_md
     assert "Gates with optional command inputs: `11`" in contract_status_md
     assert "Required command input counts:" in contract_status_md
@@ -4389,6 +4399,8 @@ def test_dataset_sample_outputs_curation_sets_and_rejected_negatives(tmp_path: P
         "windows_audit",
         "wsl_smoke_manifest",
         "package_source_freshness",
+        "human_study_coverage",
+        "human_study_suite",
     ]
     assert manifest_commands["inspect_full_training_eval_resume"]["optional_inputs"] == [
         "sft_resume_from_checkpoint",

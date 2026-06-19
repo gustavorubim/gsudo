@@ -2435,6 +2435,8 @@ def _package_launch_command_manifest(commands: dict[str, str]) -> dict[str, Any]
             "windows_audit",
             "wsl_smoke_manifest",
             "package_source_freshness",
+            "human_study_coverage",
+            "human_study_suite",
         ],
         "inspect_full_training_eval_resume": [
             "sft_resume_from_checkpoint",
