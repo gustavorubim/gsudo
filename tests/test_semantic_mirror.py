@@ -2072,6 +2072,10 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         "sessions_remaining_at_batch_size": 6,
     }
     assert "phase6_collection_manifest.json" in conduct_action["command"]
+    assert "# whole_repo conduct batch; repeat until coverage passes" in conduct_action["command"]
+    assert "# whole_repo coverage check; run after each conduct batch" in conduct_action["command"]
+    assert "# whole_repo eval; run only after coverage passes" in conduct_action["command"]
+    assert "# suite; run only after all study eval reports pass" in conduct_action["command"]
     assert "review conduct-study" in conduct_action["command"]
     assert "review study-status" in conduct_action["command"]
     assert "eval human-study" in conduct_action["command"]

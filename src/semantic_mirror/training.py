@@ -8589,16 +8589,16 @@ def _phase6_collection_plan_commands(plan: dict[str, Any]) -> list[str]:
         if not isinstance(study, dict):
             continue
         for key, header in (
-            ("conduct_command", "conduct"),
-            ("coverage_command", "coverage"),
-            ("eval_command", "eval"),
+            ("conduct_command", "conduct batch; repeat until coverage passes"),
+            ("coverage_command", "coverage check; run after each conduct batch"),
+            ("eval_command", "eval; run only after coverage passes"),
         ):
             command = study.get(key)
             if isinstance(command, str) and command:
                 commands.append(f"# {label} {header}\n{command}")
     suite_command = plan.get("suite_command")
     if isinstance(suite_command, str) and suite_command:
-        commands.append(f"# suite\n{suite_command}")
+        commands.append(f"# suite; run only after all study eval reports pass\n{suite_command}")
     return commands
 
 
