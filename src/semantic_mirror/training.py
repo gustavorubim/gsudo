@@ -11038,8 +11038,19 @@ def _human_usefulness_contract_status(
     coverage_reports = _human_study_coverage_contract_status(coverage_paths)
     collection_plan_status = _phase6_collection_plan_contract_status(coverage_reports)
     if suite_path is None:
+        if coverage_reports:
+            return {
+                "checked": True,
+                "passed": False,
+                "coverage_reports": coverage_reports,
+                "collection_plan_status": collection_plan_status,
+                "summary": _human_usefulness_missing_suite_summary(
+                    collection_plan_status,
+                    coverage_reports,
+                ),
+            }
         return {
-            "checked": bool(coverage_reports),
+            "checked": False,
             "passed": None,
             "coverage_reports": coverage_reports,
             "collection_plan_status": collection_plan_status,

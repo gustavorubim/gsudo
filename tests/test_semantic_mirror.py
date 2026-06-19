@@ -1940,6 +1940,17 @@ def test_full_eval_contract_status_reports_missing_target_gates(tmp_path: Path) 
         + "\n",
         encoding="utf-8",
     )
+    coverage_only_status = summarize_full_eval_contract_status(
+        run,
+        human_study_coverage_paths=[coverage_report],
+    )
+    assert coverage_only_status["human_usefulness_status"]["checked"]
+    assert coverage_only_status["human_usefulness_status"]["passed"] is False
+    assert coverage_only_status["human_usefulness_status"]["summary"] == (
+        "Phase 6 human-study suite report is missing or invalid, and supplied "
+        "coverage reports are failing. Failed coverage gates: "
+        "answer_task_id_coverage, real_timed_reviewer_logs."
+    )
     coverage_status = summarize_full_eval_contract_status(
         run,
         human_study_suite_path=human_suite,
